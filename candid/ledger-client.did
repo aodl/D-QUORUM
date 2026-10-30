@@ -1,0 +1,75 @@
+type Account = record { owner : principal; subaccount : opt blob };
+type ArchiveError = variant {
+  BadFirstBlockIndex : record {
+    requested_index : nat64;
+    first_valid_index : nat64;
+  };
+  Other : record { error_message : text; error_code : nat64 };
+};
+type ArchivedRange = record {
+  callback : func (BlocksArgs) -> (Result_1) query;
+  start : nat64;
+  length : nat64;
+};
+type Block = record { transaction : Transaction; timestamp : Timestamp };
+type BlockRange = record { blocks : vec Block };
+type BlocksArgs = record { start : nat64; length : nat64 };
+type History = record {
+  blocks : vec Block;
+  chain_length : nat64;
+  first_block_index : nat64;
+  archived_blocks : vec ArchivedRange;
+};
+type Operation = variant {
+  Approve : record {
+    fee : Tokens;
+    from : blob;
+    allowance : Tokens;
+    expected_allowance : opt Tokens;
+    expires_at : opt Timestamp;
+    spender : blob;
+  };
+  Burn : record { from : blob; amount : Tokens; spender : opt blob };
+  Mint : record { to : blob; amount : Tokens };
+  Transfer : record {
+    to : blob;
+    fee : Tokens;
+    from : blob;
+    amount : Tokens;
+    spender : opt blob;
+  };
+};
+type Result = variant { Ok : nat; Err : TransferError };
+type Result_1 = variant { Ok : BlockRange; Err : ArchiveError };
+type Timestamp = record { timestamp_nanos : nat64 };
+type Tokens = record { e8s : nat64 };
+type Transaction = record {
+  memo : nat64;
+  icrc1_memo : opt blob;
+  operation : opt Operation;
+  created_at_time : Timestamp;
+};
+type TransferArg = record {
+  to : Account;
+  fee : opt nat;
+  memo : opt blob;
+  from_subaccount : opt blob;
+  created_at_time : opt nat64;
+  amount : nat;
+};
+type TransferError = variant {
+  GenericError : record { message : text; error_code : nat };
+  TemporarilyUnavailable;
+  BadBurn : record { min_burn_amount : nat };
+  Duplicate : record { duplicate_of : nat };
+  BadFee : record { expected_fee : nat };
+  CreatedInFuture : record { ledger_time : nat64 };
+  TooOld;
+  InsufficientFunds : record { balance : nat };
+};
+service : {
+  icrc1_balance_of : (Account) -> (nat) query;
+  icrc1_fee : () -> (nat) query;
+  icrc1_transfer : (TransferArg) -> (Result);
+  query_blocks : (BlocksArgs) -> (History) query;
+}

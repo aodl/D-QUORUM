@@ -1410,6 +1410,8 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "d-quorum",
+ "dendrite-types",
+ "flate2",
  "hex",
  "pocket-ic",
  "quorum-accounting",
@@ -1417,6 +1419,7 @@ dependencies = [
  "quorum-mocks",
  "quorum-policy",
  "serde",
+ "serde_json",
  "sha2",
 ]
 

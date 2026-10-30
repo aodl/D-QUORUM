@@ -1,0 +1,214 @@
+type Account = record { owner : opt principal; subaccount : opt blob };
+type AccountIdentifier = record { hash : blob };
+type ActionRequest = variant { ManageNeuron : ManageRequest };
+type By = variant {
+  NeuronIdOrSubaccount : record {};
+  MemoAndController : MemoController;
+};
+type Claim = record { by : opt By };
+type ClaimResponse = record { refreshed_neuron_id : opt NeuronId };
+type Command = variant {
+  RefreshVotingPower : record {};
+  ClaimOrRefresh : Claim;
+  SetFollowing : SetFollowing;
+  MakeProposal : MakeProposal;
+};
+type DisburseMaturity = record {
+  to_account_identifier : opt AccountIdentifier;
+  to_account : opt Account;
+  percentage_to_disburse : nat32;
+};
+type DissolveState = variant {
+  DissolveDelaySeconds : nat64;
+  WhenDissolvedTimestampSeconds : nat64;
+};
+type Economics = record {
+  neuron_minimum_stake_e8s : nat64;
+  neuron_management_fee_per_proposal_e8s : nat64;
+};
+type Followees = record { followees : vec NeuronId };
+type Following = record { topic : opt int32; followees : opt vec NeuronId };
+type GovernanceError = record { error_message : text; error_type : int32 };
+type Id = variant { Subaccount : blob; NeuronId : NeuronId };
+type IndexPage = record { neurons : vec NeuronInfo };
+type IndexRequest = record {
+  page_size : opt nat32;
+  exclusive_start_neuron_id : opt NeuronId;
+};
+type KnownNeuron = record {
+  id : opt NeuronId;
+  known_neuron_data : opt KnownNeuronData;
+};
+type KnownNeuronData = record {
+  name : text;
+  committed_topics : opt vec opt reserved;
+  description : opt text;
+  links : opt vec text;
+};
+type KnownResponse = record { known_neurons : vec KnownNeuron };
+type ListNeurons = record {
+  page_size : opt nat64;
+  include_public_neurons_in_full_neurons : opt bool;
+  neuron_ids : vec nat64;
+  page_number : opt nat64;
+  include_empty_neurons_readable_by_caller : opt bool;
+  neuron_subaccounts : opt vec NeuronSubaccount;
+  include_neurons_readable_by_caller : bool;
+};
+type ListNeuronsResponse = record {
+  neuron_infos : vec record { nat64; NeuronInfo };
+  full_neurons : vec Neuron;
+  total_pages_available : opt nat64;
+};
+type ListProposals = record {
+  return_self_describing_action : opt bool;
+  include_reward_status : vec int32;
+  omit_large_fields : opt bool;
+  before_proposal : opt NeuronId;
+  limit : nat32;
+  exclude_topic : vec int32;
+  include_all_manage_neuron_proposals : opt bool;
+  include_status : vec int32;
+};
+type MakeProposal = record {
+  url : text;
+  title : opt text;
+  action : opt ActionRequest;
+  summary : text;
+};
+type ManageRequest = record {
+  id : opt NeuronId;
+  command : opt Command;
+  neuron_id_or_subaccount : opt Id;
+};
+type ManageResponse = record { command : opt ResponseCommand };
+type MaturityDisbursement = record {
+  timestamp_of_disbursement_seconds : opt nat64;
+  amount_e8s : opt nat64;
+  account_to_disburse_to : opt Account;
+  finalize_disbursement_timestamp_seconds : opt nat64;
+};
+type MemoController = record { controller : opt principal; memo : nat64 };
+type Neuron = record {
+  id : opt NeuronId;
+  staked_maturity_e8s_equivalent : opt nat64;
+  controller : opt principal;
+  voting_power_refreshed_timestamp_seconds : opt nat64;
+  potential_voting_power : opt nat64;
+  not_for_profit : bool;
+  maturity_e8s_equivalent : nat64;
+  deciding_voting_power : opt nat64;
+  cached_neuron_stake_e8s : nat64;
+  created_timestamp_seconds : nat64;
+  auto_stake_maturity : opt bool;
+  aging_since_timestamp_seconds : nat64;
+  hot_keys : vec principal;
+  account : blob;
+  maturity_disbursements_in_progress : opt vec MaturityDisbursement;
+  dissolve_state : opt DissolveState;
+  followees : vec record { int32; Followees };
+  neuron_fees_e8s : nat64;
+  visibility : opt int32;
+  known_neuron_data : opt KnownNeuronData;
+};
+type NeuronId = record { id : nat64 };
+type NeuronInfo = record {
+  id : opt NeuronId;
+  retrieved_at_timestamp_seconds : nat64;
+  visibility : opt int32;
+  known_neuron_data : opt KnownNeuronData;
+};
+type NeuronSubaccount = record { subaccount : blob };
+type ProposalInfo = record {
+  id : opt NeuronId;
+  status : int32;
+  proposal_timestamp_seconds : nat64;
+  proposal : opt StoredProposal;
+  proposer : opt NeuronId;
+  executed_timestamp_seconds : nat64;
+};
+type ProposalResponse = record { proposal_id : opt NeuronId };
+type Proposals = record { proposal_info : vec ProposalInfo };
+type ResponseCommand = variant {
+  Error : GovernanceError;
+  Spawn : reserved;
+  Split : reserved;
+  Follow : reserved;
+  DisburseMaturity : reserved;
+  RefreshVotingPower : record {};
+  ClaimOrRefresh : ClaimResponse;
+  Configure : reserved;
+  RegisterVote : reserved;
+  Merge : reserved;
+  DisburseToNeuron : reserved;
+  SetFollowing : record {};
+  MakeProposal : ProposalResponse;
+  StakeMaturity : reserved;
+  MergeMaturity : reserved;
+  Disburse : reserved;
+};
+type Result = variant { Ok : IndexPage; Err : GovernanceError };
+type Result_1 = variant { Ok : NeuronInfo; Err : GovernanceError };
+type SetFollowing = record { topic_following : opt vec Following };
+type StoredAction = variant {
+  UpdateStandardEngineReplicaVersion : reserved;
+  RegisterKnownNeuron : reserved;
+  FulfillSubnetRentalRequest : reserved;
+  ManageNeuron : StoredManaged;
+  LoadCanisterSnapshot : reserved;
+  BlessAlternativeGuestOsVersion : reserved;
+  UpdateCanisterSettings : reserved;
+  InstallCode : reserved;
+  DeregisterKnownNeuron : reserved;
+  TakeCanisterSnapshot : reserved;
+  StopOrStartCanister : reserved;
+  CreateServiceNervousSystem : reserved;
+  ExecuteNnsFunction : reserved;
+  CreateCanisterAndInstallCode : reserved;
+  RewardNodeProvider : reserved;
+  OpenSnsTokenSwap : reserved;
+  SetSnsTokenSwapOpenTimeWindow : reserved;
+  SetDefaultFollowees : reserved;
+  RewardNodeProviders : reserved;
+  ManageNetworkEconomics : reserved;
+  ApproveGenesisKyc : reserved;
+  AddOrRemoveNodeProvider : reserved;
+  Motion : reserved;
+};
+type StoredCommand = variant {
+  Spawn : reserved;
+  Split : reserved;
+  Follow : reserved;
+  DisburseMaturity : DisburseMaturity;
+  RefreshVotingPower : reserved;
+  ClaimOrRefresh : reserved;
+  Configure : reserved;
+  RegisterVote : reserved;
+  Merge : reserved;
+  DisburseToNeuron : reserved;
+  SetFollowing : reserved;
+  MakeProposal : reserved;
+  StakeMaturity : reserved;
+  MergeMaturity : reserved;
+  Disburse : reserved;
+};
+type StoredManaged = record {
+  id : opt NeuronId;
+  command : opt StoredCommand;
+  neuron_id_or_subaccount : opt Id;
+};
+type StoredProposal = record {
+  title : opt text;
+  action : opt StoredAction;
+  summary : text;
+};
+service : {
+  get_network_economics_parameters : () -> (Economics) query;
+  get_neuron_index : (IndexRequest) -> (Result) query;
+  get_neuron_info : (nat64) -> (Result_1) query;
+  get_proposal_info : (nat64) -> (opt ProposalInfo) query;
+  list_known_neurons : () -> (KnownResponse) query;
+  list_neurons : (ListNeurons) -> (ListNeuronsResponse) query;
+  list_proposals : (ListProposals) -> (Proposals) query;
+  manage_neuron : (ManageRequest) -> (ManageResponse);
+}
