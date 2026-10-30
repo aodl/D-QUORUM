@@ -416,7 +416,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     state::guarded(token, |s| {
         // Reserve the cadence when entering a terminal phase, before the next timer can retire it.
         // Otherwise the next ten-second tick could accidentally start another weekly round.
-        if matches!(r.phase, Complete) || (matches!(r.phase, Ready) && s.config.mode != Mode::Live)
+        if r.revision != s.config.revision && matches!(r.phase, Complete | Failed(_)) {
+            // Finish readback of the old intent, then promptly compute the new revision.
+            s.jobs[0].next_at = now + 10;
+        } else if matches!(r.phase, Complete)
+            || (matches!(r.phase, Ready) && s.config.mode != Mode::Live)
         {
             s.jobs[0].next_at = now + 7 * DAY;
         } else if matches!(r.phase, Failed(_)) {

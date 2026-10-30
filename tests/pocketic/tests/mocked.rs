@@ -109,7 +109,34 @@ fn lost_set_following_reply_is_read_back_once_and_preserves_management() {
             reject: None,
         },
     );
+    let mut pending_round = None;
+    for _ in 0..260 {
+        drive(&pic, 10);
+        let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+        let h: d_quorum::Health = query_empty(&pic, app, "health");
+        if p.phase == "applying"
+            && h.jobs[0]
+                .last_error
+                .as_ref()
+                .is_some_and(|e| e.contains("decode"))
+        {
+            pending_round = p.round;
+            break;
+        }
+    }
+    let pending_round = pending_round.expect("lost reply must leave a dispatched intent");
+    let revision: Result<u64, String> =
+        update(&pic, app, GOVERNANCE, "set_delegates_per_topic", 3u8);
+    assert_eq!(revision.unwrap(), 1);
+    drive(&pic, 10); // Read back the old revision before beginning the new one.
+    let reconciled: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(reconciled.phase, "complete");
+    assert_eq!(reconciled.round, Some(pending_round));
+    drive(&pic, 10);
     wait_ready(&pic, app, "complete");
+    let new: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(new.revision, Some(1));
+    assert!(new.round.unwrap() > pending_round);
     let roster: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
     assert_eq!(
         roster.iter().find(|r| r.topic == 4).unwrap().applied,
