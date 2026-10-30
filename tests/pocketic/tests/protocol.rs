@@ -343,7 +343,11 @@ fn real_ledger_duplicate_archive_staking_destination_and_cache_refresh() {
     );
     let archive = h.archived_blocks[0].callback.0.principal;
     let status = pic.canister_status(archive, None).unwrap();
-    let expected = sha2::Sha256::digest(artifact("ledger-archive-node-canister"));
+    let _validated_raw = artifact("ledger-archive-node-canister");
+    // Ledger installs the gzip bytes; IC module_hash preserves that installation digest.
+    let expected = sha2::Sha256::digest(
+        std::fs::read(root().join(".cache/protocol/ledger-archive-node-canister.wasm.gz")).unwrap(),
+    );
     assert_eq!(
         status.module_hash,
         Some(expected.to_vec()),
