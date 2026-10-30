@@ -909,16 +909,20 @@ fn valid_empty_round_clears_ordinary_following_and_nonempty_catchall_blocks_writ
         .unwrap();
         if catchall {
             wait_ready(&pic, app, "ready");
-            for delay in [10, 120, 240, 480, 960] {
+            drive(&pic, 10);
+            let first: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+            assert!(
+                first
+                    .last_failure
+                    .as_ref()
+                    .is_some_and(|e| e.contains("CatchAll")),
+                "{first:?}"
+            );
+            for delay in [120, 240, 480, 960] {
                 drive(&pic, delay);
             }
             let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
             assert_eq!(p.phase, "failed");
-            assert!(
-                p.last_failure
-                    .as_ref()
-                    .is_some_and(|e| e.contains("CatchAll"))
-            );
             let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
             assert!(!calls.iter().any(|c| c == "manage_neuron"));
         } else {
