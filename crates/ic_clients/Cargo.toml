@@ -1,0 +1,14 @@
+[package]
+name = "quorum-ic-clients"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[dependencies]
+candid.workspace = true
+serde.workspace = true
+ic-cdk.workspace = true
+sha2.workspace = true
+dendrite-types.workspace = true
+[dev-dependencies]
+proptest.workspace = true

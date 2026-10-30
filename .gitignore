@@ -1,0 +1,9 @@
+/target/
+/.cache/
+/.reference/
+/.icp/
+/dist/
+/coverage/
+*.profraw
+.env*
+*.pem
