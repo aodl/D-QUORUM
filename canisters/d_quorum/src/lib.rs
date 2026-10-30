@@ -129,6 +129,7 @@ fn set_delegates_per_topic(new_count: u8) -> Result<u64, String> {
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct Configuration {
+    pub policy_revision: String,
     pub config: state::Config,
     pub target: u64,
     pub governance: Principal,
@@ -144,7 +145,7 @@ pub struct Configuration {
 #[ic_cdk::query]
 fn configuration() -> Configuration {
     state::read(|s| {
-        Configuration{config:s.config.clone(),target:quorum_policy::TARGET,governance:quorum_ic_clients::GOVERNANCE,ledger:quorum_ic_clients::LEDGER,evaluator_commit:quorum_policy::EVALUATOR_COMMIT.into(),evaluator_nns_source:dendrite_types::SOURCE_REVISION.into(),protocol_commit:quorum_policy::PROTOCOL_COMMIT.into(),reward_policy:"provisional: distinct latest fully-applied fresh roster neurons; one equal share; no manager bonus or redirection".into(),score_scale:quorum_policy::SCALE,bootstrap_staking_account:quorum_ic_clients::ledger::Account{owner:quorum_ic_clients::GOVERNANCE,subaccount:Some(quorum_ic_clients::ledger::staking_subaccount(ic_cdk::api::canister_self(),state::BOOTSTRAP_NONCE))},bootstrap_nonce:state::BOOTSTRAP_NONCE}
+        Configuration{policy_revision:s.policy_pin.clone(),config:s.config.clone(),target:quorum_policy::TARGET,governance:quorum_ic_clients::GOVERNANCE,ledger:quorum_ic_clients::LEDGER,evaluator_commit:quorum_policy::EVALUATOR_COMMIT.into(),evaluator_nns_source:dendrite_types::SOURCE_REVISION.into(),protocol_commit:quorum_policy::PROTOCOL_COMMIT.into(),reward_policy:"provisional: distinct latest fully-applied fresh roster neurons; one equal share; no manager bonus or redirection".into(),score_scale:quorum_policy::SCALE,bootstrap_staking_account:quorum_ic_clients::ledger::Account{owner:quorum_ic_clients::GOVERNANCE,subaccount:Some(quorum_ic_clients::ledger::staking_subaccount(ic_cdk::api::canister_self(),state::BOOTSTRAP_NONCE))},bootstrap_nonce:state::BOOTSTRAP_NONCE}
     })
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]

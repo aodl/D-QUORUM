@@ -28,6 +28,7 @@ fn enqueue(s: Script) {
 }
 #[ic_cdk::update]
 fn replace(f: Fixture) {
+    CALLS.with(|x| x.borrow_mut().push("fixture_replaced".into()));
     FIXTURE.with(|x| *x.borrow_mut() = f);
 }
 #[ic_cdk::query]
@@ -63,7 +64,8 @@ async fn list_known_neurons() {
     });
     let delay = DELAY_KNOWN.with(|c| c.replace(0));
     if delay > 0 {
-        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_hops")
+        CALLS.with(|x| x.borrow_mut().push("known_delay_started".into()));
+        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_wait")
             .with_arg(delay)
             .await;
     }
@@ -402,7 +404,15 @@ fn scale_neuron(id: u64) -> g::Neuron {
         followees: vec![(
             4,
             g::Followees {
-                followees: vec![g::NeuronId { id: 2_000_000 }],
+                followees: vec![g::NeuronId {
+                    id: FIXTURE.with(|f| {
+                        if f.borrow().known.is_empty() {
+                            2_000_000
+                        } else {
+                            100
+                        }
+                    }),
+                }],
             },
         )],
         neuron_fees_e8s: 0,
@@ -429,13 +439,24 @@ fn scale_index(r: &g::IndexRequest) -> Option<g::IndexPage> {
         if count == 0 {
             return None;
         }
-        let start = r.exclusive_start_neuron_id.as_ref().map_or(1, |n| n.id + 1);
-        Some(g::IndexPage {
-            neurons: (start..=count)
-                .take(r.page_size.unwrap_or(100) as usize)
-                .map(scale_info)
-                .collect(),
-        })
+        let after = r.exclusive_start_neuron_id.as_ref().map_or(0, |n| n.id);
+        let start = 1_000_000.max(after + 1);
+        let mut neurons: Vec<_> = (start..1_000_000 + count)
+            .take(r.page_size.unwrap_or(100) as usize)
+            .map(scale_info)
+            .collect();
+        FIXTURE.with(|f| {
+            neurons.extend(
+                f.borrow()
+                    .infos
+                    .iter()
+                    .filter(|n| n.id.as_ref().unwrap().id > after)
+                    .cloned(),
+            )
+        });
+        neurons.sort_by_key(|n| n.id.as_ref().unwrap().id);
+        neurons.truncate(r.page_size.unwrap_or(100) as usize);
+        Some(g::IndexPage { neurons })
     })
 }
 fn scale_full(r: &g::ListNeurons) -> Option<g::ListNeuronsResponse> {
@@ -448,11 +469,28 @@ fn scale_full(r: &g::ListNeurons) -> Option<g::ListNeuronsResponse> {
             .neuron_ids
             .iter()
             .copied()
-            .filter(|id| *id <= count)
+            .filter(|id| (1_000_000..1_000_000 + count).contains(id))
             .collect();
+        let mut neuron_infos: Vec<_> = ids.iter().map(|id| (*id, scale_info(*id))).collect();
+        let mut full_neurons: Vec<_> = ids.into_iter().map(scale_neuron).collect();
+        FIXTURE.with(|f| {
+            let f = f.borrow();
+            full_neurons.extend(
+                f.neurons
+                    .iter()
+                    .filter(|n| r.neuron_ids.contains(&n.id.as_ref().unwrap().id))
+                    .cloned(),
+            );
+            neuron_infos.extend(
+                f.infos
+                    .iter()
+                    .filter(|n| r.neuron_ids.contains(&n.id.as_ref().unwrap().id))
+                    .map(|n| (n.id.as_ref().unwrap().id, n.clone())),
+            );
+        });
         Some(g::ListNeuronsResponse {
-            neuron_infos: ids.iter().map(|id| (*id, scale_info(*id))).collect(),
-            full_neurons: ids.into_iter().map(scale_neuron).collect(),
+            neuron_infos,
+            full_neurons,
             total_pages_available: Some(1),
         })
     })
@@ -660,15 +698,18 @@ fn query_blocks(arg: l::BlocksArgs) -> l::History {
 
 thread_local! {static DELAY_KNOWN:std::cell::Cell<u32>=const{std::cell::Cell::new(0)};}
 #[ic_cdk::update]
-fn delay_known_once(hops: u32) {
-    assert!(hops <= 32);
-    DELAY_KNOWN.with(|c| c.set(hops));
+fn delay_known_once(seconds: u32) {
+    assert!(seconds <= 3600);
+    DELAY_KNOWN.with(|c| c.set(seconds));
 }
 #[ic_cdk::update]
-async fn delay_hops(hops: u32) {
-    if hops > 0 {
-        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_hops")
-            .with_arg(hops - 1)
+async fn delay_wait(seconds: u32) {
+    let until = ic_cdk::api::time() + u64::from(seconds) * 1_000_000_000;
+    // raw_rand crosses a round boundary; a self-call chain can finish in one round.
+    // This is a fault fixture, never a production scheduling mechanism.
+    while ic_cdk::api::time() < until {
+        let _ = ic_cdk::call::Call::unbounded_wait(Principal::management_canister(), "raw_rand")
+            .with_args(&())
             .await;
     }
 }

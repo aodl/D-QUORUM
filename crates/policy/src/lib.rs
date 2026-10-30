@@ -4,6 +4,7 @@ use dendrite_types::{ComplianceReport, ComplianceStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub const POLICY_REVISION: &str = "selection-1/reward-roster-equal-1";
 pub const EVALUATOR_COMMIT: &str = "b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291";
 pub const PROTOCOL_COMMIT: &str = "83f29e0803496ba6aaea3d6b43f6c6bebea12dd9";
 pub const SCALE: u128 = 360_360;
@@ -229,7 +230,9 @@ mod tests {
         let s = Scores::from([((4, 1), 1), ((4, 2), 1)]);
         let r = select(4, 5, &cs, &s).unwrap();
         assert_eq!(r.selected, vec![1, 2]);
-        assert_eq!(recipients(&[r.clone(), r]).len(), 2);
+        let mut other = r.clone();
+        other.topic = 3;
+        assert_eq!(recipients(&[other, r]).len(), 2);
         assert!(
             select(4, 5, &cs, &Scores::new())
                 .unwrap()

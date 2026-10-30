@@ -50,6 +50,12 @@ jobs:
       - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
       - run: cargo run --locked -p xtask -- production
       - run: cargo run --locked -p xtask -- scale
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: production-and-scale-evidence
+          path: dist/evidence/
+          if-no-files-found: error
   security:
     name: Dependency security
     runs-on: ubuntu-24.04
@@ -61,6 +67,12 @@ jobs:
       - run: rustup toolchain install 1.94.1 --profile minimal
       - run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo run --locked -p xtask -- security
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: dependency-security-and-sbom
+          path: dist/evidence/
+          if-no-files-found: error
   canonical:
     name: Canonical reproducibility
     if: github.event_name != 'pull_request'
@@ -71,12 +83,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - run: rustup toolchain install 1.94.1 --profile minimal
+      - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
       - run: cargo run --locked -p xtask -- reproducible
+      - run: cargo run --locked -p xtask -- canonical_artifact
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: canonical-candidate
-          path: dist/release/
+          path: |
+            dist/release/
+            dist/evidence/
           if-no-files-found: error
   coverage:
     name: Native coverage

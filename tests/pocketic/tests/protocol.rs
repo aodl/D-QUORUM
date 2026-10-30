@@ -2,6 +2,7 @@ mod support;
 use candid::{Principal, encode_one};
 use quorum_ic_clients::{GOVERNANCE, LEDGER, governance as g, ledger as l};
 use quorum_policy::TARGET;
+use sha2::Digest;
 use support::*;
 
 #[test]
@@ -339,6 +340,14 @@ fn real_ledger_duplicate_archive_staking_destination_and_cache_refresh() {
     assert!(
         !h.archived_blocks.is_empty(),
         "real archive was not exercised"
+    );
+    let archive = h.archived_blocks[0].callback.0.principal;
+    let status = pic.canister_status(archive, None).unwrap();
+    let expected = sha2::Sha256::digest(artifact("ledger-archive-node-canister"));
+    assert_eq!(
+        status.module_hash,
+        Some(expected.to_vec()),
+        "actual archive must match its artifact pin"
     );
     let count: Result<u64, String> = update(
         &pic,

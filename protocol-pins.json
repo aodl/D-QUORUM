@@ -4,7 +4,10 @@
   "pocketic": {
     "version": "15.0.0",
     "url": "https://github.com/dfinity/pocketic/releases/download/15.0.0/pocket-ic-x86_64-linux.gz",
-    "uncompressed_sha256": "29472ea4433b30a280676c4e22e369d79d5ba6ee1b4d48bab32ebe7d0ad2b4bb"
+    "uncompressed_sha256": "29472ea4433b30a280676c4e22e369d79d5ba6ee1b4d48bab32ebe7d0ad2b4bb",
+    "server_source_revision": "8258578e6212d445aeeafb71c1160fa4ea356d60",
+    "release_tag_revision": "07bfae058ce2aa56994759b563531a7e8d98ba96",
+    "source_reference": "https://github.com/dfinity/pocketic/releases/tag/15.0.0"
   },
   "artifacts": [
     {

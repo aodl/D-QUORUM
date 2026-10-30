@@ -4,101 +4,6 @@ use d_quorum::state::{Init, Mode};
 use quorum_ic_clients::{GOVERNANCE, governance as g};
 use quorum_policy::{SCALE, TARGET};
 use support::*;
-fn raw(id: u64, controller: Principal, at: u64) -> g::Neuron {
-    g::Neuron {
-        id: Some(g::NeuronId { id }),
-        account: vec![(id % 251) as u8; 32],
-        controller: Some(controller),
-        not_for_profit: false,
-        maturity_e8s_equivalent: 0,
-        cached_neuron_stake_e8s: 1_000_000_000,
-        created_timestamp_seconds: at - 100,
-        auto_stake_maturity: Some(false),
-        aging_since_timestamp_seconds: at - 100,
-        hot_keys: vec![],
-        dissolve_state: Some(g::DissolveState::DissolveDelaySeconds(
-            dendrite_types::MAX_DISSOLVE_DELAY_SECONDS,
-        )),
-        followees: vec![],
-        neuron_fees_e8s: 0,
-        visibility: Some(2),
-        known_neuron_data: None,
-        voting_power_refreshed_timestamp_seconds: Some(at),
-        deciding_voting_power: Some(12000),
-        potential_voting_power: Some(12000),
-        staked_maturity_e8s_equivalent: None,
-        maturity_disbursements_in_progress: Some(vec![]),
-    }
-}
-fn fixture(at: u64, empty: Principal, app: Principal) -> quorum_mocks::Fixture {
-    let mut candidate = raw(100, empty, at);
-    candidate.known_neuron_data = Some(known(100));
-    candidate.followees = dendrite_types::RECOGNISED_TOPICS
-        .into_iter()
-        .map(|t| {
-            if t == 1 {
-                fs(t, &[101, 102, 103, 104, 105])
-            } else if t == 4 {
-                fs(t, &[101, 102, 103])
-            } else {
-                fs(t, &[dendrite_types::ALPHA_VOTE_NEURON_ID])
-            }
-        })
-        .collect();
-    let mut neurons = vec![candidate];
-    for id in 101..=105 {
-        let mut n = raw(id, user(id as u8), at);
-        n.known_neuron_data = Some(known(id));
-        n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
-        neurons.push(n);
-    }
-    for id in [
-        dendrite_types::ALPHA_VOTE_NEURON_ID,
-        dendrite_types::OMEGA_REJECT_NEURON_ID,
-    ] {
-        neurons.push(raw(id, user(1), at));
-    }
-    let mut follower = raw(200, user(2), at);
-    follower.followees = vec![fs(4, &[100])];
-    neurons.push(follower);
-    let mut private = raw(201, app, at);
-    private.visibility = Some(1);
-    private.followees = vec![fs(4, &[100])];
-    private.deciding_voting_power = Some(u64::MAX);
-    private.potential_voting_power = Some(u64::MAX);
-    neurons.push(private);
-    let mut target = raw(TARGET, user(9), at);
-    target.hot_keys = vec![app];
-    target.followees = vec![
-        fs(1, &[101, 102, 103]),
-        fs(4, &[dendrite_types::ALPHA_VOTE_NEURON_ID]),
-    ];
-    neurons.push(target);
-    neurons.sort_by_key(|n| n.id.as_ref().unwrap().id);
-    let infos = neurons
-        .iter()
-        .map(|n| g::NeuronInfo {
-            id: n.id.clone(),
-            retrieved_at_timestamp_seconds: at,
-            known_neuron_data: n.known_neuron_data.clone(),
-            visibility: n.visibility,
-        })
-        .collect();
-    let known = neurons
-        .iter()
-        .filter_map(|n| {
-            n.known_neuron_data.as_ref().map(|m| g::KnownNeuron {
-                id: n.id.clone(),
-                known_neuron_data: Some(m.clone()),
-            })
-        })
-        .collect();
-    quorum_mocks::Fixture {
-        neurons,
-        known,
-        infos,
-    }
-}
 fn setup(mode: Mode) -> (pocket_ic::PocketIc, Principal, Vec<u8>) {
     let production = wasm("d_quorum");
     let mock = wasm("quorum_mocks");
@@ -749,6 +654,12 @@ fn lost_proposal_reply_recovers_exact_history_after_upgrade_without_resubmission
 fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
     for cycle in [false, true] {
         let (pic, app, _) = setup(Mode::Live);
+        pic.set_controllers(
+            GOVERNANCE,
+            None,
+            vec![Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap()],
+        )
+        .unwrap();
         let empty = pic.create_canister();
         pic.set_controllers(empty, None, vec![]).unwrap();
         if !cycle {
@@ -797,6 +708,13 @@ fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
             }
         }
         assert!(failed, "material change/cycle was not rejected");
+        let progress: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+        assert!(
+            progress
+                .last_failure
+                .as_ref()
+                .is_some_and(|s| s.contains(if cycle { "cycle" } else { "candidate changed" }))
+        );
         let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
         assert!(!calls.iter().any(|x| x == "manage_neuron"));
         let r: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
@@ -852,12 +770,21 @@ fn delayed_expired_callback_cannot_restore_an_older_discovery_result() {
         GOVERNANCE,
         Principal::anonymous(),
         "delay_known_once",
-        30u32,
+        1200u32,
     );
-    drive(&pic, 10);
-    let empty = pic.create_canister();
-    pic.set_controllers(empty, None, vec![]).unwrap();
-    let mut changed = fixture(now(&pic), empty, app);
+    // Do not use await_ingress here: it may drive enough rounds to finish the delayed call.
+    pic.advance_time(std::time::Duration::from_secs(10));
+    for _ in 0..10 {
+        pic.tick();
+        let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+        if calls.iter().any(|x| x == "known_delay_started") {
+            break;
+        }
+    }
+    let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    assert!(calls.iter().any(|x| x == "known_delay_started"));
+    assert!(!calls.iter().any(|x| x == "list_known_neurons"));
+    let mut changed = fixture(now(&pic), Principal::anonymous(), app);
     changed.known.clear();
     for n in &mut changed.neurons {
         n.known_neuron_data = None;
@@ -865,10 +792,25 @@ fn delayed_expired_callback_cannot_restore_an_older_discovery_result() {
     for n in &mut changed.infos {
         n.known_neuron_data = None;
     }
-    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", changed);
+    pic.submit_call(
+        GOVERNANCE,
+        Principal::anonymous(),
+        "replace",
+        encode_one(changed).unwrap(),
+    )
+    .unwrap();
+    for _ in 0..5 {
+        pic.tick();
+    }
+    let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    assert!(calls.iter().any(|x| x == "fixture_replaced"));
+    assert!(!calls.iter().any(|x| x == "list_known_neurons"));
     drive(&pic, 601);
     wait_ready(&pic, app, "ready");
+    let before: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    drive(&pic, 601); // Deliver the old response after the replacement discovery has finished.
     let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(p.round, before.round);
     assert_eq!(p.discovered_candidates, 0);
     assert_eq!(p.evaluated_candidates, 0);
     let h: d_quorum::Health = query_empty(&pic, app, "health");
@@ -932,4 +874,62 @@ fn partial_full_batch_failure_and_scan_upgrade_count_each_public_neuron_once() {
     let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
     assert_eq!(p.full_batches, 2);
     assert_eq!(p.failures, 1);
+}
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn valid_empty_round_clears_ordinary_following_and_nonempty_catchall_blocks_writes() {
+    for catchall in [false, true] {
+        let (pic, app, _) = setup(Mode::Live);
+        let empty = pic.create_canister();
+        pic.set_controllers(empty, None, vec![]).unwrap();
+        let mut f = fixture(now(&pic), empty, app);
+        if catchall {
+            f.neurons
+                .iter_mut()
+                .find(|n| n.id.as_ref().unwrap().id == TARGET)
+                .unwrap()
+                .followees
+                .push(fs(0, &[100]));
+        } else {
+            f.known.clear();
+            for n in &mut f.neurons {
+                n.known_neuron_data = None;
+            }
+            for n in &mut f.infos {
+                n.known_neuron_data = None;
+            }
+        }
+        let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
+        pic.set_controllers(
+            GOVERNANCE,
+            None,
+            vec![Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap()],
+        )
+        .unwrap();
+        if catchall {
+            wait_ready(&pic, app, "ready");
+            for delay in [10, 120, 240, 480, 960] {
+                drive(&pic, delay);
+            }
+            let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+            assert_eq!(p.phase, "failed");
+            assert!(
+                p.last_failure
+                    .as_ref()
+                    .is_some_and(|e| e.contains("CatchAll"))
+            );
+            let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+            assert!(!calls.iter().any(|c| c == "manage_neuron"));
+        } else {
+            wait_ready(&pic, app, "complete");
+            let rosters: Vec<d_quorum::RosterView> =
+                query2(&pic, app, "roster_page", (0u16, 100u16));
+            assert!(
+                rosters
+                    .iter()
+                    .all(|r| r.applied_round.is_some() && r.applied.is_empty())
+            );
+        }
+    }
 }

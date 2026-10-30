@@ -384,3 +384,99 @@ pub fn query2<A: CandidType, B: CandidType, R: CandidType + for<'de> Deserialize
         .unwrap();
     decode_one(&bytes).unwrap()
 }
+
+pub fn raw(id: u64, controller: Principal, at: u64) -> g::Neuron {
+    g::Neuron {
+        id: Some(g::NeuronId { id }),
+        account: vec![(id % 251) as u8; 32],
+        controller: Some(controller),
+        not_for_profit: false,
+        maturity_e8s_equivalent: 0,
+        cached_neuron_stake_e8s: 1_000_000_000,
+        created_timestamp_seconds: at - 100,
+        auto_stake_maturity: Some(false),
+        aging_since_timestamp_seconds: at - 100,
+        hot_keys: vec![],
+        dissolve_state: Some(g::DissolveState::DissolveDelaySeconds(
+            dendrite_types::MAX_DISSOLVE_DELAY_SECONDS,
+        )),
+        followees: vec![],
+        neuron_fees_e8s: 0,
+        visibility: Some(2),
+        known_neuron_data: None,
+        voting_power_refreshed_timestamp_seconds: Some(at),
+        deciding_voting_power: Some(12000),
+        potential_voting_power: Some(12000),
+        staked_maturity_e8s_equivalent: None,
+        maturity_disbursements_in_progress: Some(vec![]),
+    }
+}
+pub fn fixture(at: u64, empty: Principal, app: Principal) -> quorum_mocks::Fixture {
+    let mut candidate = raw(100, empty, at);
+    candidate.known_neuron_data = Some(known(100));
+    candidate.followees = dendrite_types::RECOGNISED_TOPICS
+        .into_iter()
+        .map(|t| {
+            if t == 1 {
+                fs(t, &[101, 102, 103, 104, 105])
+            } else if t == 4 {
+                fs(t, &[101, 102, 103])
+            } else {
+                fs(t, &[dendrite_types::ALPHA_VOTE_NEURON_ID])
+            }
+        })
+        .collect();
+    let mut neurons = vec![candidate];
+    for id in 101..=105 {
+        let mut n = raw(id, user(id as u8), at);
+        n.known_neuron_data = Some(known(id));
+        n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
+        neurons.push(n);
+    }
+    for id in [
+        dendrite_types::ALPHA_VOTE_NEURON_ID,
+        dendrite_types::OMEGA_REJECT_NEURON_ID,
+    ] {
+        neurons.push(raw(id, user(1), at));
+    }
+    let mut follower = raw(200, user(2), at);
+    follower.followees = vec![fs(4, &[100])];
+    neurons.push(follower);
+    let mut private = raw(201, app, at);
+    private.visibility = Some(1);
+    private.followees = vec![fs(4, &[100])];
+    private.deciding_voting_power = Some(u64::MAX);
+    private.potential_voting_power = Some(u64::MAX);
+    neurons.push(private);
+    let mut target = raw(quorum_policy::TARGET, user(9), at);
+    target.hot_keys = vec![app];
+    target.followees = vec![
+        fs(1, &[101, 102, 103]),
+        fs(4, &[dendrite_types::ALPHA_VOTE_NEURON_ID]),
+    ];
+    neurons.push(target);
+    neurons.sort_by_key(|n| n.id.as_ref().unwrap().id);
+    let infos = neurons
+        .iter()
+        .map(|n| g::NeuronInfo {
+            id: n.id.clone(),
+            retrieved_at_timestamp_seconds: at,
+            known_neuron_data: n.known_neuron_data.clone(),
+            visibility: n.visibility,
+        })
+        .collect();
+    let known = neurons
+        .iter()
+        .filter_map(|n| {
+            n.known_neuron_data.as_ref().map(|m| g::KnownNeuron {
+                id: n.id.clone(),
+                known_neuron_data: Some(m.clone()),
+            })
+        })
+        .collect();
+    quorum_mocks::Fixture {
+        neurons,
+        known,
+        infos,
+    }
+}

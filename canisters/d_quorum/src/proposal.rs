@@ -138,10 +138,11 @@ async fn preflight(proposer: u64) -> Result<(), String> {
     {
         return Err("waiting for separately authorized manager membership".into());
     }
-    if target
+    if !target
         .maturity_disbursements_in_progress
         .as_ref()
-        .is_some_and(|xs| !xs.is_empty())
+        .ok_or("required maturity-progress field unavailable")?
+        .is_empty()
     {
         return Err("maturity disbursement already in progress".into());
     }

@@ -41,6 +41,7 @@ type Configuration = record {
   evaluator_commit : text;
   governance : principal;
   config : Config;
+  policy_revision : text;
   bootstrap_nonce : nat64;
   protocol_commit : text;
 };

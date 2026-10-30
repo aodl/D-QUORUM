@@ -187,6 +187,7 @@ pub struct PayoutDraft {
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct State {
+    pub policy_pin: String,
     pub config: Config,
     pub jobs: Vec<Job>,
     pub round_nonce: u64,
@@ -206,11 +207,20 @@ pub struct State {
     pub initialized_at: u64,
 }
 impl State {
+    fn current_policy_pin() -> String {
+        format!(
+            "{}:{}:{}",
+            quorum_policy::POLICY_REVISION,
+            quorum_policy::EVALUATOR_COMMIT,
+            quorum_policy::PROTOCOL_COMMIT
+        )
+    }
     pub fn new(i: Init, now: u64) -> Result<Self, String> {
         if i.mode != Mode::ObserveOnly && i.expected_target_controller.is_none() {
             return Err("write modes require the reviewed target controller".into());
         }
         Ok(Self {
+            policy_pin: Self::current_policy_pin(),
             config: Config {
                 mode: i.mode,
                 expected_target_controller: i.expected_target_controller,
@@ -263,6 +273,28 @@ impl State {
         Ok(self.config.revision)
     }
     pub fn recover(&mut self) {
+        let pin = Self::current_policy_pin();
+        if self.policy_pin != pin {
+            self.policy_pin = pin;
+            self.config.revision = self
+                .config
+                .revision
+                .checked_add(1)
+                .expect("revision overflow");
+            self.config.mode = Mode::ObserveOnly;
+            self.draft = None;
+            // Preserve a dispatched write for readback, as with a configuration change.
+            if !self
+                .round
+                .as_ref()
+                .is_some_and(|r| matches!(r.phase, ScanPhase::Applying { sent: true }))
+            {
+                self.round = None;
+            }
+            for j in &mut self.jobs {
+                j.next_at = 0;
+            }
+        }
         for j in &mut self.jobs {
             j.generation = j.generation.checked_add(1).expect("generation overflow");
             j.busy_until = 0;
@@ -364,6 +396,46 @@ pub fn snapshot_size() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn policy_upgrade_invalidates_computation_but_preserves_obligations() {
+        let mut s = State::new(
+            Init {
+                mode: Mode::Live,
+                expected_target_controller: Some(Principal::anonymous()),
+            },
+            1,
+        )
+        .unwrap();
+        s.policy_pin = "older-policy".into();
+        s.round = Some(Round::new(1, 0, 1));
+        let mut plan = Plan::build(
+            1,
+            1,
+            100_000,
+            10,
+            1,
+            0,
+            vec![Destination {
+                neuron_id: 10,
+                subaccount: vec![1; 32],
+                validated_at: 1,
+            }],
+        )
+        .unwrap();
+        plan.dispatch(0, 1).unwrap();
+        let before = candid::encode_one(&plan).unwrap();
+        s.payout = Some(plan);
+        let mut restored = decode(&encode(&s)).unwrap();
+        restored.recover();
+        assert_eq!(restored.config.mode, Mode::ObserveOnly);
+        assert_eq!(restored.config.revision, 1);
+        assert_eq!(restored.policy_pin, State::current_policy_pin());
+        assert!(restored.round.is_none());
+        assert_eq!(
+            candid::encode_one(restored.payout.unwrap()).unwrap(),
+            before
+        );
+    }
     #[test]
     fn setter_only_governance_and_recovery() {
         let mut s = State::new(
