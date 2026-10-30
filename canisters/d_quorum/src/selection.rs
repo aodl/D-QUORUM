@@ -359,6 +359,10 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 r.phase = Complete;
             } else if r.revision != config.revision {
                 r.phase = Failed("configuration changed; old write read back without retry".into());
+            } else if config.mode != Mode::Live {
+                return Err(
+                    "following intent retained for readback; write mode is inactive".into(),
+                );
             } else if sent && r.apply_attempts >= 3 {
                 return Err("following write remains unreconciled after bounded retries".into());
             } else {
@@ -399,6 +403,19 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             });
         }
     }
-    state::guarded(token, |s| s.round = Some(r));
+    state::guarded(token, |s| {
+        // Reserve the cadence when entering a terminal phase, before the next timer can retire it.
+        // Otherwise the next ten-second tick could accidentally start another weekly round.
+        if matches!(r.phase, Complete) || (matches!(r.phase, Ready) && s.config.mode != Mode::Live)
+        {
+            s.jobs[0].next_at = now + 7 * DAY;
+        } else if matches!(r.phase, Failed(_)) {
+            s.jobs[0].next_at = now + 3600;
+        }
+        if let Some(end) = r.scan_ended_at {
+            s.last_complete_scan = Some((r.started_at, end));
+        }
+        s.round = Some(r);
+    });
     Ok(())
 }

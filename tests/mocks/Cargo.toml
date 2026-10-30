@@ -1,0 +1,15 @@
+[package]
+name = "quorum-mocks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+candid.workspace = true
+serde.workspace = true
+ic-cdk.workspace = true
+ic-cdk-timers.workspace = true
+quorum-ic-clients.workspace = true
+dendrite-types.workspace = true

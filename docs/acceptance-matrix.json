@@ -1,0 +1,135 @@
+{
+  "qualified": false,
+  "requirements": [
+    {
+      "requirement": "exact scoring and manager-disjoint selection",
+      "suite": "unit",
+      "status": "executed"
+    },
+    {
+      "requirement": "pinned 23-rule evaluator and parity",
+      "suite": "unit",
+      "status": "executed"
+    },
+    {
+      "requirement": "public-only resumable index and candidate discovery",
+      "suite": "mock",
+      "status": "executed"
+    },
+    {
+      "requirement": "setter actual-caller authorization and invalidation",
+      "suite": "mock",
+      "status": "executed"
+    },
+    {
+      "requirement": "lost following reply reconciles before retry",
+      "suite": "mock",
+      "status": "executed"
+    },
+    {
+      "requirement": "lost transfer reply upgrade and immutable deposit snapshot",
+      "suite": "mock",
+      "status": "executed"
+    },
+    {
+      "requirement": "partial payout fee change and roster change",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "lost proposal reply history recovery after restart",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "expired deduplication, authoritative absence and lag",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "delayed replies, callback reordering and partial batches",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "candidate changes before application and explicit voting cycles",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "failure retains previous fully applied roster",
+      "suite": "mock",
+      "status": "pending"
+    },
+    {
+      "requirement": "real canister-origin Governance reads",
+      "suite": "protocol",
+      "status": "pending"
+    },
+    {
+      "requirement": "real hotkey ordinary/NM/maturity permissions",
+      "suite": "protocol",
+      "status": "pending"
+    },
+    {
+      "requirement": "real canister-owned manager proposal and other-manager voting",
+      "suite": "protocol",
+      "status": "pending"
+    },
+    {
+      "requirement": "real not_for_profit=false maturity and seven-day finalization",
+      "suite": "protocol",
+      "status": "pending"
+    },
+    {
+      "requirement": "real Ledger staking, fees, duplicate, archives and cache refresh",
+      "suite": "protocol",
+      "status": "executed"
+    },
+    {
+      "requirement": "real production timer bootstrap, roster, proposal, payout, upgrade",
+      "suite": "protocol",
+      "status": "pending"
+    },
+    {
+      "requirement": "actual production exports and Candid compatibility",
+      "suite": "production",
+      "status": "pending"
+    },
+    {
+      "requirement": "production canonical-artifact natural-timer tests",
+      "suite": "production",
+      "status": "pending"
+    },
+    {
+      "requirement": "coverage executed with scope and counts",
+      "suite": "coverage",
+      "status": "pending"
+    },
+    {
+      "requirement": "large index memory/stable/instruction/call measurements",
+      "suite": "scale",
+      "status": "pending"
+    },
+    {
+      "requirement": "populated-score large-index capacity qualification",
+      "suite": "scale",
+      "status": "pending"
+    },
+    {
+      "requirement": "security findings, SBOM and dependency isolation",
+      "suite": "security",
+      "status": "executed"
+    },
+    {
+      "requirement": "two clean canonical builds identical files and bytes",
+      "suite": "reproducible",
+      "status": "pending"
+    },
+    {
+      "requirement": "complete acceptance run with no skipped mandatory gate",
+      "suite": "acceptance",
+      "status": "pending"
+    }
+  ]
+}

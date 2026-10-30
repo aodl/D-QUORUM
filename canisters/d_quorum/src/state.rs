@@ -192,6 +192,7 @@ pub struct State {
     pub round_nonce: u64,
     pub round: Option<Round>,
     pub applied: Option<Applied>,
+    pub last_complete_scan: Option<(u64, u64)>,
     pub bootstrap: Bootstrap,
     pub proposer: Option<u64>,
     pub proposal_nonce: u64,
@@ -220,6 +221,7 @@ impl State {
             round_nonce: 0,
             round: None,
             applied: None,
+            last_complete_scan: None,
             bootstrap: Bootstrap::Inactive,
             proposer: None,
             proposal_nonce: 0,
@@ -398,5 +400,46 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn upgrade_fences_workers_and_keeps_ambiguous_proposal_identity() {
+        let mut s = State::new(
+            Init {
+                mode: Mode::ObserveOnly,
+                expected_target_controller: None,
+            },
+            1,
+        )
+        .unwrap();
+        s.proposal = Some(ProposalJob {
+            operation: 7,
+            proposer: 9,
+            created_at: 1,
+            marker: "unique operation 7".into(),
+            fingerprint: vec![4; 32],
+            phase: ProposalPhase::Intent,
+            history_before: None,
+            history_pages: 0,
+            found: vec![],
+            saw_disbursement: false,
+            earliest_finalization: None,
+            ledger_cursor: 0,
+            receipt: None,
+            retry_after: 0,
+        });
+        install(s);
+        let t = Token {
+            job: 0,
+            generation: 0,
+        };
+        change(State::recover);
+        assert!(guarded(t, |s| s.proposal = None).is_none());
+        let encoded = read(encode);
+        let restored = decode(&encoded).unwrap();
+        let intent = restored.proposal.unwrap();
+        assert!(matches!(intent.phase, ProposalPhase::Ambiguous));
+        assert_eq!(intent.operation, 7);
+        assert_eq!(intent.fingerprint, vec![4; 32]);
+        assert_eq!(intent.marker, "unique operation 7");
     }
 }

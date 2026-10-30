@@ -1,0 +1,20 @@
+[package]
+name = "quorum-pocketic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[dependencies]
+candid.workspace = true
+serde.workspace = true
+pocket-ic.workspace = true
+sha2.workspace = true
+hex.workspace = true
+quorum-ic-clients.workspace = true
+quorum-policy.workspace = true
+quorum-accounting.workspace = true
+d-quorum.workspace = true
+quorum-mocks = { path = "../mocks" }
+serde_json.workspace = true
+flate2 = "=1.1.10"
+dendrite-types.workspace = true

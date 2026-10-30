@@ -137,6 +137,7 @@ type ScanProgress = record {
   discovered_candidates : nat64;
   revision : opt nat64;
   last_failure : opt text;
+  last_complete_scan : opt record { nat64; nat64 };
   round : opt nat64;
   started_at : opt nat64;
   public_observations : nat64;

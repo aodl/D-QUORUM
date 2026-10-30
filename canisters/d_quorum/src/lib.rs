@@ -163,6 +163,7 @@ pub struct ScanProgress {
     pub discovered_candidates: u64,
     pub evaluated_candidates: u64,
     pub last_applied_scan: Option<(u64, u64)>,
+    pub last_complete_scan: Option<(u64, u64)>,
 }
 #[ic_cdk::query]
 fn scan_progress() -> ScanProgress {
@@ -203,6 +204,7 @@ fn scan_progress() -> ScanProgress {
             discovered_candidates: r.map_or(0, |r| r.known.len() as u64),
             evaluated_candidates: r.map_or(0, |r| r.outcomes.len() as u64),
             last_applied_scan: s.applied.as_ref().map(|a| (a.scan_start, a.scan_end)),
+            last_complete_scan: s.last_complete_scan,
         }
     })
 }

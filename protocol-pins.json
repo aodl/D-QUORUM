@@ -31,5 +31,11 @@
       "sha256": "ca33a2e2cc2e10d8019da5d1b9013cd9ab9957d7607f7de3004980d43a8f64f8",
       "wasm_sha256": "538fc204379c53f6cb9ddc70c11122a0a26f6a7a7a01a0a2a6c30c5d3c76ef4d"
     }
-  ]
+  ],
+  "didc": {
+    "version": "0.6.2",
+    "url": "https://github.com/dfinity/candid/releases/download/didc-v0.6.2/didc-x86_64-unknown-linux-musl.tar.xz",
+    "archive_sha256": "ced232a08d12190f7124110b6a39d8023732160838c062285e015d2c03bcc930",
+    "uncompressed_sha256": "f2b11f55960fd1662b4635d9f63def383ef192854c6a50d86d3de5b6785d5421"
+  }
 }

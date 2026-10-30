@@ -1,0 +1,9 @@
+FROM docker.io/library/rust:1.94.1-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2 AS builder
+ENV SOURCE_DATE_EPOCH=0 CARGO_INCREMENTAL=0
+WORKDIR /source
+RUN rustup target add wasm32-unknown-unknown
+COPY . .
+RUN cargo build --locked --release --target wasm32-unknown-unknown -p d-quorum
+RUN mkdir /artifacts && cp target/wasm32-unknown-unknown/release/d_quorum.wasm /artifacts/d_quorum.wasm && cp candid/d_quorum.did /artifacts/d_quorum.did
+FROM scratch AS artifacts
+COPY --from=builder /artifacts/ /

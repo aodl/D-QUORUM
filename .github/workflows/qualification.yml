@@ -1,0 +1,96 @@
+name: D-QUORUM qualification
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qualification-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_TEST_DEBUG: 0
+  DFX_IDENTITY: codex_local
+jobs:
+  behavioral:
+    name: Behavioral (${{ matrix.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, mock, protocol]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt --component clippy --component llvm-tools-preview --target wasm32-unknown-unknown
+      - if: matrix.suite == 'unit'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo run --locked -p xtask -- ${{ matrix.suite }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: evidence-${{ matrix.suite }}
+          path: dist/evidence/
+          if-no-files-found: error
+  production:
+    name: Production artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
+      - run: cargo run --locked -p xtask -- production
+      - run: cargo run --locked -p xtask -- scale
+  security:
+    name: Dependency security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo run --locked -p xtask -- security
+  canonical:
+    name: Canonical reproducibility
+    if: github.event_name != 'pull_request'
+    needs: [behavioral, production, security, coverage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal
+      - run: cargo run --locked -p xtask -- reproducible
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: canonical-candidate
+          path: dist/release/
+          if-no-files-found: error
+  coverage:
+    name: Native coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal --component llvm-tools-preview
+      - run: cargo install cargo-llvm-cov --version 0.6.16 --locked
+      - run: cargo run --locked -p xtask -- coverage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-coverage
+          path: dist/evidence/
+          if-no-files-found: error

@@ -209,6 +209,16 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         draft.offset += 1;
         state::guarded(token, |s| s.draft = Some(draft));
     } else {
+        let actual = crate::selection::following(&crate::selection::target().await?);
+        if roster
+            .rosters
+            .iter()
+            .any(|r| actual.get(&r.topic).cloned().unwrap_or_default() != r.selected)
+        {
+            return Err(
+                "funds retained: current following differs from the reconciled roster".into(),
+            );
+        }
         let fee = l::fee().await?;
         let balance = l::balance(owner, None).await?;
         let anchor = l::history(0, 0).await?.chain_length;

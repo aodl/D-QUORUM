@@ -1,0 +1,25 @@
+# D-QUORUM
+
+One stateful Rust Internet Computer canister for deterministic, topic-specific Dendrite delegation and equal ICP rewards to selected neuron staking accounts.
+
+**Release status: implementation candidate; not yet fully qualified or authorised for production.** Installation defaults to `ObserveOnly`. Mandatory qualification is tracked in [the acceptance matrix](docs/acceptance-matrix.json). A successful build does not close an unexecuted gate. No production deployment, funding, staking, hotkey installation, proposal, transfer, controller change or push is part of this repository's local work.
+
+The provisional reward policy gives **one equal net share to each distinct neuron in the latest fully applied, sufficiently fresh roster**, regardless of how many topics select it. VP ranks delegates; it does not weight payment. Managers get no additional share. Reward-receiver declarations do not redirect ICP. Review this policy before any deployment.
+
+The production workspace consists of `canisters/d_quorum`, `crates/policy`, `crates/accounting`, `crates/ic_clients`, and the unchanged vendored Dendrite evaluator. Test-only recording canisters live in `tests/mocks`; real and mock PocketIC suites live in `tests/pocketic`. There is no frontend or dfx configuration.
+
+```sh
+cargo run --locked -p xtask -- unit
+cargo run --locked -p xtask -- mock
+cargo run --locked -p xtask -- protocol
+cargo run --locked -p xtask -- production
+cargo run --locked -p xtask -- scale
+cargo run --locked -p xtask -- coverage
+cargo run --locked -p xtask -- security
+cargo run --locked -p xtask -- reproducible
+cargo run --locked -p xtask -- acceptance
+```
+
+All long suites are explicitly executed with `--ignored` by xtask. Missing tools, zero executed behavioural matches and incomplete required qualification fail. Wasm is prepared before starting fixtures. Required test artifacts are downloaded only from immutable URLs and verified against `protocol-pins.json`.
+
+Read the [specification](docs/specification.md), [security model](docs/security.md), [testing contract](docs/testing.md), [operations procedure](docs/operations.md), [source provenance](docs/provenance.md), and [qualification report](docs/qualification.md). The public API is [candid/d_quorum.did](candid/d_quorum.did).

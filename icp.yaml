@@ -1,0 +1,19 @@
+canisters:
+  - name: d_quorum
+    settings:
+      freezing_threshold: 7776000
+    recipe:
+      type: "@dfinity/prebuilt@v2.0.0"
+      configuration:
+        path: dist/release/d_quorum.wasm
+networks:
+  - name: local
+    mode: managed
+    version: 15.0.0-2026-08-20-03-30
+    gateway:
+      bind: 127.0.0.1
+      port: 4943
+environments:
+  - name: local
+    network: local
+    canisters: [d_quorum]
