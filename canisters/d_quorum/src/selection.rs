@@ -366,7 +366,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             } else if sent && r.apply_attempts >= 3 {
                 return Err("following write remains unreconciled after bounded retries".into());
             } else {
-                if r.validated_at.is_none_or(|t| now.saturating_sub(t) > 1800) {
+                let write_now = ic_cdk::api::time() / 1_000_000_000;
+                if r.validated_at
+                    .is_none_or(|t| write_now.saturating_sub(t) > 1800)
+                    || write_now.saturating_sub(r.started_at) > MAX_ROUND_AGE
+                {
                     return Err("candidate validation expired before following retry".into());
                 }
                 let changed: Vec<_> = r

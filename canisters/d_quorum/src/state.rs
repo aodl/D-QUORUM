@@ -346,7 +346,11 @@ pub struct Token {
     pub generation: u64,
 }
 pub fn current(t: Token) -> bool {
-    read(|s| s.jobs[t.job].generation == t.generation)
+    #[cfg(target_arch = "wasm32")]
+    let now = ic_cdk::api::time() / 1_000_000_000;
+    #[cfg(not(target_arch = "wasm32"))]
+    let now = 0;
+    read(|s| s.jobs[t.job].generation == t.generation && now < s.jobs[t.job].busy_until)
 }
 pub fn guarded<R>(t: Token, f: impl FnOnce(&mut State) -> R) -> Option<R> {
     if !current(t) {
