@@ -149,7 +149,9 @@ def full():
     if SOURCE_DIRTY:raise RuntimeError('commit source before full acceptance and canonical builds')
     run(['cargo','fmt','--all','--','--check'])
     run(['cargo','clippy','--locked','--workspace','--all-targets','--','-D','warnings'])
-    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');completed_suites.add('reproducible');canonical_artifact()
+    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security()
+    if subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()!=SOURCE_COMMIT or subprocess.check_output(['git','status','--porcelain']).strip():raise RuntimeError('source changed during acceptance; rerun from one clean commit')
+    run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');completed_suites.add('reproducible');canonical_artifact()
     # Source matrix describes coverage, not stale assertions that tests ran.
     # Execution evidence is generated only after every required suite actually succeeds.
     matrix=json.loads((ROOT/'docs/acceptance-matrix.json').read_text())
