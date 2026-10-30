@@ -163,13 +163,11 @@ async fn preflight(proposer: u64) -> Result<(), String> {
         return Err("unsafe proposer binding or following".into());
     }
     let e = g::economics().await?;
+    let required = u128::from(e.neuron_management_fee_per_proposal_e8s)
+        + u128::from(e.neuron_minimum_stake_e8s);
     if n.cached_neuron_stake_e8s
         .checked_sub(n.neuron_fees_e8s)
-        .is_none_or(|s| {
-            s < e
-                .neuron_management_fee_per_proposal_e8s
-                .saturating_add(e.neuron_minimum_stake_e8s)
-        })
+        .is_none_or(|s| u128::from(s) < required)
     {
         return Err("proposer stake does not cover fee and minimum stake reserve".into());
     }
@@ -215,6 +213,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         return Ok(());
     }
     let mut j = current.unwrap();
+    let mut history_backlog = false;
     match j.phase.clone() {
         Checking | Ambiguous | Intent => {
             let ambiguous = matches!(j.phase, Ambiguous | Intent);
@@ -385,6 +384,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 }
             }
             j.ledger_cursor += blocks.len() as u64;
+            history_backlog = j.ledger_cursor < h.chain_length;
             if j.saw_disbursement
                 && n.maturity_disbursements_in_progress
                     .as_ref()
@@ -408,11 +408,12 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     }
     state::guarded(token, |s| {
         s.proposal = Some(j);
-        s.jobs[1].next_at = now
-            + if matches!(
-                s.proposal.as_ref().unwrap().phase,
-                Checking | Preflight | Intent | Ambiguous
-            ) {
+        s.jobs[1].next_at =
+            now + if history_backlog
+                || matches!(
+                    s.proposal.as_ref().unwrap().phase,
+                    Checking | Preflight | Intent | Ambiguous
+                ) {
                 10
             } else {
                 3600

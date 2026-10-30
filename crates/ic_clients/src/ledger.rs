@@ -154,6 +154,12 @@ pub async fn history(start: u64, length: u64) -> Result<History, String> {
     let h: History = call(LEDGER, "query_blocks", BlocksArgs { start, length }).await?;
     if h.blocks.len() > 100
         || h.archived_blocks.len() > 100
+        || h.archived_blocks.iter().any(|a| {
+            a.length == 0
+                || a.start
+                    .checked_add(a.length)
+                    .is_none_or(|end| end > h.chain_length)
+        })
         || h.first_block_index
             .checked_add(h.blocks.len() as u64)
             .is_none_or(|end| end > h.chain_length)

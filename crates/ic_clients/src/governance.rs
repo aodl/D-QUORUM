@@ -236,13 +236,11 @@ pub fn validate_batch(ids: &[u64], r: &ListNeuronsResponse) -> Result<(), String
         {
             return Err("invalid full-neuron record".into());
         }
-        let at = r
-            .neuron_infos
-            .iter()
-            .find(|(i, _)| *i == id)
-            .unwrap()
-            .1
-            .retrieved_at_timestamp_seconds;
+        let observation = &r.neuron_infos.iter().find(|(i, _)| *i == id).unwrap().1;
+        if observation.visibility != n.visibility {
+            return Err("contradictory neuron visibility".into());
+        }
+        let at = observation.retrieved_at_timestamp_seconds;
         if n.voting_power_refreshed_timestamp_seconds
             .is_some_and(|t| t > at)
         {

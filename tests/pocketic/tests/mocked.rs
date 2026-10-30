@@ -877,3 +877,59 @@ fn delayed_expired_callback_cannot_restore_an_older_discovery_result() {
         query2(&pic, app, "score_page", (None::<(i32, u64)>, 100u16));
     assert!(scores.is_empty());
 }
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn partial_full_batch_failure_and_scan_upgrade_count_each_public_neuron_once() {
+    let (pic, app, production) = setup(Mode::ObserveOnly);
+    let empty = pic.create_canister();
+    pic.set_controllers(empty, None, vec![]).unwrap();
+    let mut f = fixture(now(&pic), empty, app);
+    for id in 202..=290 {
+        let mut n = raw(id, user(2), now(&pic));
+        n.followees = vec![fs(4, &[100])];
+        f.infos.push(g::NeuronInfo {
+            id: n.id.clone(),
+            retrieved_at_timestamp_seconds: now(&pic),
+            known_neuron_data: None,
+            visibility: Some(2),
+        });
+        f.neurons.push(n);
+    }
+    f.infos.sort_by_key(|n| n.id.as_ref().unwrap().id);
+    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
+    let mut interrupted = false;
+    for _ in 0..200 {
+        drive(&pic, 10);
+        let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+        if p.phase == "index" && p.full_batches == 1 {
+            interrupted = true;
+            break;
+        }
+    }
+    assert!(interrupted);
+    let partial: Vec<d_quorum::Score> =
+        query2(&pic, app, "score_page", (None::<(i32, u64)>, 100u16));
+    assert!(partial.is_empty(), "partial rankings must not be published");
+    pic.upgrade_canister(app, production, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "enqueue",
+        quorum_mocks::Script {
+            method: "list_neurons".into(),
+            reply: Some(vec![0, 1, 2]),
+            reject: None,
+        },
+    );
+    wait_ready(&pic, app, "ready");
+    let scores: Vec<d_quorum::Score> =
+        query2(&pic, app, "score_page", (None::<(i32, u64)>, 100u16));
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].scaled_score, 1_080_000 * SCALE);
+    let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(p.full_batches, 2);
+    assert_eq!(p.failures, 1);
+}
