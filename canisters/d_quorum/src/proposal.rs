@@ -48,9 +48,9 @@ fn exact_matches(p: &g::ProposalInfo, j: &ProposalJob, owner: Principal) -> bool
     let expected = maturity_payload(&j.marker, owner);
     p.proposer.as_ref().map(|n| n.id) == Some(j.proposer)
         && action_matches(p, owner)
-        && p.proposal
-            .as_ref()
-            .is_some_and(|p| p.title == expected.title && p.summary == expected.summary)
+        && p.proposal.as_ref().is_some_and(|p| {
+            p.url == expected.url && p.title == expected.title && p.summary == expected.summary
+        })
 }
 pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
     let (mode, b) = state::read(|s| (s.config.mode, s.bootstrap.clone()));
@@ -219,7 +219,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         Checking | Ambiguous | Intent => {
             let ambiguous = matches!(j.phase, Ambiguous | Intent);
             if j.history_before == Some(0) {
-                return Err("proposal outcome unresolved after complete authorized-history investigation; no resubmission".into());
+                if now < j.retry_after {
+                    return Err("proposal outcome unresolved; await next history investigation without resubmission".into());
+                }
+                j.history_before = None;
+                j.history_pages = 0;
             }
             let ps = g::proposals(j.history_before).await?;
             for p in &ps {
@@ -250,6 +254,9 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             } else if ps.len() < 100 {
                 j.phase = if ambiguous { Ambiguous } else { Preflight };
                 j.history_before = Some(0);
+                if ambiguous {
+                    j.retry_after = now + DAY;
+                }
             } else {
                 j.history_before = ps.last().and_then(|p| p.id.as_ref()).map(|id| id.id);
                 if ambiguous {

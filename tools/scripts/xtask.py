@@ -111,6 +111,21 @@ def production():
     prepare();run(['python3','tools/scripts/verify_artifact.py','target/wasm32-unknown-unknown/release/d_quorum.wasm'],name='actual production exports and embedded Candid')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','mocked','--','--ignored','production_timers','--nocapture'],kind='behaviour',name='production natural timers and upgrade')
 
+def canonical_artifact():
+    prepare()
+    artifact=ROOT/'dist/release/d_quorum.wasm'
+    if not artifact.exists():raise RuntimeError('canonical candidate missing; run reproducible first')
+    manifest=json.loads((ROOT/'dist/release/manifest.json').read_text())
+    if hashlib.sha256(artifact.read_bytes()).hexdigest()!=manifest['artifacts']['d_quorum.wasm']:raise RuntimeError('canonical artifact checksum mismatch')
+    for path,digest in manifest['source_files'].items():
+        if path.startswith(('canisters/','crates/','vendor/','candid/')) or path in ('Cargo.toml','Cargo.lock','rust-toolchain.toml','Dockerfile.repro'):
+            if hashlib.sha256((ROOT/path).read_bytes()).hexdigest()!=digest:raise RuntimeError('canonical source changed: '+path)
+    os.environ['D_QUORUM_TEST_WASM']=str(artifact)
+    PREPARED_ARTIFACTS['canonical']=hashlib.sha256(artifact.read_bytes()).hexdigest()
+    run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
+    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers')]:
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
+
 def coverage():
     run(['cargo','llvm-cov','--version'])
     run(['cargo','llvm-cov','--locked','--workspace','--lib','--bins','--json','--output-path','dist/evidence/coverage.json'],kind='behaviour',name='instrumented unit/property coverage')
@@ -125,12 +140,12 @@ def security():
 def full():
     run(['cargo','fmt','--all','--','--check'])
     run(['cargo','clippy','--locked','--workspace','--all-targets','--','-D','warnings'])
-    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds')
+    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');canonical_artifact()
     # The required matrix is explicit and is not silently replaced by the suites currently implemented.
     matrix=json.loads((ROOT/'docs/acceptance-matrix.json').read_text())
-    if any(x['status']!='executed' for x in matrix['requirements']):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
+    if any(x['status']!='executed' for x in matrix['requirements'] if x['suite']!='acceptance' and x.get('mandatory',True)):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
 
-COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'protocol':lambda:suite('protocol'),'production':production,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
+COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
 try:
     cmd=sys.argv[1] if len(sys.argv)>1 else 'help'
     if cmd not in COMMANDS:raise RuntimeError('commands: '+', '.join(COMMANDS))

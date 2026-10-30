@@ -57,10 +57,16 @@ fn reply<T: CandidType>(method: &str, value: T) {
     ic_cdk::api::msg_reply(candid::encode_one(value).unwrap());
 }
 #[ic_cdk::update(manual_reply = true)]
-fn list_known_neurons() {
+async fn list_known_neurons() {
     let v = FIXTURE.with(|x| g::KnownResponse {
         known_neurons: x.borrow().known.clone(),
     });
+    let delay = DELAY_KNOWN.with(|c| c.replace(0));
+    if delay > 0 {
+        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_hops")
+            .with_arg(delay)
+            .await;
+    }
     reply("list_known_neurons", v);
 }
 #[ic_cdk::update(manual_reply = true)]
@@ -124,35 +130,147 @@ fn get_neuron_info(id: u64) {
     });
     reply("get_neuron_info", v);
 }
+
+#[derive(CandidType, Deserialize)]
+struct MockManage {
+    id: Option<g::NeuronId>,
+    neuron_id_or_subaccount: Option<g::Id>,
+    command: Option<MockCommand>,
+}
+#[derive(CandidType, Deserialize)]
+enum MockCommand {
+    SetFollowing(g::SetFollowing),
+    ClaimOrRefresh(g::Claim),
+    RefreshVotingPower(g::Empty),
+    MakeProposal(g::MaturityProposal),
+}
+thread_local! {static PROPOSALS:RefCell<Vec<g::ProposalInfo>>=const{RefCell::new(vec![])};}
 #[ic_cdk::update(manual_reply = true)]
-fn manage_neuron(r: g::ManageRequest) {
+fn manage_neuron(r: MockManage) {
+    let caller = ic_cdk::api::msg_caller();
     let mut command = Some(g::ResponseCommand::Error(g::GovernanceError {
         error_type: 1,
-        error_message: "unsupported test command".into(),
+        error_message: "unsupported or unavailable fixture command".into(),
     }));
-    if let Some(g::Command::SetFollowing(f)) = r.command {
-        FIXTURE.with(|x| {
-            let mut x = x.borrow_mut();
-            if let Some(n) = x
-                .neurons
-                .iter_mut()
-                .find(|n| Some(g::Id::NeuronId(n.id.clone().unwrap())) == r.neuron_id_or_subaccount)
-            {
-                for item in f.topic_following.unwrap_or_default() {
-                    let topic = item.topic.unwrap();
-                    n.followees.retain(|(t, _)| *t != topic);
-                    n.followees.push((
-                        topic,
-                        g::Followees {
-                            followees: item.followees.unwrap_or_default(),
-                        },
-                    ));
+    match r.command {
+        Some(MockCommand::SetFollowing(f)) => {
+            FIXTURE.with(|x| {
+                let mut x = x.borrow_mut();
+                if let Some(n) = x.neurons.iter_mut().find(|n| {
+                    Some(g::Id::NeuronId(n.id.clone().unwrap())) == r.neuron_id_or_subaccount
+                }) {
+                    for item in f.topic_following.unwrap_or_default() {
+                        let topic = item.topic.unwrap();
+                        n.followees.retain(|(t, _)| *t != topic);
+                        n.followees.push((
+                            topic,
+                            g::Followees {
+                                followees: item.followees.unwrap_or_default(),
+                            },
+                        ));
+                    }
+                    command = Some(g::ResponseCommand::SetFollowing(g::Empty {}));
                 }
-                command = Some(g::ResponseCommand::SetFollowing(g::Empty {}));
+            });
+        }
+        Some(MockCommand::RefreshVotingPower(_)) => {
+            command = Some(g::ResponseCommand::RefreshVotingPower(g::Empty {}));
+        }
+        Some(MockCommand::ClaimOrRefresh(g::Claim {
+            by: Some(g::By::MemoAndController(c)),
+        })) => {
+            let n = FIXTURE.with(|x| {
+                x.borrow()
+                    .neurons
+                    .iter()
+                    .find(|n| {
+                        n.controller == Some(caller)
+                            && c.controller == Some(caller)
+                            && n.account == l::staking_subaccount(caller, c.memo)
+                    })
+                    .cloned()
+            });
+            if let Some(n) = n {
+                command = Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+                    refreshed_neuron_id: n.id,
+                }));
             }
-        });
+        }
+        Some(MockCommand::MakeProposal(p)) => {
+            let proposer = match r.neuron_id_or_subaccount {
+                Some(g::Id::NeuronId(id)) => Some(id),
+                _ => r.id,
+            };
+            if let Some(g::MaturityAction::ManageNeuron(m)) = p.action {
+                let action = g::StoredAction::ManageNeuron(g::StoredManaged {
+                    id: m.id,
+                    neuron_id_or_subaccount: m.neuron_id_or_subaccount,
+                    command: m.command.map(|c| match c {
+                        g::MaturityCommand::DisburseMaturity(d) => {
+                            g::StoredCommand::DisburseMaturity(d)
+                        }
+                    }),
+                });
+                let id = PROPOSALS.with(|ps| {
+                    let mut ps = ps.borrow_mut();
+                    let id = ps.len() as u64 + 1;
+                    ps.push(g::ProposalInfo {
+                        id: Some(g::NeuronId { id }),
+                        status: 1,
+                        proposer,
+                        proposal: Some(g::StoredProposal {
+                            url: p.url,
+                            title: p.title,
+                            summary: p.summary,
+                            action: Some(action),
+                        }),
+                        proposal_timestamp_seconds: ic_cdk::api::time() / 1_000_000_000,
+                        executed_timestamp_seconds: 0,
+                    });
+                    id
+                });
+                CALLS.with(|x| x.borrow_mut().push("make_proposal".into()));
+                command = Some(g::ResponseCommand::MakeProposal(g::ProposalResponse {
+                    proposal_id: Some(g::NeuronId { id }),
+                }));
+            }
+        }
+        _ => {}
     }
     reply("manage_neuron", g::ManageResponse { command });
+}
+#[ic_cdk::update]
+fn get_network_economics_parameters() -> g::Economics {
+    g::Economics {
+        neuron_minimum_stake_e8s: 100_000_000,
+        neuron_management_fee_per_proposal_e8s: 10_000,
+    }
+}
+#[ic_cdk::update]
+fn list_proposals(r: g::ListProposals) -> g::Proposals {
+    PROPOSALS.with(|ps| g::Proposals {
+        proposal_info: ps
+            .borrow()
+            .iter()
+            .rev()
+            .filter(|p| {
+                r.before_proposal
+                    .as_ref()
+                    .is_none_or(|before| p.id.as_ref().unwrap().id < before.id)
+            })
+            .take(r.limit as usize)
+            .cloned()
+            .collect(),
+    })
+}
+#[ic_cdk::update]
+fn get_proposal_info(id: u64) -> Option<g::ProposalInfo> {
+    PROPOSALS.with(|ps| {
+        ps.borrow()
+            .iter()
+            .find(|p| p.id.as_ref().unwrap().id == id)
+            .cloned()
+    })
 }
 #[derive(CandidType, Deserialize, Debug)]
 pub struct ReadProbe {
@@ -349,6 +467,7 @@ pub enum LedgerFault {
 }
 #[derive(Default)]
 struct LedgerModel {
+    staking_funding: u64,
     balance: u64,
     fee: u64,
     blocks: Vec<l::Block>,
@@ -362,6 +481,10 @@ fn ledger_init(balance: u64) {
         m.balance = balance;
         m.fee = 10_000;
     });
+}
+#[ic_cdk::update]
+fn ledger_staking_fund(amount: u64) {
+    LEDGER_MODEL.with(|m| m.borrow_mut().staking_funding = amount);
 }
 #[ic_cdk::update]
 fn ledger_deposit(amount: u64) {
@@ -394,7 +517,7 @@ fn icrc1_balance_of(a: l::Account) -> candid::Nat {
         if a.subaccount.is_none() {
             m.borrow().balance.into()
         } else {
-            0u64.into()
+            m.borrow().staking_funding.into()
         }
     })
 }
@@ -533,4 +656,30 @@ fn query_blocks(arg: l::BlocksArgs) -> l::History {
             archived_blocks: vec![],
         }
     })
+}
+
+thread_local! {static DELAY_KNOWN:std::cell::Cell<u32>=const{std::cell::Cell::new(0)};}
+#[ic_cdk::update]
+fn delay_known_once(hops: u32) {
+    assert!(hops <= 32);
+    DELAY_KNOWN.with(|c| c.set(hops));
+}
+#[ic_cdk::update]
+async fn delay_hops(hops: u32) {
+    if hops > 0 {
+        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_hops")
+            .with_arg(hops - 1)
+            .await;
+    }
+}
+#[ic_cdk::update]
+fn proposal_status(args: (u64, i32)) {
+    assert!((1..=5).contains(&args.1));
+    PROPOSALS.with(|ps| {
+        let mut ps = ps.borrow_mut();
+        ps.iter_mut()
+            .find(|p| p.id.as_ref().unwrap().id == args.0)
+            .unwrap()
+            .status = args.1;
+    });
 }

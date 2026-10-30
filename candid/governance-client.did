@@ -198,6 +198,7 @@ type StoredManaged = record {
   neuron_id_or_subaccount : opt Id;
 };
 type StoredProposal = record {
+  url : text;
   title : opt text;
   action : opt StoredAction;
   summary : text;

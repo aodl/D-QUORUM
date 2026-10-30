@@ -51,6 +51,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         })
         .ok_or("stale worker")?;
         r = Some(Round::new(id, config.revision, now));
+        state::guarded(token, |s| s.round = r.clone()).ok_or("stale worker")?;
     }
     let mut r = r.unwrap();
     if r.revision != config.revision && !matches!(r.phase, Applying { sent: true }) {
@@ -198,6 +199,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             }
         }
         Select => {
+            r.validated_at = Some(now); // Bound the age of the oldest selected-candidate recheck.
             r.rosters = TOPICS
                 .into_iter()
                 .map(|t| policy::select(t, config.delegates_per_topic, &r.candidates, &r.scores))
@@ -219,6 +221,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                             "selected candidate changed; complete new round required".into(),
                         );
                     } else {
+                        r.candidates.insert(id, c.clone());
+                        if let Some(outcome) = r.outcomes.get_mut(&id) {
+                            outcome.checked_at = c.checked_at;
+                            outcome.admitted = Some(c);
+                        }
                         r.phase = Revalidate {
                             ids,
                             offset: offset + 1,
@@ -233,7 +240,6 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     };
                 }
             } else {
-                r.validated_at = Some(now);
                 r.phase = Cycles {
                     topic: 0,
                     todo: r.rosters[0].selected.clone(),

@@ -159,6 +159,35 @@ fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity()
     println!(
         "real maturity proposal={id}, finalized default-account mint={amount}, not_for_profit=false"
     );
+    let rejected: Result<u64, String> = update(
+        &pic,
+        probe,
+        Principal::anonymous(),
+        "proposal_probe",
+        (
+            11u64,
+            d_quorum::proposal::maturity_payload("D-QUORUM real negative manager votes", probe),
+        ),
+    );
+    let rejected = rejected.unwrap();
+    for manager in [12u64, 13u64] {
+        let _: RawResponse = update(
+            &pic,
+            GOVERNANCE,
+            user(manager as u8),
+            "manage_neuron",
+            VoteRequest {
+                neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: manager })),
+                command: Some(VoteCommand::RegisterVote(Vote {
+                    vote: 2,
+                    proposal: Some(g::NeuronId { id: rejected }),
+                })),
+            },
+        );
+    }
+    drive(&pic, 60);
+    let rejected: Option<g::ProposalInfo> = query(&pic, GOVERNANCE, "get_proposal_info", rejected);
+    assert_eq!(rejected.unwrap().status, 2);
 }
 
 #[test]

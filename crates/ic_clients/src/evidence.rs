@@ -19,6 +19,7 @@ pub struct Collection {
     pub phase: Phase,
     pub evidence: EvaluationEvidence,
     pub dependencies: Vec<u64>,
+    pub dependency_timestamps: BTreeMap<u64, u64>,
 }
 impl Collection {
     pub fn new(id: u64) -> Self {
@@ -34,6 +35,7 @@ impl Collection {
                 unknown_committed_topics: 0,
             },
             dependencies: vec![],
+            dependency_timestamps: BTreeMap::new(),
         }
     }
     pub async fn advance(&mut self) -> Result<Option<ComplianceReport>, String> {
@@ -92,6 +94,10 @@ impl Collection {
                     let ids = self.dependencies[offset..self.dependencies.len().min(offset + 50)]
                         .to_vec();
                     let r = g::full(ids.clone()).await?;
+                    for (id, info) in &r.neuron_infos {
+                        self.dependency_timestamps
+                            .insert(*id, info.retrieved_at_timestamp_seconds);
+                    }
                     let mut found = BTreeMap::new();
                     for n in r.full_neurons {
                         let id = n.id.as_ref().ok_or("absent ID")?.id;
@@ -121,7 +127,10 @@ impl Collection {
                         .and_then(NeuronLookup::as_mut)
                     {
                         let info = g::info(id).await?;
-                        let at = info.retrieved_at_timestamp_seconds;
+                        let at = *self
+                            .dependency_timestamps
+                            .get(&id)
+                            .ok_or("dependency observation timestamp unavailable")?;
                         merge(n, info, at)?;
                     }
                     self.phase = Phase::DependencyMetadata(offset + 1);

@@ -606,3 +606,274 @@ fn expired_dedup_and_missing_history_hold_until_authoritative_match() {
     assert_eq!(stats.blocks, 1);
     assert_eq!(stats.balance, 0);
 }
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn lost_proposal_reply_recovers_exact_history_after_upgrade_without_resubmission() {
+    let (pic, app, production) = setup(Mode::Live);
+    let empty = pic.create_canister();
+    pic.set_controllers(empty, None, vec![]).unwrap();
+    let mut f = fixture(now(&pic), empty, app);
+    let mut owned = raw(300, app, now(&pic));
+    owned.visibility = Some(1);
+    owned.account =
+        quorum_ic_clients::ledger::staking_subaccount(app, d_quorum::state::BOOTSTRAP_NONCE);
+    f.neurons.push(owned.clone());
+    f.infos.push(g::NeuronInfo {
+        id: owned.id.clone(),
+        retrieved_at_timestamp_seconds: now(&pic),
+        known_neuron_data: None,
+        visibility: Some(1),
+    });
+    f.infos.sort_by_key(|i| i.id.as_ref().unwrap().id);
+    let target = f
+        .neurons
+        .iter_mut()
+        .find(|n| n.id.as_ref().unwrap().id == TARGET)
+        .unwrap();
+    target.maturity_e8s_equivalent = 5_000_000_000;
+    target.followees.retain(|(t, _)| *t != 1);
+    target.followees.push(fs(1, &[101, 102, 103, 300]));
+    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
+    pic.set_controllers(
+        GOVERNANCE,
+        None,
+        vec![Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap()],
+    )
+    .unwrap();
+    let ledger = quorum_ic_clients::LEDGER;
+    pic.create_canister_with_id(None, None, ledger).unwrap();
+    pic.add_cycles(ledger, 100_000_000_000_000);
+    pic.install_canister(
+        ledger,
+        wasm("quorum_mocks"),
+        encode_one(None::<quorum_mocks::Fixture>).unwrap(),
+        None,
+    );
+    let _: () = update(&pic, ledger, Principal::anonymous(), "ledger_init", 0u64);
+    let _: () = update(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "ledger_staking_fund",
+        10_000_000_000u64,
+    );
+    let mut before = None;
+    for _ in 0..100 {
+        drive(&pic, 10);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j
+            && matches!(j.phase, d_quorum::state::ProposalPhase::Preflight)
+        {
+            before = Some(j);
+            break;
+        }
+    }
+    let before = before.expect("specific proposal did not reach preflight");
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "enqueue",
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: Some(vec![0, 1, 2]),
+            reject: None,
+        },
+    );
+    drive(&pic, 10);
+    let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+    assert!(matches!(
+        j.unwrap().phase,
+        d_quorum::state::ProposalPhase::Ambiguous
+    ));
+    pic.upgrade_canister(app, production, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let mut recovered = None;
+    for _ in 0..20 {
+        drive(&pic, 10);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j
+            && matches!(j.phase, d_quorum::state::ProposalPhase::Open(1))
+        {
+            recovered = Some(j);
+            break;
+        }
+    }
+    let recovered =
+        recovered.expect("lost proposal was not recovered from exact authorized history");
+    assert_eq!(recovered.operation, before.operation);
+    assert_eq!(recovered.fingerprint, before.fingerprint);
+    assert_eq!(recovered.marker, before.marker);
+    let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|x| x.as_str() == "make_proposal")
+            .count(),
+        1
+    );
+    let stats: quorum_mocks::LedgerStats = query_empty(&pic, ledger, "ledger_stats");
+    assert_eq!(
+        stats.blocks, 0,
+        "proposal creation must not be treated as a receipt"
+    );
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "proposal_status",
+        (1u64, 2i32),
+    );
+    drive(&pic, 3600);
+    let rejected: Option<d_quorum::state::ProposalJob> =
+        query_empty(&pic, app, "proposal_progress");
+    let rejected = rejected.unwrap();
+    assert!(matches!(
+        rejected.phase,
+        d_quorum::state::ProposalPhase::Rejected(1)
+    ));
+    assert!(rejected.retry_after > now(&pic));
+    let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|x| x.as_str() == "make_proposal")
+            .count(),
+        1
+    );
+}
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
+    for cycle in [false, true] {
+        let (pic, app, _) = setup(Mode::Live);
+        let empty = pic.create_canister();
+        pic.set_controllers(empty, None, vec![]).unwrap();
+        if !cycle {
+            for _ in 0..200 {
+                drive(&pic, 10);
+                let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+                if p.phase == "revalidation" {
+                    break;
+                }
+            }
+        }
+        let mut f = fixture(now(&pic), empty, app);
+        if cycle {
+            f.neurons
+                .iter_mut()
+                .find(|n| n.id.as_ref().unwrap().id == dendrite_types::OMEGA_REJECT_NEURON_ID)
+                .unwrap()
+                .followees = vec![fs(4, &[TARGET])];
+        } else {
+            let mut manager = raw(106, user(106), now(&pic));
+            manager.known_neuron_data = Some(known(106));
+            f.neurons.push(manager.clone());
+            f.infos.push(g::NeuronInfo {
+                id: manager.id.clone(),
+                retrieved_at_timestamp_seconds: now(&pic),
+                known_neuron_data: manager.known_neuron_data.clone(),
+                visibility: Some(2),
+            });
+            let n = f
+                .neurons
+                .iter_mut()
+                .find(|n| n.id.as_ref().unwrap().id == 100)
+                .unwrap();
+            n.followees.retain(|(t, _)| *t != 1);
+            n.followees.push(fs(1, &[101, 102, 103, 104, 106]));
+        }
+        f.infos.sort_by_key(|i| i.id.as_ref().unwrap().id);
+        let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
+        let mut failed = false;
+        for _ in 0..240 {
+            drive(&pic, 10);
+            let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+            if p.phase == "failed" {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "material change/cycle was not rejected");
+        let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+        assert!(!calls.iter().any(|x| x == "manage_neuron"));
+        let r: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+        assert!(r.iter().all(|r| r.applied.is_empty()));
+    }
+}
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn failed_complete_discovery_round_retains_previous_applied_roster() {
+    let (pic, app, _) = setup(Mode::Live);
+    pic.set_controllers(
+        GOVERNANCE,
+        None,
+        vec![Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap()],
+    )
+    .unwrap();
+    wait_ready(&pic, app, "complete");
+    let previous: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+    for _ in 0..5 {
+        let _: () = update(
+            &pic,
+            GOVERNANCE,
+            Principal::anonymous(),
+            "enqueue",
+            quorum_mocks::Script {
+                method: "list_known_neurons".into(),
+                reply: None,
+                reject: Some("temporary discovery outage".into()),
+            },
+        );
+    }
+    drive(&pic, 7 * 86400);
+    for delay in [120, 240, 480, 960] {
+        drive(&pic, delay);
+    }
+    let scan: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(scan.phase, "failed");
+    assert_eq!(scan.failures, 5);
+    let after: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+    for (a, b) in after.iter().zip(&previous) {
+        assert_eq!(a.applied, b.applied);
+        assert_eq!(a.applied_round, b.applied_round);
+    }
+}
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn delayed_expired_callback_cannot_restore_an_older_discovery_result() {
+    let (pic, app, _) = setup(Mode::ObserveOnly);
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "delay_known_once",
+        30u32,
+    );
+    drive(&pic, 10);
+    let empty = pic.create_canister();
+    pic.set_controllers(empty, None, vec![]).unwrap();
+    let mut changed = fixture(now(&pic), empty, app);
+    changed.known.clear();
+    for n in &mut changed.neurons {
+        n.known_neuron_data = None;
+    }
+    for n in &mut changed.infos {
+        n.known_neuron_data = None;
+    }
+    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", changed);
+    drive(&pic, 601);
+    wait_ready(&pic, app, "ready");
+    let p: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+    assert_eq!(p.discovered_candidates, 0);
+    assert_eq!(p.evaluated_candidates, 0);
+    let h: d_quorum::Health = query_empty(&pic, app, "health");
+    assert!(h.jobs[0].generation > 1);
+    let scores: Vec<d_quorum::Score> =
+        query2(&pic, app, "score_page", (None::<(i32, u64)>, 100u16));
+    assert!(scores.is_empty());
+}

@@ -200,7 +200,15 @@ fn scan_progress() -> ScanProgress {
             full_batches: r.map_or(0, |r| r.full_batches),
             public_observations: r.map_or(0, |r| r.public_observations),
             failures: r.map_or(0, |r| r.failures),
-            last_failure: r.and_then(|r| r.last_failure.clone()),
+            last_failure: r.and_then(|r| {
+                r.last_failure.clone().or_else(|| {
+                    if let state::ScanPhase::Failed(reason) = &r.phase {
+                        Some(reason.clone())
+                    } else {
+                        None
+                    }
+                })
+            }),
             discovered_candidates: r.map_or(0, |r| r.known.len() as u64),
             evaluated_candidates: r.map_or(0, |r| r.outcomes.len() as u64),
             last_applied_scan: s.applied.as_ref().map(|a| (a.scan_start, a.scan_end)),

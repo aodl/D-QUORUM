@@ -40,7 +40,9 @@ fn decode<R: for<'de> Deserialize<'de> + CandidType>(b: Vec<u8>) -> Result<R, St
     let mut cfg = candid::de::DecoderConfig::new();
     cfg.set_decoding_quota(20_000_000)
         .set_skipping_quota(20_000_000);
-    candid::decode_one_with_config(&b, &cfg).map_err(|e| bounded(format!("decode: {e}")))
+    // Candid diagnostics can contain raw input bytes, including readable private neuron data.
+    candid::decode_one_with_config(&b, &cfg)
+        .map_err(|_| "decode: incompatible or malformed Candid response".into())
 }
 pub fn bounded(s: String) -> String {
     s.chars().take(256).collect()

@@ -216,6 +216,16 @@ mod tests {
     #[test]
     fn malformed_response_and_unknown_variant_fail_closed() {
         assert!(crate::decode::<TransferError>(vec![0, 1, 2]).is_err());
+        #[derive(CandidType)]
+        enum FutureError {
+            UnsupportedCommand(u64),
+        }
+        assert!(
+            crate::decode::<TransferError>(
+                candid::encode_one(FutureError::UnsupportedCommand(1)).unwrap()
+            )
+            .is_err()
+        );
         assert!(crate::decode::<History>(vec![0; crate::MAX_REPLY + 1]).is_err());
     }
 }

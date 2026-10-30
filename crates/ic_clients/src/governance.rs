@@ -392,13 +392,34 @@ pub struct ManageResponse {
     pub command: Option<ResponseCommand>,
 }
 pub async fn manage(request: ManageRequest) -> Result<ResponseCommand, String> {
+    let expected = match &request.command {
+        Some(Command::ClaimOrRefresh(_)) => 0,
+        Some(Command::SetFollowing(_)) => 1,
+        Some(Command::RefreshVotingPower(_)) => 2,
+        Some(Command::MakeProposal(_)) => 3,
+        None => return Err("missing command".into()),
+    };
     let r: ManageResponse = call(GOVERNANCE, "manage_neuron", request).await?;
+    validate_manage_response(expected, r)
+}
+fn validate_manage_response(expected: u8, r: ManageResponse) -> Result<ResponseCommand, String> {
     match r.command {
         Some(ResponseCommand::Error(e)) => Err(crate::bounded(format!(
             "Governance {}: {}",
             e.error_type, e.error_message
         ))),
-        Some(x) => Ok(x),
+        Some(x)
+            if matches!(
+                (expected, &x),
+                (0, ResponseCommand::ClaimOrRefresh(_))
+                    | (1, ResponseCommand::SetFollowing(_))
+                    | (2, ResponseCommand::RefreshVotingPower(_))
+                    | (3, ResponseCommand::MakeProposal(_))
+            ) =>
+        {
+            Ok(x)
+        }
+        Some(_) => Err("unexpected Governance response variant".into()),
         None => Err("empty manage response".into()),
     }
 }
@@ -476,6 +497,7 @@ pub struct ProposalInfo {
 }
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct StoredProposal {
+    pub url: String,
     pub title: Option<String>,
     pub summary: String,
     pub action: Option<StoredAction>,
@@ -599,4 +621,63 @@ fn validate_proposal(p: &ProposalInfo) -> Result<(), String> {
         return Err("management command unavailable or unknown protocol variant".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn info(id: u64) -> NeuronInfo {
+        NeuronInfo {
+            id: Some(NeuronId { id }),
+            retrieved_at_timestamp_seconds: 1,
+            known_neuron_data: None,
+            visibility: Some(2),
+        }
+    }
+    #[test]
+    fn index_duplicates_and_nonprogress_are_rejected() {
+        assert!(validate_index(None, &[info(1), info(1)]).is_err());
+        assert!(validate_index(Some(2), &[info(2)]).is_err());
+        assert!(validate_index(None, &[info(0)]).is_err());
+        assert!(validate_index(None, &[info(1), info(2)]).is_ok());
+    }
+    #[test]
+    fn unknown_and_mismatched_manage_responses_fail_closed() {
+        assert!(
+            validate_manage_response(
+                1,
+                ManageResponse {
+                    command: Some(ResponseCommand::RefreshVotingPower(Empty {}))
+                }
+            )
+            .is_err()
+        );
+        assert!(validate_manage_response(0, ManageResponse { command: None }).is_err());
+        assert!(
+            validate_manage_response(
+                1,
+                ManageResponse {
+                    command: Some(ResponseCommand::SetFollowing(Empty {}))
+                }
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn unknown_stored_actions_cannot_be_interpreted_as_absence() {
+        let p = ProposalInfo {
+            id: Some(NeuronId { id: 1 }),
+            status: 1,
+            proposer: Some(NeuronId { id: 2 }),
+            proposal: Some(StoredProposal {
+                url: "https://forum.dfinity.org".into(),
+                title: None,
+                summary: String::new(),
+                action: None,
+            }),
+            proposal_timestamp_seconds: 1,
+            executed_timestamp_seconds: 0,
+        };
+        assert!(validate_proposal(&p).is_err());
+    }
 }

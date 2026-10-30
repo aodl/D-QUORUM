@@ -12,6 +12,11 @@ pub fn root() -> PathBuf {
         .unwrap()
 }
 pub fn wasm(name: &str) -> Vec<u8> {
+    if name == "d_quorum"
+        && let Ok(path) = std::env::var("D_QUORUM_TEST_WASM")
+    {
+        return fs::read(path).expect("explicit production candidate Wasm required");
+    }
     fs::read(root().join(format!("target/wasm32-unknown-unknown/release/{name}.wasm")))
         .expect("prepare Wasm with xtask before starting PocketIC")
 }
