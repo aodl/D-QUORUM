@@ -11,6 +11,7 @@ Use `cargo run --locked -p xtask -- COMMAND`. Unit discovery uses Cargo workspac
 | scale | Synthetic large neuron index, actual Wasm timers, stable pages, serialized bytes, instructions, calls and cycles |
 | coverage | Native Rust line/region/function coverage; does not attribute Wasm execution to native coverage |
 | security | Cargo audit, scoped production dependency isolation, locked CycloneDX inventory/graph |
+| canonical_artifact | Exact Docker-built candidate through natural mock timers and real production financial lifecycle |
 | reproducible | Two no-cache digest-pinned Docker builds, exact filenames/bytes and source/artifact manifests |
 | acceptance | All gates and mandatory behavioural matrix; incomplete requirements fail |
 
@@ -25,3 +26,5 @@ Evidence is written under `dist/evidence`, including per-command suite results, 
 Required tools are Rust 1.94.1 with rustfmt/Clippy/llvm-tools/Wasm target, Python 3, Docker for canonical release, cargo-llvm-cov 0.6.16, cargo-audit 0.22.2 and pinned didc/PocketIC. icp-cli 1.2.0 and local launcher `15.0.0-2026-08-20-03-30` are recorded for future local deployment; PocketIC tests use the independently checksum-pinned 15.0.0 release binary. Tests do not inspect DFX identity storage. If dfx is used for any separately authorised local inspection, use `DFX_IDENTITY=codex_local`.
 
 Repository owners must separately configure and verify required checks: `Behavioral (unit)`, `Behavioral (mock)`, `Behavioral (protocol)`, `Production artifact`, `Dependency security`, and `Native coverage`. Canonical release promotion additionally requires `Canonical reproducibility` and a retained passing full acceptance run. Ordinary PR CI should be observed after an authorised push. No workflow deploys or uses deployment secrets.
+
+The source acceptance matrix maps implemented coverage. It does not assert that a run occurred. A successful full acceptance command writes the executed matrix into `dist/evidence/acceptance-matrix.json`, with its exact source commit and suite results.

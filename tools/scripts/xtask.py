@@ -10,6 +10,7 @@ os.environ['DFX_IDENTITY']='codex_local'
 os.environ['CARGO_INCREMENTAL']='0'
 OUT=ROOT/'dist/evidence';OUT.mkdir(parents=True,exist_ok=True)
 results=[]
+completed_suites=set()
 SOURCE_COMMIT=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
 SOURCE_DIRTY=bool(subprocess.check_output(['git','status','--porcelain']).strip())
 FILES=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).decode().split('\0')
@@ -95,6 +96,7 @@ def unit():
     matches=re.findall(r'test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored;',output)
     executed=sum(sum(map(int,m)) for m in matches)
     if executed!=discovered:raise RuntimeError(f'test discovery mismatch: {discovered} discovered; {executed} accounted')
+    completed_suites.add('unit')
 
 def suite(target):
     prepare()
@@ -106,10 +108,12 @@ def suite(target):
             run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name=target+':'+name)
     else:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--nocapture','--test-threads=1'],kind='behaviour',name=target)
+    completed_suites.add({'mocked':'mock'}.get(target,target))
 
 def production():
     prepare();run(['python3','tools/scripts/verify_artifact.py','target/wasm32-unknown-unknown/release/d_quorum.wasm'],name='actual production exports and embedded Candid')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','mocked','--','--ignored','production_timers','--nocapture'],kind='behaviour',name='production natural timers and upgrade')
+    completed_suites.add('production')
 
 def canonical_artifact():
     prepare()
@@ -125,25 +129,36 @@ def canonical_artifact():
     run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
     for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers')]:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
+    completed_suites.add('canonical_artifact')
 
 def coverage():
     run(['cargo','llvm-cov','--version'])
     run(['cargo','llvm-cov','--locked','--workspace','--lib','--bins','--json','--output-path','dist/evidence/coverage.json'],kind='behaviour',name='instrumented unit/property coverage')
     data=json.loads((OUT/'coverage.json').read_text());(OUT/'coverage-totals.json').write_text(json.dumps(data['data'][0]['totals'],indent=2)+'\n')
+    completed_suites.add('coverage')
 
 def security():
     run(['cargo','audit','--version'])
     output=run(['cargo','audit','--json'],name='RustSec whole-workspace audit')
     (OUT/'security.json').write_text(output)
     run(['python3','tools/scripts/sbom.py'],name='locked dependency SBOM and production dependency isolation')
+    completed_suites.add('security')
 
 def full():
     run(['cargo','fmt','--all','--','--check'])
     run(['cargo','clippy','--locked','--workspace','--all-targets','--','-D','warnings'])
-    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');canonical_artifact()
-    # The required matrix is explicit and is not silently replaced by the suites currently implemented.
+    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');completed_suites.add('reproducible');canonical_artifact()
+    # Source matrix describes coverage, not stale assertions that tests ran.
+    # Execution evidence is generated only after every required suite actually succeeds.
     matrix=json.loads((ROOT/'docs/acceptance-matrix.json').read_text())
-    if any(x['status']!='executed' for x in matrix['requirements'] if x['suite']!='acceptance' and x.get('mandatory',True)):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
+    for requirement in matrix['requirements']:
+        if requirement['suite']=='acceptance':continue
+        if requirement.get('mandatory',True) and (requirement['status']!='implemented' or requirement['suite'] not in completed_suites):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
+        requirement['status']='executed' if requirement['suite'] in completed_suites else 'unrun'
+    matrix['local_gates_passed']=True
+    matrix['source_commit']=SOURCE_COMMIT
+    matrix['remote_ci']='awaits separately authorized push'
+    (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')
 
 COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
 try:
