@@ -47,6 +47,11 @@
       "status": "implemented"
     },
     {
+      "requirement": "typed insufficient-funds rejection preserves liabilities through upgrade and new deposits",
+      "suite": "mock",
+      "status": "implemented"
+    },
+    {
       "requirement": "delayed replies, callback reordering and partial batches",
       "suite": "mock",
       "status": "implemented"

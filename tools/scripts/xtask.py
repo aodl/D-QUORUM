@@ -145,6 +145,8 @@ def security():
     completed_suites.add('security')
 
 def full():
+    (OUT/'acceptance-matrix.json').unlink(missing_ok=True)
+    if SOURCE_DIRTY:raise RuntimeError('commit source before full acceptance and canonical builds')
     run(['cargo','fmt','--all','--','--check'])
     run(['cargo','clippy','--locked','--workspace','--all-targets','--','-D','warnings'])
     unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security();run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');completed_suites.add('reproducible');canonical_artifact()
@@ -152,7 +154,9 @@ def full():
     # Execution evidence is generated only after every required suite actually succeeds.
     matrix=json.loads((ROOT/'docs/acceptance-matrix.json').read_text())
     for requirement in matrix['requirements']:
-        if requirement['suite']=='acceptance':continue
+        if requirement['suite']=='acceptance':
+            requirement['status']='executed'
+            continue
         if requirement.get('mandatory',True) and (requirement['status']!='implemented' or requirement['suite'] not in completed_suites):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
         requirement['status']='executed' if requirement['suite'] in completed_suites else 'unrun'
     matrix['local_gates_passed']=True

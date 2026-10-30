@@ -368,11 +368,11 @@ pub struct RawResponse {
     pub command: Option<candid::Reserved>,
 }
 
-pub fn query2<A: CandidType, B: CandidType, R: CandidType + for<'de> Deserialize<'de>>(
+pub fn query2<A: candid::utils::ArgumentEncoder, R: CandidType + for<'de> Deserialize<'de>>(
     pic: &PocketIc,
     id: Principal,
     method: &str,
-    args: (A, B),
+    args: A,
 ) -> R {
     let bytes = pic
         .query_call(

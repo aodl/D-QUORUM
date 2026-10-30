@@ -503,6 +503,36 @@ mod tests {
             receipt: None,
             retry_after: 0,
         });
+        for phase in [
+            ProposalPhase::Checking,
+            ProposalPhase::Preflight,
+            ProposalPhase::Intent,
+            ProposalPhase::Ambiguous,
+            ProposalPhase::Open(11),
+            ProposalPhase::Adopted(11),
+            ProposalPhase::Executed(11),
+            ProposalPhase::AwaitingFinalization(11),
+            ProposalPhase::FinalizedReceiptUnattributed(11),
+            ProposalPhase::Rejected(11),
+            ProposalPhase::Failed(11),
+        ] {
+            let mut staged = s.clone();
+            staged.proposal.as_mut().unwrap().phase = phase.clone();
+            let mut restored = decode(&encode(&staged)).unwrap();
+            restored.recover();
+            let expected = if matches!(phase, ProposalPhase::Intent) {
+                ProposalPhase::Ambiguous
+            } else {
+                phase
+            };
+            let job = restored.proposal.unwrap();
+            assert_eq!(
+                candid::encode_one(job.phase).unwrap(),
+                candid::encode_one(expected).unwrap()
+            );
+            assert_eq!(job.marker, "unique operation 7");
+            assert_eq!(job.fingerprint, vec![4; 32]);
+        }
         install(s);
         let t = Token {
             job: 0,

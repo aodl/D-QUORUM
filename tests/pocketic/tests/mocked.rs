@@ -933,3 +933,77 @@ fn valid_empty_round_clears_ordinary_following_and_nonempty_catchall_blocks_writ
         }
     }
 }
+
+#[test]
+#[ignore = "xtask mock prepares production Wasm first"]
+fn insufficient_funds_reply_holds_original_entitlement_across_upgrade() {
+    let (pic, app, production) = setup(Mode::Live);
+    pic.set_controllers(
+        GOVERNANCE,
+        None,
+        vec![Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").unwrap()],
+    )
+    .unwrap();
+    let ledger = quorum_ic_clients::LEDGER;
+    pic.create_canister_with_id(None, None, ledger).unwrap();
+    pic.add_cycles(ledger, 100_000_000_000_000);
+    pic.install_canister(
+        ledger,
+        wasm("quorum_mocks"),
+        encode_one(None::<quorum_mocks::Fixture>).unwrap(),
+        None,
+    );
+    wait_ready(&pic, app, "complete");
+    let _: () = update(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "ledger_init",
+        1_000_000u64,
+    );
+    let _: () = update(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "ledger_fault",
+        quorum_mocks::LedgerFault::InsufficientFunds,
+    );
+    drive(&pic, 86400);
+    let mut held = None;
+    for _ in 0..20 {
+        drive(&pic, 10);
+        let plans: Vec<d_quorum::PayoutSummary> =
+            query2(&pic, app, "payout_page", (None::<u64>, 100u16));
+        if let Some(p) = plans.first() {
+            let transfers: Vec<quorum_accounting::Transfer> =
+                query2(&pic, app, "transfer_page", (p.id, 0u32, 100u16));
+            if matches!(&transfers[0].status, quorum_accounting::TransferStatus::Held { reason } if reason.contains("InsufficientFunds"))
+            {
+                held = Some((p.id, transfers));
+                break;
+            }
+        }
+    }
+    let (id, transfers) =
+        held.expect("typed insufficient-funds response must retain an unpaid obligation");
+    pic.upgrade_canister(app, production, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        ledger,
+        Principal::anonymous(),
+        "ledger_deposit",
+        100_000u64,
+    );
+    drive(&pic, 3600);
+    let after: Vec<quorum_accounting::Transfer> =
+        query2(&pic, app, "transfer_page", (id, 0u32, 100u16));
+    assert_eq!(after, transfers);
+    let plans: Vec<d_quorum::PayoutSummary> =
+        query2(&pic, app, "payout_page", (None::<u64>, 100u16));
+    assert_eq!(plans[0].reserved, 1_000_000);
+    assert_eq!(plans[0].observed_balance, 1_000_000);
+    let stats: quorum_mocks::LedgerStats = query_empty(&pic, ledger, "ledger_stats");
+    assert_eq!(stats.blocks, 0);
+    assert_eq!(stats.balance, 1_100_000);
+}

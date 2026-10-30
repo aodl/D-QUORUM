@@ -247,10 +247,14 @@ mod tests {
     #[test]
     fn stable_roundtrip_at_each_financial_transition() {
         let mut p = Plan::build(1, 1, 100, 1, 1, 0, ds(2)).unwrap();
+        p = candid::decode_one(&candid::encode_one(&p).unwrap()).unwrap();
         for i in 0..2 {
             p.dispatch(i, 2).unwrap();
             let b = candid::encode_one(&p).unwrap();
             p = candid::decode_one(&b).unwrap();
+            assert!(p.invariant());
+            p.transfers[i].status = TransferStatus::Verifying { block: i as u64 };
+            p = candid::decode_one(&candid::encode_one(&p).unwrap()).unwrap();
             assert!(p.invariant());
             p.confirm(i, i as u64).unwrap();
             let b = candid::encode_one(&p).unwrap();
@@ -259,6 +263,23 @@ mod tests {
         }
         assert!(p.complete());
         assert_eq!(p.reserved().unwrap(), 0);
+    }
+    #[test]
+    fn unvalidated_destinations_and_insufficient_fee_budget_cannot_form_a_plan() {
+        for length in [0, 1, 31, 33] {
+            let mut destinations = ds(1);
+            destinations[0].subaccount = vec![1; length];
+            assert!(Plan::build(1, 1, 100, 1, 1, 0, destinations).is_err());
+        }
+        assert!(Plan::build(1, 1, 19, 10, 1, 0, ds(2)).is_err());
+        assert!(Plan::build(1, 1, 20, 10, 1, 0, ds(2)).is_err());
+        let mut p = Plan::build(1, 1, 100, 1, 1, 0, ds(1)).unwrap();
+        p.transfers[0].status = TransferStatus::Held {
+            reason: "insufficient funds".into(),
+        };
+        let restored: Plan = candid::decode_one(&candid::encode_one(&p).unwrap()).unwrap();
+        assert!(restored.invariant());
+        assert_eq!(restored.reserved().unwrap(), 100);
     }
     proptest! {#[test]fn arithmetic_conserves_every_e8s(balance in any::<u64>(),fee in 0u64..100_000,n in 1u64..=100){
         if let Ok(p)=Plan::build(1,1,balance,fee,1,0,ds(n)){prop_assert!(p.invariant());prop_assert!(p.dust<n);prop_assert!(p.transfers.iter().all(|t|t.amount==p.transfers[0].amount));}
