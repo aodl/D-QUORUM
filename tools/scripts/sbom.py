@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import subprocess,json,pathlib,hashlib,tomllib
+import subprocess,json,pathlib,hashlib
+vendor=pathlib.Path('vendor/dendrite')
+for line in (vendor/'SHA256SUMS').read_text().splitlines():
+    digest,name=line.split('  ',1)
+    assert hashlib.sha256((vendor/name).read_bytes()).hexdigest()==digest,'vendored policy checksum: '+name
 m=json.loads(subprocess.check_output(['cargo','metadata','--locked','--format-version','1']))
 p=subprocess.check_output(['cargo','tree','--locked','-p','d-quorum','--target','wasm32-unknown-unknown','--edges','normal,build','--prefix','none'],text=True)
 for forbidden in ['pocket-ic','proptest','quorum-mocks','quorum-pocketic','reqwest','xtask']:
