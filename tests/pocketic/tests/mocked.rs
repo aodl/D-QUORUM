@@ -51,6 +51,24 @@ fn wait_ready(pic: &pocket_ic::PocketIc, app: Principal, desired: &str) {
 #[ignore = "xtask mock prepares production Wasm first"]
 fn production_timers_ignore_private_support_and_recover_upgrade_configuration() {
     let (pic, app, production) = setup(Mode::ObserveOnly);
+    let empty = pic.create_canister();
+    pic.set_controllers(empty, None, vec![]).unwrap();
+    let mut f = fixture(now(&pic), empty, app);
+    let mut owned = raw(300, app, now(&pic));
+    owned.account =
+        quorum_ic_clients::ledger::staking_subaccount(app, d_quorum::state::BOOTSTRAP_NONCE);
+    owned.followees = vec![fs(4, &[100])];
+    owned.deciding_voting_power = Some(u64::MAX);
+    owned.potential_voting_power = Some(u64::MAX);
+    f.infos.push(g::NeuronInfo {
+        id: owned.id.clone(),
+        retrieved_at_timestamp_seconds: now(&pic),
+        known_neuron_data: None,
+        visibility: Some(2),
+    });
+    f.neurons.push(owned);
+    f.infos.sort_by_key(|n| n.id.as_ref().unwrap().id);
+    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
     wait_ready(&pic, app, "ready");
     let completed: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
     drive(&pic, 60);
@@ -77,6 +95,10 @@ fn production_timers_ignore_private_support_and_recover_upgrade_configuration() 
     );
     assert!(rejects.is_err());
     let before: d_quorum::Health = query_empty(&pic, app, "health");
+    assert!(
+        before.proposer.is_none(),
+        "account binding must exclude support even before bootstrap"
+    );
     pic.upgrade_canister(app, production, encode_one(None::<Mode>).unwrap(), None)
         .unwrap();
     let after: d_quorum::Health = query_empty(&pic, app, "health");

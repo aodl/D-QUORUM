@@ -163,6 +163,9 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                         );
                     }
                 }
+                let owner = ic_cdk::api::canister_self();
+                let own_account =
+                    quorum_ic_clients::ledger::staking_subaccount(owner, BOOTSTRAP_NONCE);
                 for n in observed.full_neurons {
                     if n.visibility != Some(2) {
                         continue;
@@ -182,7 +185,13 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                         followees: following(&n),
                         observed_at: at,
                     };
-                    policy::contribute(&mut r.scores, &o, &r.candidates, proposer)
+                    // The deterministic owned account identifies the proposer even before bootstrap records its ID.
+                    let excluded = if n.controller == Some(owner) && n.account == own_account {
+                        Some(id)
+                    } else {
+                        proposer
+                    };
+                    policy::contribute(&mut r.scores, &o, &r.candidates, excluded)
                         .map_err(str::to_string)?;
                     r.public_observations += 1;
                 }

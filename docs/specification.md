@@ -16,7 +16,7 @@ This is a bounded interval of observations, not an atomic NNS snapshot. Index me
 
 For each ordinary topic, a public follower's deciding VP is divided by the count of **all distinct effective followees**, including ineligible IDs. Each direct eligible non-self followee receives that fraction. Contributions are exact `u128` multiples of `360360 / count`, with checked accumulation; no floating point or per-contribution rounding is used. CatchAll (0) and Neuron Management (1) are not elected topics. Governance (4) and SNS/community fund (14) have no CatchAll fallback. Other topics use CatchAll only when their topic key is absent; an explicitly empty vector remains empty. The NNS setters normally remove empty keys. Scores are public direct support, not NNS threshold-ballot simulation.
 
-The first candidate excludes D-QUORUM and the canister-owned proposer neuron as support sources. This is an explicit anti-feedback policy choice. It does not infer human ownership.
+The first candidate excludes D-QUORUM and the canister-owned proposer neuron as support sources. The deterministic proposer staking-account/controller binding also excludes it before bootstrap records its numeric ID. This is an explicit anti-feedback policy choice. It does not infer human ownership.
 
 The regression `12000 -> X`, `9000 -> X,Y,Z`, `8000 -> X,Y` gives X exactly `19000`, including when Z is ineligible. A single candidate's self-following adds zero; the self ID still belongs to the denominator when evaluating its other followees.
 
