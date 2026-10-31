@@ -211,6 +211,7 @@ fn exercise(n: usize, seats: u8) {
         r.unwrap();
     }
     let start = now(&pic);
+    let initial_cycles = pic.cycle_balance(app);
     let wall = std::time::Instant::now();
     let mut upgraded = false;
     let mut applied = None;
@@ -338,7 +339,20 @@ fn exercise(n: usize, seats: u8) {
     assert_eq!(before.checkpoints.mutations, after.checkpoints.mutations);
     assert_eq!(pic.get_stable_memory(app), stable);
     let status = pic.canister_status(app, None).unwrap();
-    let metrics = serde_json::json!({"recipients":n,"compliant_contenders":2*n,"manager_count_range":[5,15],"seats":seats,"selected_within_seconds":applied-start,"validation_to_intent_seconds":intended-validated,"validation_to_readback_seconds":readback-validated,"oldest_destination_age_at_plan_detection_seconds":plan.unwrap()-oldest_destination,"plan_started_after_applied_seconds":plan.unwrap()-applied,"total_virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"checkpoint_metrics":after.checkpoints,"stable_snapshot_bytes":after.stable_snapshot_bytes,"heap_bytes":status.memory_metrics.wasm_memory_size.to_string(),"stable_pages":after.stable_memory_pages,"dense_score_entries":scores.len(),"scope":"production constants and natural timers; discovery retry, latency and upgrade; all obligations paid once and refreshed"});
+    let recorded: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    let recorded_neuron_reads = recorded
+        .iter()
+        .filter(|m| {
+            [
+                "list_known_neurons",
+                "list_neurons",
+                "get_neuron_index",
+                "get_neuron_info",
+            ]
+            .contains(&m.as_str())
+        })
+        .count();
+    let metrics = serde_json::json!({"recipients":n,"cycle_delta":initial_cycles-pic.cycle_balance(app),"recorded_neuron_reads":recorded_neuron_reads,"call_measurement_scope":"recorded public-neuron read requests; excludes economics, management-canister and Ledger calls; cycle delta covers all canister jobs","compliant_contenders":2*n,"manager_count_range":[5,15],"seats":seats,"selected_within_seconds":applied-start,"validation_to_intent_seconds":intended-validated,"validation_to_readback_seconds":readback-validated,"oldest_destination_age_at_plan_detection_seconds":plan.unwrap()-oldest_destination,"plan_started_after_applied_seconds":plan.unwrap()-applied,"total_virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"checkpoint_metrics":after.checkpoints,"stable_snapshot_bytes":after.stable_snapshot_bytes,"heap_bytes":status.memory_metrics.wasm_memory_size.to_string(),"stable_pages":after.stable_memory_pages,"dense_score_entries":scores.len(),"scope":"production constants and natural timers; discovery retry, latency and upgrade; all obligations paid once and refreshed"});
     std::fs::create_dir_all(root().join("dist/evidence")).unwrap();
     std::fs::write(
         root().join(format!("dist/evidence/capacity-{n}.json")),
