@@ -305,6 +305,20 @@ impl State {
         self.draft = None;
         Ok(self.config.revision)
     }
+    pub fn publish_applied(&mut self, applied: Applied, now: u64) {
+        if applied.reward_eligible(self.config.revision, now) && self.payout.is_none() {
+            let job = &mut self.jobs[2];
+            if self.draft.is_some() || job.busy_until != 0 || job.last_error.is_some() {
+                // Restart blocked or in-flight admission with current evidence, while
+                // preserving a completed payout's ordinary daily waiting period.
+                self.draft = None;
+                job.generation = job.generation.checked_add(1).expect("generation overflow");
+                job.busy_until = 0;
+                job.next_at = now;
+            }
+        }
+        self.applied = Some(applied);
+    }
     pub fn recover(&mut self) {
         let pin = Self::current_policy_pin();
         if self.policy_pin != pin {
@@ -944,5 +958,55 @@ mod migration_regressions {
             ),
         };
         assert!(!a.reward_eligible(0, 30 * DAY));
+    }
+    #[test]
+    fn fresh_roster_wakes_blocked_admission_without_shortening_completed_payout_cadence() {
+        let mut s = State::new(
+            Init {
+                mode: Mode::ObserveOnly,
+                expected_target_controller: None,
+            },
+            1,
+        )
+        .unwrap();
+        let e = quorum_ic_clients::governance::Economics {
+            neuron_minimum_stake_e8s: 1,
+            neuron_management_fee_per_proposal_e8s: 1,
+            voting_power_economics: Some(quorum_ic_clients::governance::VotingPowerEconomics {
+                neuron_minimum_dissolve_delay_to_vote_seconds: Some(1_209_600),
+                start_reducing_voting_power_after_seconds: None,
+                clear_following_after_seconds: None,
+            }),
+        };
+        let a = Applied {
+            round: 2,
+            revision: 0,
+            reconciled_at: 100,
+            readback_observed_at: Some(100),
+            candidate_validated_at: Some(90),
+            intended_at: Some(95),
+            reward_valid_until: Some(1 + ROSTER_MAX_AGE),
+            scan_start: 1,
+            scan_end: 80,
+            rosters: vec![],
+            economics: Some(
+                quorum_ic_clients::governance::VotingContext::resolve(&e, None).unwrap(),
+            ),
+        };
+        s.jobs[2].next_at = DAY + 50;
+        s.jobs[2].generation = 7;
+        s.publish_applied(a.clone(), 100);
+        assert_eq!(s.jobs[2].next_at, DAY + 50);
+        assert_eq!(s.jobs[2].generation, 7);
+        s.jobs[2].last_error = Some("underlying observations stale".into());
+        s.publish_applied(a.clone(), 101);
+        assert_eq!(s.jobs[2].next_at, 101);
+        assert_eq!(s.jobs[2].generation, 8);
+        s.jobs[2].last_error = None;
+        s.jobs[2].busy_until = 600;
+        s.publish_applied(a, 102);
+        assert_eq!(s.jobs[2].next_at, 102);
+        assert_eq!(s.jobs[2].generation, 9);
+        assert_eq!(s.jobs[2].busy_until, 0);
     }
 }

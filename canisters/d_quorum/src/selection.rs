@@ -477,17 +477,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     rosters: r.rosters.clone(),
                 };
                 state::guarded(token, |s| {
-                    if applied.reward_eligible(s.config.revision, clock()) && s.payout.is_none() {
-                        // Retire admission work for the previous roster, without touching an obligation.
-                        s.draft = None;
-                        s.jobs[2].generation = s.jobs[2]
-                            .generation
-                            .checked_add(1)
-                            .expect("generation overflow");
-                        s.jobs[2].busy_until = 0;
-                        s.jobs[2].next_at = clock();
-                    }
-                    s.applied = Some(applied);
+                    s.publish_applied(applied, clock());
                 });
                 r.phase = Complete;
             } else if r.revision != state::read(|s| s.config.revision) {

@@ -26,6 +26,8 @@ State remains versioned snapshot-cell storage with bounded round/cache/history s
 
 Support interval, oldest candidate validation, first intended write, observed readback and reconciliation completion are distinct fields. Reward validity ends at the earlier underlying observation deadline, never readback time. Historical writes can be reconciled after outages without permitting stale rewards. A stale or old-revision recovered roster schedules a new complete round promptly.
 
+A fresh roster wakes blocked or in-flight payout admission and retires its old draft. It preserves the ordinary daily waiting period after a completed payout; a roster/configuration change cannot accelerate another distribution of later deposits.
+
 An already-dispatched intent survives a setter for readback. Before any new write or retry, the worker reads current mode/revision, checks observation age after awaits and uses one guarded commit checking worker generation, current revision and exact intent attempt. A mismatching old-revision readback cannot retry the obsolete roster.
 
 ## Financial obligations and attempts
