@@ -16,6 +16,7 @@ pub struct CachedNeuron {
 pub struct CachedController {
     pub evidence: ControllerEvidence,
     pub at: u64,
+    pub through: u64,
 }
 #[derive(Clone, Debug, Default, CandidType, Deserialize)]
 pub struct Cache {
@@ -158,6 +159,21 @@ impl Collection {
         )?;
         Ok(NeuronLookup::Found(Box::new(n)))
     }
+    fn controller_observation(&mut self, c: &CachedController) -> Result<(), String> {
+        self.observe(c.at)?;
+        self.observe(c.through)?;
+        self.evidence.controller = Some(c.evidence.clone());
+        Ok(())
+    }
+    fn report(&self, now: u64) -> Result<ComplianceReport, String> {
+        if now < self.observed_through
+            || now.saturating_sub(self.observed_from) > OBSERVATION_WINDOW
+        {
+            return Err("candidate observation expired across awaits".into());
+        }
+        validate_evaluation_inputs(&self.evidence, SOURCE_REVISION).map_err(str::to_string)?;
+        Ok(evaluate(self.id, &self.evidence, SOURCE_REVISION))
+    }
     pub async fn advance(&mut self) -> Result<Option<ComplianceReport>, String> {
         let mut cache = std::mem::take(&mut self.local);
         let result = self.advance_cached(&mut cache).await;
@@ -251,20 +267,19 @@ impl Collection {
                                     controllers: i.controllers,
                                 },
                                 at,
+                                through: clock(),
                             },
                         );
                     }
                     let c = cache.controllers.get(&p).unwrap();
-                    self.observe(c.at)?;
-                    self.evidence.controller = Some(c.evidence.clone());
+                    self.controller_observation(c)?;
                 }
                 self.phase = Phase::Done;
             }
             Phase::Done => {}
         }
         if self.phase == Phase::Done {
-            validate_evaluation_inputs(&self.evidence, SOURCE_REVISION).map_err(str::to_string)?;
-            Ok(Some(evaluate(self.id, &self.evidence, SOURCE_REVISION)))
+            Ok(Some(self.report(clock())?))
         } else {
             Ok(None)
         }
@@ -325,4 +340,31 @@ pub fn expected_controller(n: &g::Neuron, expected: Principal, id: u64) -> Resul
         return Err("target identity or controller mismatch".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod observation_intervals {
+    use super::*;
+    #[test]
+    fn delayed_controller_reply_and_report_commit_cannot_freshen_old_configuration() {
+        let mut c = Collection::new(1);
+        c.observe(100).unwrap();
+        let late = CachedController {
+            at: 200,
+            through: 499,
+            evidence: ControllerEvidence {
+                call_succeeded: true,
+                module_hash: None,
+                controllers: vec![],
+            },
+        };
+        assert!(c.controller_observation(&late).is_err());
+        assert_eq!(c.observed_from, 100);
+        assert!(c.evidence.controller.is_none());
+        let mut c = Collection::new(1);
+        c.observe(100).unwrap();
+        assert!(c.report(400).is_ok());
+        assert!(c.report(401).is_err());
+        assert!(c.report(99).is_err());
+    }
 }

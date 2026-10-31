@@ -267,6 +267,12 @@
       "suite": "unit",
       "regression": "refresh_preserves_authority_and_following_independent_of_wire_map_order",
       "status": "implemented"
+    },
+    {
+      "requirement": "controller response interval and final report age are checked after awaits without freshening old configuration",
+      "suite": "unit",
+      "regression": "delayed_controller_reply_and_report_commit_cannot_freshen_old_configuration",
+      "status": "implemented"
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."
