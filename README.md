@@ -2,7 +2,7 @@
 
 One stateful Rust Internet Computer canister for deterministic, topic-specific Dendrite delegation and equal ICP rewards to selected neuron staking accounts.
 
-**Release status: hardening candidate under qualification; the RC1 hashes and qualification remain historical.** Installation defaults to `ObserveOnly`. Mandatory qualification is tracked in [the acceptance matrix](docs/acceptance-matrix.json). A successful build does not close an unexecuted gate. No production deployment, funding, staking, hotkey installation, proposal, transfer, controller change or push is part of this repository's local work.
+**Release status: new undeployed hardening candidate passed all mandatory local gates at `e14c9cb`; RC1 hashes and qualification remain historical.** See the [qualification and handover report](docs/qualification.md) for evidence, artifacts and remaining operator prerequisites. Remote CI and activation require separate authorization. Installation defaults to `ObserveOnly`. Mandatory requirements are tracked in [the acceptance matrix](docs/acceptance-matrix.json). No production deployment, funding, staking, hotkey installation, proposal, transfer, controller change or push is part of this repository's local work.
 
 The provisional reward policy gives **one equal net share to each distinct neuron in the latest fully applied, sufficiently fresh roster**, regardless of how many topics select it. VP ranks delegates; it does not weight payment. Managers get no additional share. Reward-receiver declarations do not redirect ICP. Review this policy before any deployment.
 
