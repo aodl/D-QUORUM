@@ -17,3 +17,5 @@ To halt new effects during an incident, a separately authorised upgrade to Obser
 BadFee and unresolved expired transfers deliberately hold the existing plan. This tranche has no operator override or arbitrary safe-retry endpoint. Further typed recovery code may be required for permanent history unavailability or a fee change; preserve all obligations and obtain a separate code review before an upgrade that changes recovery behavior. Incoming unsolicited deposits are future reward funding, not authority to alter recipients.
 
 Use icp-cli with the reviewed `icp.yaml` and canonical artifact; no dfx project is supplied. No production command is embedded in the test/release scripts. The file's prebuilt checksum must match the retained canonical release before a future installation.
+
+The successor hardening tranche changes eligible-voter scoring and stable schema V2; see [the hardening contracts](hardening-design.md). Historical RC1 behavior and hashes are not qualification evidence for this successor. Existing deployments must review migration to ObserveOnly, current observations and separate cache-maintenance status before authorizing live operation.

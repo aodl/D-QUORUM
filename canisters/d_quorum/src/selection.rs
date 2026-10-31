@@ -14,9 +14,19 @@ pub fn following(n: &g::Neuron) -> BTreeMap<i32, Vec<u64>> {
         .collect()
 }
 pub async fn target() -> Result<g::Neuron, String> {
+    Ok(target_observation().await?.0)
+}
+async fn target_observation() -> Result<(g::Neuron, u64), String> {
     let expected = state::read(|s| s.config.expected_target_controller)
         .ok_or("waiting for reviewed target controller")?;
     let mut r = g::full(vec![TARGET]).await?;
+    let at = r
+        .neuron_infos
+        .iter()
+        .find(|(id, _)| *id == TARGET)
+        .ok_or("target observation time unavailable")?
+        .1
+        .retrieved_at_timestamp_seconds;
     let n = r.full_neurons.pop().ok_or("D-QUORUM target unavailable")?;
     expected_controller(&n, expected, TARGET)?;
     if !n.hot_keys.contains(&ic_cdk::api::canister_self()) {
@@ -33,7 +43,7 @@ pub async fn target() -> Result<g::Neuron, String> {
                 .into(),
         );
     }
-    Ok(n)
+    Ok((n, at))
 }
 fn material_equal(a: &policy::Candidate, b: &policy::Candidate) -> bool {
     a.id == b.id
@@ -65,6 +75,9 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     }
     match r.phase.clone() {
         Discover => {
+            if r.economics.is_none() {
+                r.economics = Some(g::voting_context().await?);
+            }
             r.known = g::known()
                 .await?
                 .into_iter()
@@ -78,9 +91,23 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         }
         Candidates { offset, work } => {
             if let Some(id) = r.known.get(offset as usize).copied() {
+                if !r.cache.fresh(id) {
+                    r.cache
+                        .fetch(
+                            r.known[offset as usize..]
+                                .iter()
+                                .copied()
+                                .take(50)
+                                .collect(),
+                        )
+                        .await?;
+                }
                 let mut work = work.unwrap_or_else(|| Collection::new(id));
-                if let Some(report) = work.advance().await? {
-                    let admitted = policy::admit(&report).ok();
+                if let Some(report) = work.advance_cached(&mut r.cache).await? {
+                    let admitted = policy::admit(&report).ok().map(|mut c| {
+                        c.checked_at = work.observed_from;
+                        c
+                    });
                     if let Some(c) = admitted.clone() {
                         r.candidates.insert(id, c);
                     }
@@ -129,7 +156,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 let ns = g::index(cursor).await?;
                 r.pages += 1;
                 if ns.is_empty() {
-                    r.scan_ended_at = Some(now);
+                    r.scan_ended_at = Some(clock());
                     r.phase = Select;
                 } else {
                     let last = ns.last().and_then(|n| n.id.as_ref()).map(|id| id.id);
@@ -146,7 +173,19 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 }
             } else {
                 let batch: Vec<_> = pending.drain(..pending.len().min(50)).collect();
+                if Some(g::voting_context().await?) != r.economics {
+                    return Err("voting economics changed before support batch".into());
+                }
                 let observed = g::full(batch.clone()).await?;
+                if Some(g::voting_context().await?) != r.economics {
+                    return Err("voting economics changed across support batch".into());
+                }
+                if observed.neuron_infos.iter().any(|(_, n)| {
+                    n.retrieved_at_timestamp_seconds > clock()
+                        || clock().saturating_sub(n.retrieved_at_timestamp_seconds) > 300
+                }) {
+                    return Err("support observation expired across awaits".into());
+                }
                 for id in &batch {
                     if observed
                         .neuron_infos
@@ -181,7 +220,16 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     let o = Observation {
                         id,
                         public: true,
-                        deciding_vp: n.deciding_voting_power.ok_or("deciding VP unavailable")?,
+                        deciding_vp: if r
+                            .economics
+                            .as_ref()
+                            .ok_or("voting context unavailable")?
+                            .eligible(&n, at)?
+                        {
+                            n.deciding_voting_power.ok_or("deciding VP unavailable")?
+                        } else {
+                            0
+                        },
                         followees: following(&n),
                         observed_at: at,
                     };
@@ -208,6 +256,10 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             }
         }
         Select => {
+            if Some(g::voting_context().await?) != r.economics {
+                return Err("voting economics changed; complete new round required".into());
+            }
+            r.cache = Default::default();
             r.validated_at = Some(now); // Bound the age of the oldest selected-candidate recheck.
             r.rosters = TOPICS
                 .into_iter()
@@ -222,9 +274,16 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         }
         Revalidate { ids, offset, work } => {
             if let Some(id) = ids.get(offset as usize).copied() {
+                if !r.cache.fresh(id) {
+                    r.cache
+                        .fetch(ids[offset as usize..].iter().copied().take(50).collect())
+                        .await?;
+                }
                 let mut work = work.unwrap_or_else(|| Collection::new(id));
-                if let Some(report) = work.advance().await? {
-                    let c = policy::admit(&report).map_err(str::to_string)?;
+                if let Some(report) = work.advance_cached(&mut r.cache).await? {
+                    let mut c = policy::admit(&report).map_err(str::to_string)?;
+                    c.checked_at = work.observed_from;
+                    r.validated_at = Some(r.validated_at.unwrap_or(c.checked_at).min(c.checked_at));
                     if !r.candidates.get(&id).is_some_and(|a| material_equal(a, &c)) {
                         r.phase = Failed(
                             "selected candidate changed; complete new round required".into(),
@@ -262,6 +321,14 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             mut visited,
         } => {
             if topic as usize >= r.rosters.len() {
+                if Some(g::voting_context().await?) != r.economics {
+                    return Err("voting economics changed before ranking publication".into());
+                }
+                if r.validated_at
+                    .is_none_or(|t| clock().saturating_sub(t) > 1800)
+                {
+                    return Err("validation expired before publication".into());
+                }
                 r.phase = Ready;
             } else if todo.is_empty() {
                 let next = topic + 1;
@@ -281,7 +348,22 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 if batch.contains(&TARGET) {
                     r.phase = Failed("selected voting dependency reaches D-QUORUM".into());
                 } else {
-                    let ns = g::full(batch.clone()).await?;
+                    let missing: Vec<_> = batch
+                        .iter()
+                        .copied()
+                        .filter(|id| !r.cache.fresh(*id))
+                        .collect();
+                    if !missing.is_empty() {
+                        r.cache.fetch(missing).await?;
+                    }
+                    let ns = g::ListNeuronsResponse {
+                        full_neurons: batch
+                            .iter()
+                            .filter_map(|id| r.cache.neurons.get(id).and_then(|n| n.neuron.clone()))
+                            .collect(),
+                        neuron_infos: vec![],
+                        total_pages_available: Some(1),
+                    };
                     if batch.iter().any(|id| {
                         !ns.full_neurons.iter().any(|n| {
                             n.id.as_ref().map(|i| i.id) == Some(*id) && n.visibility == Some(2)
@@ -333,7 +415,13 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 if r.validated_at.is_none_or(|t| now.saturating_sub(t) > 1800) {
                     return Err("pre-application validation expired".into());
                 }
-                let n = target().await?;
+                let (n, observed) = target_observation().await?;
+                if Some(g::voting_context().await?) != r.economics {
+                    return Err("voting economics changed before application".into());
+                }
+                if !dispatch_allowed(token, &r) || clock().saturating_sub(observed) > 300 {
+                    return Err("application authorization or observation expired".into());
+                }
                 if !state::current(token) {
                     return Ok(());
                 }
@@ -347,7 +435,8 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             }
         }
         Applying { sent } => {
-            let n = target().await?;
+            let (n, observed) = target_observation().await?;
+            r.last_readback_at = Some(observed);
             if !state::current(token) {
                 return Ok(());
             }
@@ -357,31 +446,72 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     "management membership changed while applying; operator review required".into(),
                 );
             }
+            let current_economics = g::voting_context().await.ok();
+            if !state::current(token) {
+                return Ok(());
+            }
             let reconciled = r
                 .intended
                 .iter()
                 .all(|(topic, ids)| actual.get(topic).cloned().unwrap_or_default() == *ids);
             if reconciled {
                 let applied = Applied {
+                    candidate_validated_at: r.validated_at,
+                    intended_at: r.intent_at,
+                    reward_valid_until: Some(
+                        if current_economics != r.economics || r.economics.is_none() {
+                            0
+                        } else {
+                            r.started_at
+                                .saturating_add(ROSTER_MAX_AGE)
+                                .min(r.validated_at.unwrap_or(0).saturating_add(ROSTER_MAX_AGE))
+                        },
+                    ),
+                    economics: r.economics.clone(),
+                    readback_observed_at: Some(observed),
                     round: r.id,
                     revision: r.revision,
-                    reconciled_at: now,
+                    reconciled_at: clock(),
                     scan_start: r.started_at,
                     scan_end: r.scan_ended_at.ok_or("incomplete scan")?,
                     rosters: r.rosters.clone(),
                 };
-                state::guarded(token, |s| s.applied = Some(applied));
+                state::guarded(token, |s| {
+                    if applied.reward_eligible(s.config.revision, clock()) && s.payout.is_none() {
+                        // Retire admission work for the previous roster, without touching an obligation.
+                        s.draft = None;
+                        s.jobs[2].generation = s.jobs[2]
+                            .generation
+                            .checked_add(1)
+                            .expect("generation overflow");
+                        s.jobs[2].busy_until = 0;
+                        s.jobs[2].next_at = clock();
+                    }
+                    s.applied = Some(applied);
+                });
                 r.phase = Complete;
-            } else if r.revision != config.revision {
+            } else if r.revision != state::read(|s| s.config.revision) {
                 r.phase = Failed("configuration changed; old write read back without retry".into());
-            } else if config.mode != Mode::Live {
+            } else if state::read(|s| s.config.mode) != Mode::Live {
                 return Err(
                     "following intent retained for readback; write mode is inactive".into(),
                 );
             } else if sent && r.apply_attempts >= 3 {
                 return Err("following write remains unreconciled after bounded retries".into());
             } else {
-                let write_now = ic_cdk::api::time() / 1_000_000_000;
+                if Some(g::voting_context().await?) != r.economics {
+                    return Err("voting economics changed before dispatch".into());
+                }
+                if !dispatch_allowed(token, &r) || clock().saturating_sub(observed) > 300 {
+                    r.phase =
+                        Failed("current revision or freshness prevents obsolete dispatch".into());
+                    state::guarded(token, |s| {
+                        s.round = Some(r);
+                        s.jobs[0].next_at = clock() + 1;
+                    });
+                    return Ok(());
+                }
+                let write_now = clock();
                 if r.validated_at
                     .is_none_or(|t| write_now.saturating_sub(t) > 1800)
                     || write_now.saturating_sub(r.started_at) > MAX_ROUND_AGE
@@ -398,8 +528,20 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     })
                     .collect();
                 r.apply_attempts += 1;
+                r.intent_at.get_or_insert(write_now);
                 r.phase = Applying { sent: true };
-                state::guarded(token, |s| s.round = Some(r.clone())).ok_or("stale worker")?; // commit intent before await
+                state::guarded_if(
+                    token,
+                    |s| {
+                        s.config.revision == r.revision
+                            && s.config.mode == Mode::Live
+                            && s.round.as_ref().is_some_and(|x| {
+                                x.id == r.id && x.apply_attempts + 1 == r.apply_attempts
+                            })
+                    },
+                    |s| s.round = Some(r.clone()),
+                )
+                .ok_or("stale configuration or intent")?; // commit intent before await
                 let response = g::manage(g::request(
                     TARGET,
                     g::Command::SetFollowing(g::SetFollowing {
@@ -425,7 +567,15 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     state::guarded(token, |s| {
         // Reserve the cadence when entering a terminal phase, before the next timer can retire it.
         // Otherwise the next ten-second tick could accidentally start another weekly round.
-        if r.revision != s.config.revision && matches!(r.phase, Complete | Failed(_)) {
+        if matches!(r.phase, Complete)
+            && (!s
+                .applied
+                .as_ref()
+                .is_some_and(|a| a.reward_eligible(s.config.revision, clock()))
+                || r.revision != s.config.revision)
+        {
+            s.jobs[0].next_at = clock() + 1;
+        } else if r.revision != s.config.revision && matches!(r.phase, Complete | Failed(_)) {
             // Finish readback of the old intent, then promptly compute the new revision.
             s.jobs[0].next_at = now + 10;
         } else if matches!(r.phase, Complete)
@@ -441,4 +591,20 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         s.round = Some(r);
     });
     Ok(())
+}
+
+fn clock() -> u64 {
+    ic_cdk::api::time() / 1_000_000_000
+}
+fn dispatch_allowed(t: Token, r: &Round) -> bool {
+    state::current(t)
+        && ic_cdk::api::canister_cycle_balance() >= 2_000_000_000_000
+        && state::read(|s| {
+            s.config.revision == r.revision
+                && s.config.mode == Mode::Live
+                && s.round.as_ref().is_some_and(|x| x.id == r.id)
+        })
+        && clock().saturating_sub(r.started_at) <= MAX_ROUND_AGE
+        && r.validated_at
+            .is_some_and(|v| clock().saturating_sub(v) <= 1800)
 }

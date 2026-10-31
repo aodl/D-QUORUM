@@ -4,7 +4,7 @@ use dendrite_types::{ComplianceReport, ComplianceStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const POLICY_REVISION: &str = "selection-1/reward-roster-equal-1";
+pub const POLICY_REVISION: &str = "selection-2-eligible-ballots/reward-roster-equal-1";
 pub const EVALUATOR_COMMIT: &str = "b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291";
 pub const PROTOCOL_COMMIT: &str = "83f29e0803496ba6aaea3d6b43f6c6bebea12dd9";
 pub const SCALE: u128 = 360_360;
@@ -249,5 +249,38 @@ mod tests {
             prop_assert_eq!(&a,&b);prop_assert_eq!(a.values().sum::<u128>(),vps.iter().map(|v|u128::from(*v)*SCALE).sum::<u128>());
             prop_assert_eq!(select(4,15,&cs,&a).unwrap(),select(4,15,&cs,&b).unwrap());
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_regression {
+    use super::*;
+    #[test]
+    fn delegated_support_does_not_propagate_through_an_intermediate_neuron() {
+        let c = Candidate {
+            id: 3,
+            managers: BTreeSet::from([99]),
+            topics: BTreeSet::from([4]),
+            checked_at: 1,
+            evaluator_commit: EVALUATOR_COMMIT.into(),
+        };
+        let cs = BTreeMap::from([(3, c)]);
+        let mut scores = Scores::new();
+        for (id, vp, followee) in [(1, 12000, 2), (2, 9000, 3)] {
+            contribute(
+                &mut scores,
+                &Observation {
+                    id,
+                    public: true,
+                    deciding_vp: vp,
+                    followees: BTreeMap::from([(4, vec![followee])]),
+                    observed_at: 1,
+                },
+                &cs,
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(scores[&(4, 3)], 9000 * SCALE);
     }
 }

@@ -91,13 +91,47 @@ fn get_neuron_index(r: g::IndexRequest) {
     });
     reply("get_neuron_index", Result::<_, g::GovernanceError>::Ok(v));
 }
+fn omit_multi_query_metadata(r: &mut g::ListNeuronsResponse) {
+    for n in &mut r.full_neurons {
+        n.known_neuron_data = None;
+    }
+    for (_, n) in &mut r.neuron_infos {
+        n.known_neuron_data = None;
+    }
+}
 #[ic_cdk::update(manual_reply = true)]
-fn list_neurons(r: g::ListNeurons) {
-    if let Some(v) = scale_full(&r) {
+async fn list_neurons(r: g::ListNeurons) {
+    let delay = PAUSE_FULL.with(|c| {
+        let mut p = c.borrow_mut();
+        if p.as_ref().is_some_and(|(id, _)| r.neuron_ids.contains(id)) {
+            p.take().map(|(_, d)| d).unwrap()
+        } else {
+            0
+        }
+    });
+    if delay > 0 {
+        CALLS.with(|c| c.borrow_mut().push("full_read_paused".into()));
+        let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_wait")
+            .with_arg(delay)
+            .await;
+    }
+
+    if let Some(mut v) = scale_full(&r) {
+        if r.neuron_ids == vec![quorum_policy_target()] {
+            let delay = DELAY_TARGET.with(|c| c.replace(0));
+            if delay > 0 {
+                CALLS.with(|c| c.borrow_mut().push("target_read_paused".into()));
+                let _ =
+                    ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_wait")
+                        .with_arg(delay)
+                        .await;
+            }
+        }
+        omit_multi_query_metadata(&mut v);
         reply("list_neurons", v);
         return;
     }
-    let v = FIXTURE.with(|x| {
+    let mut v = FIXTURE.with(|x| {
         let f = x.borrow();
         g::ListNeuronsResponse {
             full_neurons: f
@@ -110,11 +144,25 @@ fn list_neurons(r: g::ListNeurons) {
                 .infos
                 .iter()
                 .filter(|n| r.neuron_ids.contains(&n.id.as_ref().unwrap().id))
-                .map(|n| (n.id.as_ref().unwrap().id, n.clone()))
+                .map(|n| {
+                    let mut n = n.clone();
+                    n.retrieved_at_timestamp_seconds = ic_cdk::api::time() / 1_000_000_000;
+                    (n.id.as_ref().unwrap().id, n)
+                })
                 .collect(),
             total_pages_available: Some(1),
         }
     });
+    if r.neuron_ids == vec![quorum_policy_target()] {
+        let delay = DELAY_TARGET.with(|c| c.replace(0));
+        if delay > 0 {
+            CALLS.with(|c| c.borrow_mut().push("target_read_paused".into()));
+            let _ = ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_wait")
+                .with_arg(delay)
+                .await;
+        }
+    }
+    omit_multi_query_metadata(&mut v);
     reply("list_neurons", v);
 }
 #[ic_cdk::update(manual_reply = true)]
@@ -148,14 +196,21 @@ enum MockCommand {
 }
 thread_local! {static PROPOSALS:RefCell<Vec<g::ProposalInfo>>=const{RefCell::new(vec![])};}
 #[ic_cdk::update(manual_reply = true)]
-fn manage_neuron(r: MockManage) {
+async fn manage_neuron(r: MockManage) {
     let caller = ic_cdk::api::msg_caller();
+    let proposal_call = matches!(&r.command, Some(MockCommand::MakeProposal(_)));
     let mut command = Some(g::ResponseCommand::Error(g::GovernanceError {
         error_type: 1,
         error_message: "unsupported or unavailable fixture command".into(),
     }));
     match r.command {
         Some(MockCommand::SetFollowing(f)) => {
+            CALLS.with(|c| c.borrow_mut().push("set_following".into()));
+            if SKIP_FOLLOW.with(|c| c.replace(false)) {
+                ic_cdk::api::msg_reply([0, 1, 2]);
+                return;
+            }
+
             FIXTURE.with(|x| {
                 let mut x = x.borrow_mut();
                 if let Some(n) = x.neurons.iter_mut().find(|n| {
@@ -193,12 +248,83 @@ fn manage_neuron(r: MockManage) {
                     .cloned()
             });
             if let Some(n) = n {
+                let balance = l::balance(GOVERNANCE, Some(n.account.clone()))
+                    .await
+                    .unwrap();
+                FIXTURE.with(|f| {
+                    f.borrow_mut()
+                        .neurons
+                        .iter_mut()
+                        .find(|x| x.id == n.id)
+                        .unwrap()
+                        .cached_neuron_stake_e8s = balance
+                });
+
                 command = Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
                     refreshed_neuron_id: n.id,
                 }));
             }
         }
+        Some(MockCommand::ClaimOrRefresh(g::Claim {
+            by: Some(g::By::NeuronIdOrSubaccount(_)),
+        })) => {
+            let id = match &r.neuron_id_or_subaccount {
+                Some(g::Id::NeuronId(id)) => id.id,
+                _ => 0,
+            };
+            let n = FIXTURE.with(|f| {
+                f.borrow()
+                    .neurons
+                    .iter()
+                    .find(|n| n.id.as_ref().unwrap().id == id)
+                    .cloned()
+            });
+            if let Some(n) = n {
+                if n.controller != Some(caller) && FAIL_REFRESH.with(|c| c.replace(false)) {
+                    reply(
+                        "manage_neuron",
+                        g::ManageResponse {
+                            command: Some(g::ResponseCommand::Error(g::GovernanceError {
+                                error_type: 2,
+                                error_message: "scripted refresh unavailability".into(),
+                            })),
+                        },
+                    );
+                    return;
+                }
+
+                let balance = l::balance(GOVERNANCE, Some(n.account)).await.unwrap();
+                FIXTURE.with(|f| {
+                    f.borrow_mut()
+                        .neurons
+                        .iter_mut()
+                        .find(|n| n.id.as_ref().unwrap().id == id)
+                        .unwrap()
+                        .cached_neuron_stake_e8s = balance
+                });
+                command = Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+                    refreshed_neuron_id: Some(g::NeuronId { id }),
+                }));
+            }
+        }
         Some(MockCommand::MakeProposal(p)) => {
+            if let Some(code) = PROPOSAL_REJECTION.with(|c| c.borrow_mut().pop_front()) {
+                CALLS.with(|c| {
+                    c.borrow_mut()
+                        .push("proposal_rejected_before_creation".into())
+                });
+                reply(
+                    "manage_neuron",
+                    g::ManageResponse {
+                        command: Some(g::ResponseCommand::Error(g::GovernanceError {
+                            error_type: code,
+                            error_message: "scripted pre-creation refusal".into(),
+                        })),
+                    },
+                );
+                return;
+            }
+
             let proposer = match r.neuron_id_or_subaccount {
                 Some(g::Id::NeuronId(id)) => Some(id),
                 _ => r.id,
@@ -222,7 +348,10 @@ fn manage_neuron(r: MockManage) {
                         proposer,
                         proposal: Some(g::StoredProposal {
                             url: p.url,
-                            title: p.title,
+                            title: Some(format!(
+                                "Manage neuron proposal for neuron: {}",
+                                quorum_policy_target()
+                            )),
                             summary: p.summary,
                             action: Some(action),
                         }),
@@ -239,11 +368,23 @@ fn manage_neuron(r: MockManage) {
         }
         _ => {}
     }
-    reply("manage_neuron", g::ManageResponse { command });
+    reply(
+        if proposal_call {
+            "make_proposal_reply"
+        } else {
+            "manage_neuron"
+        },
+        g::ManageResponse { command },
+    );
 }
 #[ic_cdk::update]
 fn get_network_economics_parameters() -> g::Economics {
     g::Economics {
+        voting_power_economics: Some(g::VotingPowerEconomics {
+            start_reducing_voting_power_after_seconds: Some(15_778_800),
+            clear_following_after_seconds: Some(2_629_800),
+            neuron_minimum_dissolve_delay_to_vote_seconds: VOTING_MIN.with(|c| c.get()),
+        }),
         neuron_minimum_stake_e8s: 100_000_000,
         neuron_management_fee_per_proposal_e8s: 10_000,
     }
@@ -349,6 +490,12 @@ async fn direct_maturity_probe(id: u64) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let result = r.candid::<g::ManageResponse>().map_err(|e| e.to_string())?;
     Ok(format!("{:?}", result.command))
+}
+#[ic_cdk::update]
+async fn proposal_result_probe(
+    args: (u64, g::MaturityProposal),
+) -> Result<g::ResponseCommand, String> {
+    g::propose(args.0, args.1).await
 }
 #[ic_cdk::update]
 async fn proposal_probe(args: (u64, g::MaturityProposal)) -> Result<u64, String> {
@@ -485,7 +632,11 @@ fn scale_full(r: &g::ListNeurons) -> Option<g::ListNeuronsResponse> {
                 f.infos
                     .iter()
                     .filter(|n| r.neuron_ids.contains(&n.id.as_ref().unwrap().id))
-                    .map(|n| (n.id.as_ref().unwrap().id, n.clone())),
+                    .map(|n| {
+                        let mut n = n.clone();
+                        n.retrieved_at_timestamp_seconds = ic_cdk::api::time() / 1_000_000_000;
+                        (n.id.as_ref().unwrap().id, n)
+                    }),
             );
         });
         Some(g::ListNeuronsResponse {
@@ -497,6 +648,7 @@ fn scale_full(r: &g::ListNeurons) -> Option<g::ListNeuronsResponse> {
 }
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub enum LedgerFault {
+    LoseReplyWithoutCommit,
     LoseReplyAfterCommit,
     BadFee(u64),
     Unavailable,
@@ -506,6 +658,7 @@ pub enum LedgerFault {
 #[derive(Default)]
 struct LedgerModel {
     staking_funding: u64,
+    recipients: std::collections::BTreeMap<Vec<u8>, u64>,
     balance: u64,
     fee: u64,
     blocks: Vec<l::Block>,
@@ -552,10 +705,15 @@ fn ledger_stats() -> LedgerStats {
 #[ic_cdk::update]
 fn icrc1_balance_of(a: l::Account) -> candid::Nat {
     LEDGER_MODEL.with(|m| {
-        if a.subaccount.is_none() {
-            m.borrow().balance.into()
-        } else {
-            m.borrow().staking_funding.into()
+        let m = m.borrow();
+        match a.subaccount {
+            Some(subaccount) => m
+                .recipients
+                .get(&subaccount)
+                .copied()
+                .unwrap_or(m.staking_funding)
+                .into(),
+            None => m.balance.into(),
         }
     })
 }
@@ -598,6 +756,9 @@ fn icrc1_transfer(arg: l::TransferArg) {
         }
         let fault = m.faults.pop_front();
         match fault {
+            Some(LedgerFault::LoseReplyWithoutCommit) => {
+                return (Err(l::TransferError::TemporarilyUnavailable), true);
+            }
             Some(LedgerFault::BadFee(expected)) => {
                 m.fee = expected;
                 return (
@@ -637,6 +798,11 @@ fn icrc1_transfer(arg: l::TransferArg) {
             );
         }
         m.balance -= amount + fee;
+        if let Some(sub) = &arg.to.subaccount {
+            let balance = m.recipients.entry(sub.clone()).or_insert(1_000_000_000);
+            *balance += amount;
+        }
+
         let block = m.blocks.len() as u64;
         m.blocks.push(l::Block {
             transaction: l::Transaction {
@@ -723,4 +889,152 @@ fn proposal_status(args: (u64, i32)) {
             .unwrap()
             .status = args.1;
     });
+}
+
+fn quorum_policy_target() -> u64 {
+    4_713_806_069_430_754_115
+}
+thread_local! {
+ static DELAY_TARGET:std::cell::Cell<u32>=const{std::cell::Cell::new(0)};
+ static SKIP_FOLLOW:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};
+ static VOTING_MIN:std::cell::Cell<Option<u64>>=const{std::cell::Cell::new(Some(1_209_600))};
+ static PROPOSAL_REJECTION:RefCell<VecDeque<i32>>=const{RefCell::new(VecDeque::new())};
+}
+#[ic_cdk::update]
+fn pause_target_once(seconds: u32) {
+    DELAY_TARGET.with(|c| c.set(seconds));
+}
+#[ic_cdk::update]
+fn skip_follow_once() {
+    SKIP_FOLLOW.with(|c| c.set(true));
+}
+#[ic_cdk::update]
+fn voting_minimum(value: Option<u64>) {
+    VOTING_MIN.with(|c| c.set(value));
+}
+#[ic_cdk::update]
+fn reject_proposal_once(code: i32) {
+    PROPOSAL_REJECTION.with(|c| c.borrow_mut().push_back(code));
+}
+
+thread_local! {static PAUSE_FULL:RefCell<Option<(u64,u32)>>=const{RefCell::new(None)};}
+#[ic_cdk::update]
+fn pause_full_once(arg: (u64, u32)) {
+    PAUSE_FULL.with(|c| *c.borrow_mut() = Some(arg));
+}
+#[ic_cdk::update]
+fn ledger_fee(value: u64) {
+    LEDGER_MODEL.with(|m| m.borrow_mut().fee = value);
+}
+
+thread_local! {static FAIL_REFRESH:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
+#[ic_cdk::update]
+fn fail_recipient_refresh_once() {
+    FAIL_REFRESH.with(|c| c.set(true));
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct EligibilityRead {
+    pub context: g::VotingContext,
+    pub observations: Vec<(u64, u64, bool)>,
+}
+#[ic_cdk::update]
+async fn eligibility_probe(ids: Vec<u64>) -> Result<EligibilityRead, String> {
+    let context = g::voting_context().await?;
+    let ns = g::full(ids).await?;
+    let mut observations = vec![];
+    for n in ns.full_neurons {
+        let id = n.id.as_ref().unwrap().id;
+        let at = ns
+            .neuron_infos
+            .iter()
+            .find(|(i, _)| *i == id)
+            .unwrap()
+            .1
+            .retrieved_at_timestamp_seconds;
+        observations.push((
+            id,
+            n.deciding_voting_power.unwrap(),
+            context.eligible(&n, at)?,
+        ));
+    }
+    Ok(EligibilityRead {
+        context,
+        observations,
+    })
+}
+#[derive(CandidType)]
+struct MotionRequest {
+    id: Option<g::NeuronId>,
+    neuron_id_or_subaccount: Option<g::Id>,
+    command: Option<MotionCommand>,
+}
+#[derive(CandidType)]
+enum MotionCommand {
+    MakeProposal(MotionProposal),
+}
+#[derive(CandidType)]
+struct MotionProposal {
+    url: String,
+    title: Option<String>,
+    summary: String,
+    action: Option<MotionAction>,
+}
+#[derive(CandidType)]
+enum MotionAction {
+    Motion(Motion),
+}
+#[derive(CandidType)]
+struct Motion {
+    motion_text: String,
+}
+#[ic_cdk::update]
+async fn motion_probe(id: u64) -> Result<u64, String> {
+    let r: g::ManageResponse = ic_cdk::call::Call::bounded_wait(GOVERNANCE, "manage_neuron")
+        .with_arg(MotionRequest {
+            id: None,
+            neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id })),
+            command: Some(MotionCommand::MakeProposal(MotionProposal {
+                url: "https://forum.dfinity.org".into(),
+                title: Some("Local voting eligibility proof".into()),
+                summary: "Local protocol fixture".into(),
+                action: Some(MotionAction::Motion(Motion {
+                    motion_text: "Local protocol test".into(),
+                })),
+            })),
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .candid()
+        .map_err(|e| e.to_string())?;
+    match r.command {
+        Some(g::ResponseCommand::MakeProposal(p)) => p
+            .proposal_id
+            .map(|n| n.id)
+            .ok_or("missing proposal ID".into()),
+        x => Err(format!("{x:?}")),
+    }
+}
+#[derive(CandidType, Deserialize)]
+struct Ballot {
+    vote: i32,
+    voting_power: u64,
+}
+#[derive(CandidType, Deserialize)]
+struct BallotInfo {
+    ballots: Vec<(u64, Ballot)>,
+}
+#[ic_cdk::update]
+async fn ballot_probe(id: u64) -> Result<Vec<u64>, String> {
+    let r: Option<BallotInfo> = ic_cdk::call::Call::bounded_wait(GOVERNANCE, "get_proposal_info")
+        .with_arg(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .candid()
+        .map_err(|e| e.to_string())?;
+    Ok(r.ok_or("proposal missing")?
+        .ballots
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect())
 }

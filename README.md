@@ -2,7 +2,7 @@
 
 One stateful Rust Internet Computer canister for deterministic, topic-specific Dendrite delegation and equal ICP rewards to selected neuron staking accounts.
 
-**Release status: locally tested, installable candidate; production review and authorisation remain outstanding.** Installation defaults to `ObserveOnly`. Mandatory qualification is tracked in [the acceptance matrix](docs/acceptance-matrix.json). A successful build does not close an unexecuted gate. No production deployment, funding, staking, hotkey installation, proposal, transfer, controller change or push is part of this repository's local work.
+**Release status: hardening candidate under qualification; the RC1 hashes and qualification remain historical.** Installation defaults to `ObserveOnly`. Mandatory qualification is tracked in [the acceptance matrix](docs/acceptance-matrix.json). A successful build does not close an unexecuted gate. No production deployment, funding, staking, hotkey installation, proposal, transfer, controller change or push is part of this repository's local work.
 
 The provisional reward policy gives **one equal net share to each distinct neuron in the latest fully applied, sufficiently fresh roster**, regardless of how many topics select it. VP ranks delegates; it does not weight payment. Managers get no additional share. Reward-receiver declarations do not redirect ICP. Review this policy before any deployment.
 
@@ -11,6 +11,8 @@ The production workspace consists of `canisters/d_quorum`, `crates/policy`, `cra
 ```sh
 cargo run --locked -p xtask -- unit
 cargo run --locked -p xtask -- mock
+cargo run --locked -p xtask -- hardening
+cargo run --locked -p xtask -- capacity
 cargo run --locked -p xtask -- protocol
 cargo run --locked -p xtask -- production
 cargo run --locked -p xtask -- scale
@@ -22,4 +24,4 @@ cargo run --locked -p xtask -- acceptance
 
 All long suites are explicitly executed with `--ignored` by xtask. Missing tools, zero executed behavioural matches and incomplete required qualification fail. Wasm is prepared before starting fixtures. Required test artifacts are downloaded only from immutable URLs and verified against `protocol-pins.json`.
 
-Read the [specification](docs/specification.md), [security model](docs/security.md), [testing contract](docs/testing.md), [operations procedure](docs/operations.md), [source provenance](docs/provenance.md), and [qualification report](docs/qualification.md). The public API is [candid/d_quorum.did](candid/d_quorum.did).
+Read the [specification](docs/specification.md), [security model](docs/security.md), [testing contract](docs/testing.md), [operations procedure](docs/operations.md), [source provenance](docs/provenance.md), the [hardening changes](docs/hardening-design.md), and the [current qualification report](docs/qualification.md), and the [historical RC1 qualification report](docs/releases/rc1-qualification.md). The public API is [candid/d_quorum.did](candid/d_quorum.did).

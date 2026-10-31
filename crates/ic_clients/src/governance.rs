@@ -22,7 +22,7 @@ pub enum DissolveState {
     DissolveDelaySeconds(u64),
     WhenDissolvedTimestampSeconds(u64),
 }
-#[derive(Clone, Debug, CandidType, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, CandidType, Deserialize, Eq, PartialEq)]
 pub struct Neuron {
     pub account: Vec<u8>,
     pub maturity_disbursements_in_progress: Option<Vec<MaturityDisbursement>>,
@@ -190,7 +190,7 @@ pub fn validate_batch(ids: &[u64], r: &ListNeuronsResponse) -> Result<(), String
         || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
         || r.total_pages_available != Some(1)
         || r.full_neurons.len() > ids.len()
-        || r.neuron_infos.len() > ids.len()
+        || r.neuron_infos.len() != ids.len()
     {
         return Err("full-neuron batch bounds or page count".into());
     }
@@ -200,6 +200,10 @@ pub fn validate_batch(ids: &[u64], r: &ListNeuronsResponse) -> Result<(), String
             || !infos.insert(id)
             || i.id.as_ref().map(|n| n.id) != Some(*id)
             || i.retrieved_at_timestamp_seconds == 0
+            || !matches!(i.visibility, Some(1 | 2))
+            || i.known_neuron_data
+                .as_ref()
+                .is_some_and(|m| !valid_metadata(m))
         {
             return Err("invalid neuron-info binding".into());
         }
@@ -460,6 +464,11 @@ struct ProposalRequest {
 enum ProposalCommand {
     MakeProposal(MaturityProposal),
 }
+/// Audited make_proposal has no fallible return after fee charge/proposal insertion.
+/// These typed classes are reached before that commit in the pinned executable code.
+pub fn definite_proposal_rejection(e: &GovernanceError) -> bool {
+    matches!(e.error_type, 3 | 4 | 5 | 10 | 11 | 14 | 16)
+}
 pub async fn propose(proposer: u64, p: MaturityProposal) -> Result<ResponseCommand, String> {
     let r: ManageResponse = call(
         GOVERNANCE,
@@ -476,10 +485,117 @@ pub async fn propose(proposer: u64, p: MaturityProposal) -> Result<ResponseComma
         None => Err("empty proposal response".into()),
     }
 }
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, CandidType, serde::Serialize, Deserialize, PartialEq, Eq)]
 pub struct Economics {
+    pub voting_power_economics: Option<VotingPowerEconomics>,
     pub neuron_minimum_stake_e8s: u64,
     pub neuron_management_fee_per_proposal_e8s: u64,
+}
+#[derive(Clone, Debug, CandidType, serde::Serialize, Deserialize, PartialEq, Eq)]
+pub struct VotingPowerEconomics {
+    pub start_reducing_voting_power_after_seconds: Option<u64>,
+    pub clear_following_after_seconds: Option<u64>,
+    pub neuron_minimum_dissolve_delay_to_vote_seconds: Option<u64>,
+}
+#[derive(Clone, Debug, CandidType, serde::Serialize, Deserialize, PartialEq, Eq)]
+pub struct VotingContext {
+    pub parameters: Option<VotingPowerEconomics>,
+    pub minimum_delay: u64,
+    pub governance_module: Option<Vec<u8>>,
+    pub resolution: String,
+}
+impl VotingContext {
+    pub fn resolve(e: &Economics, module: Option<Vec<u8>>) -> Result<Self, String> {
+        // governance.rs::voting_power_economics returns DEFAULT (including Some(6 months))
+        // when the whole message is absent. An absent inner minimum uses Mission 70's flag.
+        const MONTH: u64 = 2_629_800;
+        let qualified = module.as_ref().is_some_and(|m| {
+            const RAW: &[u8] = &[
+                0xdb, 0xcf, 0x97, 0xae, 0x87, 0x29, 0xa9, 0x56, 0x52, 0x1a, 0x0a, 0x92, 0x8f, 0x1b,
+                0x1b, 0xcb, 0x93, 0xf6, 0xe9, 0xc0, 0xda, 0xfd, 0x0e, 0x42, 0xaa, 0x98, 0x55, 0x88,
+                0x71, 0x3b, 0x88, 0xc0,
+            ];
+            const GZIP: &[u8] = &[
+                0x54, 0xd5, 0xc9, 0x39, 0xf3, 0x02, 0xec, 0x4b, 0x88, 0xe5, 0xd9, 0x1e, 0xc9, 0xda,
+                0x1a, 0x46, 0xf0, 0xaa, 0xbb, 0x06, 0x86, 0x65, 0xf2, 0xf2, 0x45, 0xd3, 0xf9, 0xed,
+                0x81, 0xbb, 0xde, 0x9b,
+            ];
+            m.as_slice() == RAW || m.as_slice() == GZIP
+        });
+        if e.voting_power_economics
+            .as_ref()
+            .and_then(|p| p.neuron_minimum_dissolve_delay_to_vote_seconds)
+            .is_none()
+            && !qualified
+        {
+            return Err("unresolved optional economics: qualified module required".into());
+        }
+        let (minimum_delay, resolution) = match &e.voting_power_economics {
+            None => (
+                6 * MONTH,
+                "absent message: pinned DEFAULT with explicit six-month value",
+            ),
+            Some(p) => match p.neuron_minimum_dissolve_delay_to_vote_seconds {
+                Some(x) => (x, "explicit economics"),
+                None => {
+                    const RAW: [u8; 32] = [
+                        0xdb, 0xcf, 0x97, 0xae, 0x87, 0x29, 0xa9, 0x56, 0x52, 0x1a, 0x0a, 0x92,
+                        0x8f, 0x1b, 0x1b, 0xcb, 0x93, 0xf6, 0xe9, 0xc0, 0xda, 0xfd, 0x0e, 0x42,
+                        0xaa, 0x98, 0x55, 0x88, 0x71, 0x3b, 0x88, 0xc0,
+                    ];
+                    const GZIP: [u8; 32] = [
+                        0x54, 0xd5, 0xc9, 0x39, 0xf3, 0x02, 0xec, 0x4b, 0x88, 0xe5, 0xd9, 0x1e,
+                        0xc9, 0xda, 0x1a, 0x46, 0xf0, 0xaa, 0xbb, 0x06, 0x86, 0x65, 0xf2, 0xf2,
+                        0x45, 0xd3, 0xf9, 0xed, 0x81, 0xbb, 0xde, 0x9b,
+                    ];
+                    if !module
+                        .as_ref()
+                        .is_some_and(|m| m.as_slice() == RAW || m.as_slice() == GZIP)
+                    {
+                        return Err("unresolved feature-dependent voting threshold: explicit economics or qualified module required".into());
+                    }
+                    (
+                        14 * 86_400,
+                        "pinned module: executable Mission 70 flag enabled",
+                    )
+                }
+            },
+        };
+        if !(14 * 86_400..=6 * MONTH).contains(&minimum_delay) {
+            return Err(
+                "voting threshold outside reviewed protocol bounds; publication blocked".into(),
+            );
+        }
+        Ok(Self {
+            parameters: e.voting_power_economics.clone(),
+            minimum_delay,
+            governance_module: module,
+            resolution: resolution.into(),
+        })
+    }
+    pub fn eligible(&self, n: &Neuron, at: u64) -> Result<bool, String> {
+        let delay = match n.dissolve_state {
+            Some(DissolveState::DissolveDelaySeconds(0)) => {
+                return Err("invalid zero delay variant; dissolved timestamp required".into());
+            }
+            Some(DissolveState::DissolveDelaySeconds(d)) => d,
+            Some(DissolveState::WhenDissolvedTimestampSeconds(t)) => {
+                if n.aging_since_timestamp_seconds != u64::MAX {
+                    return Err("invalid dissolving observation age".into());
+                }
+                t.saturating_sub(at)
+            }
+            None => return Err("voting eligibility dissolve state unavailable".into()),
+        };
+        // Every inactive neuron is dissolved. Positive threshold therefore excludes the
+        // inactive-neuron branch of compute_voting_power_snapshot_for_standard_proposal.
+        Ok(delay >= self.minimum_delay)
+    }
+}
+pub async fn voting_context() -> Result<VotingContext, String> {
+    let e = economics().await?;
+    let module = controller(GOVERNANCE).await?.module_hash;
+    VotingContext::resolve(&e, module)
 }
 pub async fn economics() -> Result<Economics, String> {
     no_args(GOVERNANCE, "get_network_economics_parameters").await
@@ -677,5 +793,83 @@ mod tests {
             executed_timestamp_seconds: 0,
         };
         assert!(validate_proposal(&p).is_err());
+    }
+}
+
+#[cfg(test)]
+mod eligibility_regressions {
+    use super::*;
+    fn economics(min: Option<u64>) -> Economics {
+        Economics {
+            neuron_minimum_stake_e8s: 100_000_000,
+            neuron_management_fee_per_proposal_e8s: 10_000,
+            voting_power_economics: Some(VotingPowerEconomics {
+                start_reducing_voting_power_after_seconds: None,
+                clear_following_after_seconds: None,
+                neuron_minimum_dissolve_delay_to_vote_seconds: min,
+            }),
+        }
+    }
+    #[test]
+    fn positive_raw_deciding_power_is_not_ballot_eligibility() {
+        let min = 14 * 86_400;
+        let ctx = VotingContext::resolve(&economics(Some(min)), None).unwrap();
+        let mut n = Neuron {
+            deciding_voting_power: Some(12_000),
+            potential_voting_power: Some(12_000),
+            aging_since_timestamp_seconds: u64::MAX,
+            ..Default::default()
+        };
+        n.dissolve_state = Some(DissolveState::WhenDissolvedTimestampSeconds(10));
+        assert!(!ctx.eligible(&n, 11).unwrap());
+        n.dissolve_state = Some(DissolveState::DissolveDelaySeconds(min - 1));
+        assert!(!ctx.eligible(&n, 11).unwrap());
+        n.dissolve_state = Some(DissolveState::DissolveDelaySeconds(min));
+        assert!(ctx.eligible(&n, 11).unwrap());
+        n.dissolve_state = Some(DissolveState::WhenDissolvedTimestampSeconds(11 + min));
+        assert!(ctx.eligible(&n, 11).unwrap());
+        n.dissolve_state = None;
+        assert!(ctx.eligible(&n, 11).is_err());
+    }
+    #[test]
+    fn missing_or_unknown_visibility_is_not_confirmed_zero_support() {
+        let mut r = ListNeuronsResponse {
+            full_neurons: vec![],
+            neuron_infos: vec![],
+            total_pages_available: Some(1),
+        };
+        assert!(validate_batch(&[1], &r).is_err());
+        r.neuron_infos.push((
+            1,
+            NeuronInfo {
+                id: Some(NeuronId { id: 1 }),
+                retrieved_at_timestamp_seconds: 1,
+                visibility: None,
+                known_neuron_data: None,
+            },
+        ));
+        assert!(validate_batch(&[1], &r).is_err());
+        r.neuron_infos[0].1.visibility = Some(1);
+        assert!(validate_batch(&[1], &r).is_ok());
+    }
+    #[test]
+    fn optional_feature_semantics_are_never_guessed_for_unknown_modules() {
+        assert!(VotingContext::resolve(&economics(None), None).is_err());
+        let mut e = economics(None);
+        e.voting_power_economics = None;
+        assert!(VotingContext::resolve(&e, None).is_err());
+        assert!(VotingContext::resolve(&economics(Some(1)), None).is_err());
+        for code in [3, 4, 5, 10, 11, 14, 16] {
+            assert!(definite_proposal_rejection(&GovernanceError {
+                error_type: code,
+                error_message: String::new()
+            }));
+        }
+        for code in [0, 1, 2, 12, 13, 1000] {
+            assert!(!definite_proposal_rejection(&GovernanceError {
+                error_type: code,
+                error_message: String::new()
+            }));
+        }
     }
 }

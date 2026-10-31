@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+mod legacy;
 mod payout;
 pub mod proposal;
 mod selection;
@@ -80,51 +81,120 @@ async fn tick(job: usize) {
     let Some(t) = token else {
         return;
     };
-    let result = match job {
-        0 => selection::step(t, n).await,
-        1 => proposal::step(t, n).await,
-        2 => payout::step(t, n).await,
-        3 => proposal::bootstrap(t, n).await,
-        _ => unreachable!(),
-    };
-    let measured = ic_cdk::api::call_context_instruction_counter();
-    state::guarded(t, |s| {
-        let j = &mut s.jobs[job];
-        j.steps += 1;
-        j.measured_instructions = j.measured_instructions.saturating_add(measured);
-        j.maximum_step_instructions = j.maximum_step_instructions.max(measured);
-        j.busy_until = 0;
-        match result {
-            Ok(()) => {
-                j.failures = 0;
-                j.last_error = None;
-            }
-            Err(e) => {
-                j.failures = j.failures.saturating_add(1);
-                j.last_error = Some(quorum_ic_clients::bounded(e));
-                if job == 0
-                    && let Some(r) = &mut s.round
-                {
-                    r.failures += 1;
-                    r.last_failure = j.last_error.clone();
-                }
-                j.next_at = n + 60u64.saturating_mul(1 << j.failures.min(10)).min(3600);
-                if job == 0
-                    && j.failures >= 5
-                    && let Some(r) = &mut s.round
-                    && !matches!(r.phase, state::ScanPhase::Applying { sent: true })
-                {
-                    r.phase = state::ScanPhase::Failed(
-                        "bounded retries exhausted; previous applied roster retained".into(),
-                    );
-                }
-            }
+    let calls = quorum_ic_clients::calls();
+    let start = ic_cdk::api::call_context_instruction_counter();
+    let initial_cycles = ic_cdk::api::canister_cycle_balance();
+    for _ in 0..16 {
+        if !state::current(t) {
+            return;
         }
-    });
+        let was_index = state::read(|s| {
+            s.round
+                .as_ref()
+                .is_some_and(|r| matches!(r.phase, state::ScanPhase::Index { .. }))
+        });
+        let segment_start = ic_cdk::api::call_context_instruction_counter();
+        let result = match job {
+            0 => selection::step(t, now()).await,
+            1 => proposal::step(t, now()).await,
+            2 => payout::step(t, now()).await,
+            3 => proposal::bootstrap(t, now()).await,
+            _ => unreachable!(),
+        };
+        if !state::current(t) {
+            return;
+        }
+        let failed = result.is_err();
+        let measured =
+            ic_cdk::api::call_context_instruction_counter().saturating_sub(segment_start);
+        state::guarded(t, |s| {
+            let j = &mut s.jobs[job];
+            j.steps += 1;
+            j.measured_instructions = j.measured_instructions.saturating_add(measured);
+            j.maximum_step_instructions = j.maximum_step_instructions.max(measured);
+            match result {
+                Ok(()) => {
+                    j.failures = 0;
+                    j.last_error = None;
+                }
+                Err(e) => {
+                    j.failures = j.failures.saturating_add(1);
+                    j.last_error = Some(quorum_ic_clients::bounded(e));
+                    j.next_at = now() + 60u64.saturating_mul(1 << j.failures.min(10)).min(3600);
+                    if job == 0
+                        && let Some(r) = &mut s.round
+                    {
+                        r.failures += 1;
+                        r.last_failure = j.last_error.clone();
+                        if j.failures >= 5
+                            && !matches!(r.phase, state::ScanPhase::Applying { sent: true })
+                        {
+                            r.phase = state::ScanPhase::Failed(
+                                "bounded retries exhausted; applied roster retained".into(),
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        if failed
+            || was_index
+            || !continuable(job)
+            || ic_cdk::api::call_context_instruction_counter().saturating_sub(start) >= 250_000_000
+            || quorum_ic_clients::calls() - calls >= 48
+            || initial_cycles.saturating_sub(ic_cdk::api::canister_cycle_balance())
+                >= 10_000_000_000
+            || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
+        {
+            break;
+        }
+    }
+    let again = continuable(job) && state::read(|s| s.jobs[job].failures == 0);
+    let released = state::guarded(t, |s| {
+        s.jobs[job].busy_until = 0;
+        if again {
+            s.jobs[job].next_at = now() + 1;
+        }
+    })
+    .is_some();
+    if again && released {
+        continuation(job);
+    }
 }
+fn continuable(job: usize) -> bool {
+    state::read(|s| match job {
+        0 => s.round.as_ref().is_some_and(|r| {
+            matches!(
+                r.phase,
+                state::ScanPhase::Discover
+                    | state::ScanPhase::Candidates { .. }
+                    | state::ScanPhase::Select
+                    | state::ScanPhase::Revalidate { .. }
+                    | state::ScanPhase::Cycles { .. }
+            )
+        }),
+        2 => s.payout.is_none() && s.draft.is_some(),
+        _ => false,
+    })
+}
+fn continuation(job: usize) {
+    ic_cdk_timers::set_timer(
+        Duration::from_secs(1),
+        Box::pin(async move {
+            tick(job).await;
+        }),
+    );
+}
+
 #[ic_cdk::update]
 fn set_delegates_per_topic(new_count: u8) -> Result<u64, String> {
     let caller = ic_cdk::api::msg_caller();
+    if caller != quorum_ic_clients::GOVERNANCE {
+        return Err("only NNS Governance may set roster size".into());
+    }
+    if !(1..=15).contains(&new_count) {
+        return Err("count must be 1..=15".into());
+    }
     state::change(|s| s.set_count(caller, new_count))
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
@@ -150,6 +220,10 @@ fn configuration() -> Configuration {
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct ScanProgress {
+    pub voting_context: Option<quorum_ic_clients::governance::VotingContext>,
+    pub candidate_validated_at: Option<u64>,
+    pub intent_at: Option<u64>,
+    pub readback_observed_at: Option<u64>,
     pub round: Option<u64>,
     pub revision: Option<u64>,
     pub started_at: Option<u64>,
@@ -171,6 +245,10 @@ fn scan_progress() -> ScanProgress {
     state::read(|s| {
         let r = s.round.as_ref();
         ScanProgress {
+            voting_context: r.and_then(|r| r.economics.clone()),
+            candidate_validated_at: r.and_then(|r| r.validated_at),
+            intent_at: r.and_then(|r| r.intent_at),
+            readback_observed_at: r.and_then(|r| r.last_readback_at),
             round: r.map(|r| r.id),
             revision: r.map(|r| r.revision),
             started_at: r.map(|r| r.started_at),
@@ -246,7 +324,13 @@ fn score_page(after: Option<(i32, u64)>, count: u16) -> Vec<Score> {
         s.round
             .as_ref()
             .filter(|r| {
-                r.scan_ended_at.is_some() && !matches!(r.phase, state::ScanPhase::Failed(_))
+                r.economics.is_some()
+                    && matches!(
+                        r.phase,
+                        state::ScanPhase::Ready
+                            | state::ScanPhase::Applying { .. }
+                            | state::ScanPhase::Complete
+                    )
             })
             .map_or(vec![], |r| {
                 r.scores
@@ -266,6 +350,13 @@ fn score_page(after: Option<(i32, u64)>, count: u16) -> Vec<Score> {
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct RosterView {
+    pub support_started_at: Option<u64>,
+    pub support_ended_at: Option<u64>,
+    pub candidate_validated_at: Option<u64>,
+    pub intended_at: Option<u64>,
+    pub readback_observed_at: Option<u64>,
+    pub reward_valid_until: Option<u64>,
+    pub reward_eligible: bool,
     pub topic: i32,
     pub planned: Vec<u64>,
     pub applied: Vec<u64>,
@@ -281,6 +372,16 @@ fn roster_page(offset: u16, count: u16) -> Vec<RosterView> {
             .skip(usize::from(offset))
             .take(limit(count))
             .map(|topic| RosterView {
+                support_started_at: s.applied.as_ref().map(|a| a.scan_start),
+                support_ended_at: s.applied.as_ref().map(|a| a.scan_end),
+                candidate_validated_at: s.applied.as_ref().and_then(|a| a.candidate_validated_at),
+                intended_at: s.applied.as_ref().and_then(|a| a.intended_at),
+                readback_observed_at: s.applied.as_ref().and_then(|a| a.readback_observed_at),
+                reward_valid_until: s.applied.as_ref().and_then(|a| a.reward_valid_until),
+                reward_eligible: s
+                    .applied
+                    .as_ref()
+                    .is_some_and(|a| a.reward_eligible(s.config.revision, now())),
                 topic,
                 planned: s
                     .round
@@ -321,6 +422,9 @@ fn proposal_progress() -> Option<state::ProposalJob> {
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct PayoutSummary {
+    pub additional_fee_funding: u64,
+    pub confirmed_cost: u128,
+    pub maintenance_complete: bool,
     pub id: u64,
     pub roster_round: u64,
     pub observed_balance: u64,
@@ -333,6 +437,9 @@ pub struct PayoutSummary {
 }
 fn summary(p: &quorum_accounting::Plan) -> PayoutSummary {
     PayoutSummary {
+        additional_fee_funding: p.additional_fee_funding,
+        confirmed_cost: p.confirmed_cost(),
+        maintenance_complete: p.maintenance_complete(),
         id: p.id,
         roster_round: p.roster_round,
         observed_balance: p.balance,
@@ -384,6 +491,7 @@ fn transfer_page(payout_id: u64, offset: u32, count: u16) -> Vec<quorum_accounti
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct Health {
+    pub checkpoints: state::Checkpoints,
     pub cycles: u128,
     pub stable_snapshot_bytes: u64,
     pub stable_memory_pages: u64,
@@ -396,6 +504,7 @@ pub struct Health {
 #[ic_cdk::query]
 fn health() -> Health {
     state::read(|s| Health {
+        checkpoints: s.metrics.clone(),
         cycles: ic_cdk::api::canister_cycle_balance(),
         stable_snapshot_bytes: state::snapshot_size(),
         stable_memory_pages: ic_cdk::stable::stable_size(),

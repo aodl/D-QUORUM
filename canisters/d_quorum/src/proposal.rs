@@ -49,7 +49,9 @@ fn exact_matches(p: &g::ProposalInfo, j: &ProposalJob, owner: Principal) -> bool
     p.proposer.as_ref().map(|n| n.id) == Some(j.proposer)
         && action_matches(p, owner)
         && p.proposal.as_ref().is_some_and(|p| {
-            p.url == expected.url && p.title == expected.title && p.summary == expected.summary
+            p.url == expected.url
+                && p.title == Some(format!("Manage neuron proposal for neuron: {}", TARGET))
+                && p.summary == expected.summary
         })
 }
 pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
@@ -100,8 +102,8 @@ pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
             state::guarded(token, |s| s.bootstrap = Bootstrap::Verifying(id));
         }
         Bootstrap::Verifying(id) | Bootstrap::Ready(id) => {
-            let r = g::full(vec![id]).await?;
-            let n = r.full_neurons.first().ok_or("proposer unavailable")?;
+            let refreshed = refresh_owned(token, id).await?;
+            let n = &refreshed;
             quorum_ic_clients::evidence::expected_controller(n, owner, id)?;
             if n.account != l::staking_subaccount(owner, BOOTSTRAP_NONCE)
                 || selection::following(n)
@@ -117,7 +119,10 @@ pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
             });
             if mode == Mode::Live && state::current(token) {
                 selection::target().await?;
-                if !state::current(token) {
+                if !state::current(token)
+                    || state::read(|s| s.config.mode) != Mode::Live
+                    || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
+                {
                     return Ok(());
                 }
                 g::manage(g::request(
@@ -130,7 +135,7 @@ pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
     }
     Ok(())
 }
-async fn preflight(proposer: u64) -> Result<(), String> {
+async fn preflight(token: Token, proposer: u64) -> Result<(), String> {
     let target = selection::target().await?;
     if !selection::following(&target)
         .get(&1)
@@ -149,7 +154,12 @@ async fn preflight(proposer: u64) -> Result<(), String> {
     if u128::from(target.maturity_e8s_equivalent) * 9500 / 10000 < 100_000_000 {
         return Err("unstaked maturity below protocol modulation-adjusted minimum".into());
     }
-    let ns = g::full(vec![proposer]).await?;
+    let refreshed = refresh_owned(token, proposer).await?;
+    let ns = g::ListNeuronsResponse {
+        full_neurons: vec![refreshed],
+        neuron_infos: vec![],
+        total_pages_available: Some(1),
+    };
     let n = ns
         .full_neurons
         .first()
@@ -183,7 +193,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     let proposer = state::read(|s| s.proposer).ok_or("waiting for owned proposer bootstrap")?;
     let current = state::read(|s| s.proposal.clone());
     if current.is_none() {
-        preflight(proposer).await?;
+        preflight(token, proposer).await?;
         let anchor = l::history(0, 0).await?.chain_length;
         state::guarded(token, |s| {
             s.proposal_nonce = s
@@ -265,7 +275,8 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             }
         }
         Preflight => {
-            preflight(j.proposer).await?;
+            let checked_from = ic_cdk::api::time() / 1_000_000_000;
+            preflight(token, j.proposer).await?;
             // Recheck pending history immediately before creating the durable intent.
             let ps = g::proposals(None).await?;
             if ps
@@ -281,6 +292,12 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             if Sha256::digest(candid::encode_one(&payload).unwrap()).as_slice() != j.fingerprint {
                 return Err("proposal fingerprint mismatch".into());
             }
+            if state::read(|s| s.config.mode) != Mode::Live
+                || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
+                || ic_cdk::api::time() / 1_000_000_000 - checked_from > 300
+            {
+                return Err("proposal dispatch authorization or preflight expired".into());
+            }
             j.phase = Intent;
             j.history_before = None;
             j.history_pages = 0;
@@ -289,18 +306,19 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             let response = g::propose(j.proposer, payload).await;
             match response {
                 Ok(g::ResponseCommand::MakeProposal(p)) => {
-                    j.phase = Open(
-                        p.proposal_id
-                            .ok_or("proposal reply has no ID; investigate history")?
-                            .id,
-                    );
+                    j.phase = p.proposal_id.map_or(Ambiguous, |id| Open(id.id))
                 }
-                // Even an unexpected or rejected reply is retained for investigation; never blind retry.
-                _ => {
-                    j.phase = Ambiguous;
+                Ok(g::ResponseCommand::Error(e)) if g::definite_proposal_rejection(&e) => {
+                    j.retry_after = ic_cdk::api::time() / 1_000_000_000 + 3600;
+                    j.phase = CreationRejected {
+                        error_type: e.error_type,
+                        reason: quorum_ic_clients::bounded(e.error_message),
+                    };
                 }
+                _ => j.phase = Ambiguous,
             }
         }
+
         Open(id) | Adopted(id) => {
             let p = g::proposal(id)
                 .await?
@@ -397,6 +415,15 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 j.retry_after = now + DAY;
             }
         }
+        CreationRejected { .. } => {
+            if now >= j.retry_after {
+                state::guarded(token, |s| {
+                    s.proposal = None;
+                    s.jobs[1].next_at = ic_cdk::api::time() / 1_000_000_000 + 10;
+                });
+                return Ok(());
+            }
+        }
         Rejected(_) | Failed(_) | FinalizedReceiptUnattributed(_) => {
             if now >= j.retry_after {
                 state::guarded(token, |s| {
@@ -422,6 +449,50 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     });
     Ok(())
 }
+async fn refresh_owned(token: Token, id: u64) -> Result<g::Neuron, String> {
+    let owner = ic_cdk::api::canister_self();
+    let expected = l::staking_subaccount(owner, BOOTSTRAP_NONCE);
+    let ns = g::full(vec![id]).await?;
+    let before = ns
+        .full_neurons
+        .first()
+        .ok_or("owned proposer unavailable")?;
+    quorum_ic_clients::evidence::expected_controller(before, owner, id)?;
+    if before.account != expected {
+        return Err("owned proposer staking account mismatch".into());
+    }
+    if !state::current(token)
+        || state::read(|s| s.config.mode) == Mode::ObserveOnly
+        || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
+    {
+        return Err("owned refresh waiting for active authorization".into());
+    }
+    let response = g::manage(g::request(
+        id,
+        g::Command::ClaimOrRefresh(g::Claim {
+            by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+        }),
+    ))
+    .await?;
+    if !matches!(response,g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse{refreshed_neuron_id:Some(g::NeuronId{id:n})}) if n==id)
+    {
+        return Err("owned refresh returned substituted neuron".into());
+    }
+    let ns = g::full(vec![id]).await?;
+    let n = ns
+        .full_neurons
+        .first()
+        .ok_or("refreshed proposer unavailable")?;
+    quorum_ic_clients::evidence::expected_controller(n, owner, id)?;
+    if n.account != expected
+        || n.followees != before.followees
+        || n.dissolve_state != before.dissolve_state
+    {
+        return Err("owned refresh changed protected settings".into());
+    }
+    Ok(n.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

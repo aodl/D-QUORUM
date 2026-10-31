@@ -1,10 +1,96 @@
-//! Resumable adaptation; the vendored rule engine remains byte-for-byte upstream.
+//! Coherent bounded replicated observations; the pinned evaluator is unchanged.
 use crate::governance as g;
 use candid::{CandidType, Principal};
 use dendrite_types::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
-#[derive(Clone, Debug, CandidType, Serialize, Deserialize, PartialEq, Eq)]
+pub const OBSERVATION_WINDOW: u64 = 300;
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct CachedNeuron {
+    pub metadata_from: u64,
+    pub metadata_through: u64,
+    pub neuron: Option<g::Neuron>,
+    pub info: g::NeuronInfo,
+}
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct CachedController {
+    pub evidence: ControllerEvidence,
+    pub at: u64,
+}
+#[derive(Clone, Debug, Default, CandidType, Deserialize)]
+pub struct Cache {
+    pub neurons: BTreeMap<u64, CachedNeuron>,
+    pub controllers: BTreeMap<Principal, CachedController>,
+}
+fn clock() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        ic_cdk::api::time() / 1_000_000_000
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+impl Cache {
+    pub fn fresh(&self, id: u64) -> bool {
+        self.neurons.get(&id).is_some_and(|n| {
+            clock().saturating_sub(n.info.retrieved_at_timestamp_seconds.min(n.metadata_from))
+                <= OBSERVATION_WINDOW
+        })
+    }
+    pub async fn fetch(&mut self, ids: Vec<u64>) -> Result<(), String> {
+        // Pinned multi_query omits metadata from BOTH NeuronInfo and full Neuron.
+        // Two concurrent, bounded reads avoid serial per-dependency timer slots.
+        let metadata_from = clock();
+        let (r, known) = crate::together(g::full(ids.clone()), g::known()).await;
+        let r = r?;
+        let metadata: BTreeMap<_, _> = known?
+            .into_iter()
+            .map(|n| (n.id.unwrap().id, n.known_neuron_data.unwrap()))
+            .collect();
+        let at = clock();
+        if at.saturating_sub(metadata_from) > OBSERVATION_WINDOW {
+            return Err("metadata/configuration batch interval exceeded".into());
+        }
+        for id in ids {
+            let mut info = r
+                .neuron_infos
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, n)| n.clone())
+                .ok_or("requested neuron observation unavailable")?;
+            if info.retrieved_at_timestamp_seconds > at
+                || at.saturating_sub(info.retrieved_at_timestamp_seconds) > OBSERVATION_WINDOW
+            {
+                return Err("stale full observation".into());
+            }
+            info.known_neuron_data = metadata.get(&id).cloned();
+            let neuron = r
+                .full_neurons
+                .iter()
+                .find(|n| n.id.as_ref().map(|n| n.id) == Some(id))
+                .cloned();
+            if info.visibility == Some(2) && neuron.is_none() {
+                return Err("public configuration unavailable".into());
+            }
+            self.neurons.insert(
+                id,
+                CachedNeuron {
+                    neuron,
+                    info,
+                    metadata_from,
+                    metadata_through: at,
+                },
+            );
+        }
+        if self.neurons.len() > 20_000 {
+            return Err("round observation cache bound".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 pub enum Phase {
     Target,
     TargetMetadata,
@@ -13,13 +99,16 @@ pub enum Phase {
     Controller,
     Done,
 }
-#[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct Collection {
     pub id: u64,
     pub phase: Phase,
     pub evidence: EvaluationEvidence,
     pub dependencies: Vec<u64>,
     pub dependency_timestamps: BTreeMap<u64, u64>,
+    pub observed_from: u64,
+    pub observed_through: u64,
+    pub local: Cache,
 }
 impl Collection {
     pub fn new(id: u64) -> Self {
@@ -36,105 +125,102 @@ impl Collection {
             },
             dependencies: vec![],
             dependency_timestamps: BTreeMap::new(),
+            observed_from: 0,
+            observed_through: 0,
+            local: Cache::default(),
         }
     }
+    fn observe(&mut self, at: u64) -> Result<(), String> {
+        self.observed_from = if self.observed_from == 0 {
+            at
+        } else {
+            self.observed_from.min(at)
+        };
+        self.observed_through = self.observed_through.max(at);
+        if self.observed_through - self.observed_from > OBSERVATION_WINDOW {
+            return Err("candidate coherent observation window exceeded".into());
+        }
+        self.evidence.now_seconds = self.observed_through;
+        Ok(())
+    }
+    fn normalized(&mut self, c: &CachedNeuron) -> Result<NeuronLookup, String> {
+        self.observe(c.info.retrieved_at_timestamp_seconds)?;
+        self.observe(c.metadata_from)?;
+        self.observe(c.metadata_through)?;
+        if c.info.visibility != Some(2) {
+            return Ok(NeuronLookup::ConfirmedMissing);
+        }
+        let mut n = normalize(c.neuron.clone().ok_or("public configuration unavailable")?)?;
+        merge(
+            &mut n,
+            c.info.clone(),
+            c.info.retrieved_at_timestamp_seconds,
+        )?;
+        Ok(NeuronLookup::Found(Box::new(n)))
+    }
     pub async fn advance(&mut self) -> Result<Option<ComplianceReport>, String> {
+        let mut cache = std::mem::take(&mut self.local);
+        let result = self.advance_cached(&mut cache).await;
+        self.local = cache;
+        result
+    }
+    pub async fn advance_cached(
+        &mut self,
+        cache: &mut Cache,
+    ) -> Result<Option<ComplianceReport>, String> {
+        if self.observed_from != 0
+            && clock().saturating_sub(self.observed_from) > OBSERVATION_WINDOW
+        {
+            *self = Self::new(self.id);
+        }
         match self.phase {
-            Phase::Target => {
-                let r = g::full(vec![self.id]).await?;
-                self.evidence.now_seconds = r
-                    .neuron_infos
-                    .iter()
-                    .find(|(id, _)| *id == self.id)
-                    .map_or(0, |(_, n)| n.retrieved_at_timestamp_seconds);
-                if self.evidence.now_seconds == 0 {
-                    return Err("candidate existence unavailable".into());
+            Phase::Target | Phase::TargetMetadata => {
+                if !cache.fresh(self.id) {
+                    cache.fetch(vec![self.id]).await?;
                 }
-                self.evidence.target = match r.full_neurons.into_iter().find(|n| {
-                    n.id.as_ref().map(|i| i.id) == Some(self.id) && n.visibility == Some(2)
-                }) {
-                    Some(n) => NeuronLookup::Found(Box::new(normalize(n)?)),
-                    None => NeuronLookup::ConfirmedMissing,
-                };
-                self.phase = if matches!(self.evidence.target, NeuronLookup::Found(_)) {
-                    Phase::TargetMetadata
+                self.evidence.target = self.normalized(cache.neurons.get(&self.id).unwrap())?;
+                let partial = evaluate(self.id, &self.evidence, SOURCE_REVISION);
+                // A visible mandatory failure already establishes NonCompliant under the pinned engine.
+                if partial.overall_status == ComplianceStatus::NonCompliant {
+                    self.phase = Phase::Done;
                 } else {
-                    Phase::Done
-                };
-            }
-            Phase::TargetMetadata => {
-                let info = g::info(self.id).await?;
-                merge(
-                    self.evidence.target.as_mut().ok_or("target missing")?,
-                    info,
-                    self.evidence.now_seconds,
-                )?;
-                self.dependencies = self
-                    .evidence
-                    .target
-                    .as_ref()
-                    .unwrap()
-                    .followees
-                    .values()
-                    .flatten()
-                    .copied()
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect();
-                if self.dependencies.len() > MAX_DEPENDENCY_NEURONS {
-                    return Err("dependency bound".into());
-                }
-                self.phase = Phase::Dependencies(0);
-            }
-            Phase::Dependencies(offset) => {
-                let offset = offset as usize;
-                if offset >= self.dependencies.len() {
-                    self.phase = Phase::DependencyMetadata(0);
-                } else {
-                    let ids = self.dependencies[offset..self.dependencies.len().min(offset + 50)]
-                        .to_vec();
-                    let r = g::full(ids.clone()).await?;
-                    for (id, info) in &r.neuron_infos {
-                        self.dependency_timestamps
-                            .insert(*id, info.retrieved_at_timestamp_seconds);
-                    }
-                    let mut found = BTreeMap::new();
-                    for n in r.full_neurons {
-                        let id = n.id.as_ref().ok_or("absent ID")?.id;
-                        if n.visibility == Some(2) {
-                            found.insert(id, normalize(n)?);
-                        }
-                    }
-                    for id in &ids {
-                        self.evidence.dependencies.insert(
-                            *id,
-                            found
-                                .remove(id)
-                                .map_or(NeuronLookup::ConfirmedMissing, |n| {
-                                    NeuronLookup::Found(Box::new(n))
-                                }),
-                        );
-                    }
-                    self.phase = Phase::Dependencies((offset + ids.len()) as u32);
-                }
-            }
-            Phase::DependencyMetadata(offset) => {
-                if let Some(id) = self.dependencies.get(offset as usize).copied() {
-                    if let Some(n) = self
+                    self.dependencies = self
                         .evidence
-                        .dependencies
-                        .get_mut(&id)
-                        .and_then(NeuronLookup::as_mut)
-                    {
-                        let info = g::info(id).await?;
-                        let at = *self
-                            .dependency_timestamps
-                            .get(&id)
-                            .ok_or("dependency observation timestamp unavailable")?;
-                        merge(n, info, at)?;
+                        .target
+                        .as_ref()
+                        .ok_or("target unavailable")?
+                        .followees
+                        .values()
+                        .flatten()
+                        .copied()
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    if self.dependencies.len() > MAX_DEPENDENCY_NEURONS {
+                        return Err("dependency bound".into());
                     }
-                    self.phase = Phase::DependencyMetadata(offset + 1);
-                } else {
+                    self.phase = Phase::Dependencies(0);
+                }
+            }
+            Phase::Dependencies(_) | Phase::DependencyMetadata(_) => {
+                let missing: Vec<_> = self
+                    .dependencies
+                    .iter()
+                    .copied()
+                    .filter(|id| !cache.fresh(*id))
+                    .take(50)
+                    .collect();
+                if !missing.is_empty() {
+                    cache.fetch(missing).await?;
+                }
+                if self.dependencies.iter().all(|id| cache.fresh(*id)) {
+                    for id in self.dependencies.clone() {
+                        let c = cache.neurons.get(&id).unwrap();
+                        let n = self.normalized(c)?;
+                        self.dependency_timestamps
+                            .insert(id, c.info.retrieved_at_timestamp_seconds);
+                        self.evidence.dependencies.insert(id, n);
+                    }
                     self.phase = Phase::Controller;
                 }
             }
@@ -146,12 +232,31 @@ impl Collection {
                     .and_then(|n| n.controller)
                     .filter(|p| p.as_slice().last() == Some(&1))
                 {
-                    let i = g::controller(p).await?;
-                    self.evidence.controller = Some(ControllerEvidence {
-                        call_succeeded: true,
-                        module_hash: i.module_hash,
-                        controllers: i.controllers,
-                    });
+                    if cache
+                        .controllers
+                        .get(&p)
+                        .is_none_or(|c| clock().saturating_sub(c.at) > OBSERVATION_WINDOW)
+                    {
+                        let at = clock();
+                        let i = g::controller(p).await?;
+                        if clock().saturating_sub(at) > OBSERVATION_WINDOW {
+                            return Err("controller observation expired during call".into());
+                        }
+                        cache.controllers.insert(
+                            p,
+                            CachedController {
+                                evidence: ControllerEvidence {
+                                    call_succeeded: true,
+                                    module_hash: i.module_hash,
+                                    controllers: i.controllers,
+                                },
+                                at,
+                            },
+                        );
+                    }
+                    let c = cache.controllers.get(&p).unwrap();
+                    self.observe(c.at)?;
+                    self.evidence.controller = Some(c.evidence.clone());
                 }
                 self.phase = Phase::Done;
             }

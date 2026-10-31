@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [unit, mock, protocol]
+        suite: [unit, mock, hardening, protocol]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -50,6 +50,7 @@ jobs:
       - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
       - run: cargo run --locked -p xtask -- production
       - run: cargo run --locked -p xtask -- scale
+      - run: cargo run --locked -p xtask -- capacity
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

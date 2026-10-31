@@ -1,4 +1,11 @@
 type Account = record { owner : principal; subaccount : opt blob };
+type Attempt = record {
+  fee : nat64;
+  memo : blob;
+  may_have_executed : bool;
+  number : nat32;
+  created_at_time : nat64;
+};
 type Bootstrap = variant {
   Claiming;
   WaitingFunding;
@@ -18,6 +25,14 @@ type CandidateResult = record {
   status : ComplianceStatus;
   admitted : opt Candidate;
   checked_at : nat64;
+};
+type Checkpoints = record {
+  last_instructions : nat64;
+  total_instructions : nat64;
+  writes : nat64;
+  mutations : nat64;
+  bytes : nat64;
+  maximum_instructions : nat64;
 };
 type ComplianceStatus = variant {
   Indeterminate;
@@ -61,6 +76,7 @@ type Health = record {
   staged_balance : opt nat64;
   bootstrap : Bootstrap;
   cycles : nat;
+  checkpoints : Checkpoints;
   proposer : opt nat64;
   balance_observed_at : opt nat64;
   stable_snapshot_bytes : nat64;
@@ -81,12 +97,15 @@ type PayoutSummary = record {
   id : nat64;
   fee : nat64;
   roster_round : nat64;
+  maintenance_complete : bool;
   recipient_count : nat32;
   dust : nat64;
   "reserved" : nat64;
   complete : bool;
   confirmed_count : nat32;
+  confirmed_cost : nat;
   observed_balance : nat64;
+  additional_fee_funding : nat64;
 };
 type ProposalJob = record {
   history_before : opt nat64;
@@ -116,22 +135,38 @@ type ProposalPhase = variant {
   FinalizedReceiptUnattributed : nat64;
   Adopted : nat64;
   Intent;
+  CreationRejected : record { error_type : int32; reason : text };
+};
+type RefreshState = variant {
+  Complete;
+  Waiting : record { reason : text };
+  Pending;
 };
 type Result = variant { Ok : nat64; Err : text };
 type RosterView = record {
   planned_round : opt nat64;
   topic : int32;
+  readback_observed_at : opt nat64;
+  candidate_validated_at : opt nat64;
   applied : vec nat64;
+  support_ended_at : opt nat64;
+  support_started_at : opt nat64;
   planned : vec nat64;
   reconciled_at : opt nat64;
+  reward_valid_until : opt nat64;
+  intended_at : opt nat64;
+  reward_eligible : bool;
   applied_round : opt nat64;
 };
 type ScanProgress = record {
   last_applied_scan : opt record { nat64; nat64 };
   failures : nat64;
+  readback_observed_at : opt nat64;
   full_batches : nat64;
+  candidate_validated_at : opt nat64;
   cursor : opt nat64;
   scan_ended_at : opt nat64;
+  voting_context : opt VotingContext;
   evaluated_candidates : nat64;
   pages : nat64;
   phase : text;
@@ -141,6 +176,7 @@ type ScanProgress = record {
   last_complete_scan : opt record { nat64; nat64 };
   round : opt nat64;
   started_at : opt nat64;
+  intent_at : opt nat64;
   public_observations : nat64;
 };
 type Score = record {
@@ -152,17 +188,32 @@ type Score = record {
 type Transfer = record {
   status : TransferStatus;
   destination : Destination;
+  attempt : opt Attempt;
   memo : blob;
   history_cursor : nat64;
+  rejected_attempts : vec Attempt;
   created_at_time : nat64;
   amount : nat64;
+  refresh : opt RefreshState;
 };
 type TransferStatus = variant {
   Held : record { reason : text };
   Confirmed : record { block : nat64 };
   Prepared;
+  Rejected : record { reason : text };
   Unknown : record { attempts : nat32 };
   Verifying : record { block : nat64 };
+};
+type VotingContext = record {
+  parameters : opt VotingPowerEconomics;
+  minimum_delay : nat64;
+  resolution : text;
+  governance_module : opt blob;
+};
+type VotingPowerEconomics = record {
+  start_reducing_voting_power_after_seconds : opt nat64;
+  neuron_minimum_dissolve_delay_to_vote_seconds : opt nat64;
+  clear_following_after_seconds : opt nat64;
 };
 service : (opt Init) -> {
   candidate_page : (opt nat64, nat16) -> (vec CandidateResult) query;

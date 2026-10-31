@@ -24,9 +24,11 @@ fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity()
     proposer.account = l::staking_subaccount(probe, d_quorum::state::BOOTSTRAP_NONCE);
     let m1 = seed(12, user(12), at);
     let m2 = seed(13, user(13), at);
+    let mut depleted = seed(14, probe, at);
+    depleted.cached_neuron_stake_e8s = 5_000;
     install_real(
         &pic,
-        vec![target, proposer, m1, m2],
+        vec![target, proposer, m1, m2, depleted],
         vec![],
         gov_wasm,
         ledger_wasm,
@@ -70,6 +72,28 @@ fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity()
     assert!(direct.unwrap().contains("Error"));
     let payload =
         d_quorum::proposal::maturity_payload("D-QUORUM real contract regression 1", probe);
+    // These are actual pinned Governance refusals, before any proposal is created.
+    for (proposer, code) in [(12u64, 3), (14, 14)] {
+        let result: Result<g::ResponseCommand, String> = update(
+            &pic,
+            probe,
+            Principal::anonymous(),
+            "proposal_result_probe",
+            (proposer, payload.clone()),
+        );
+        let g::ResponseCommand::Error(error) = result.unwrap() else {
+            panic!("expected typed creation refusal");
+        };
+        assert_eq!(error.error_type, code);
+        assert!(g::definite_proposal_rejection(&error));
+        let n: Result<g::Neuron, g::GovernanceError> =
+            query(&pic, GOVERNANCE, "get_full_neuron", proposer);
+        assert_eq!(
+            n.unwrap().neuron_fees_e8s,
+            0,
+            "refusal must not charge a fee"
+        );
+    }
     let proposal: Result<u64, String> = update(
         &pic,
         probe,
@@ -78,6 +102,7 @@ fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity()
         (11u64, payload),
     );
     let id = proposal.unwrap();
+    assert_eq!(id, 1, "creation refusals must not insert proposals");
     let p: Option<g::ProposalInfo> = query(&pic, GOVERNANCE, "get_proposal_info", id);
     let p = p.unwrap();
     assert_eq!(p.status, 1, "creation must not adopt or execute");
@@ -424,6 +449,21 @@ fn production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers() 
         subaccount: Some(l::staking_subaccount(app, d_quorum::state::BOOTSTRAP_NONCE)),
     };
     install_real(&pic, neurons, vec![(bootstrap, 10_000_000_000)], gw, lw);
+    let probe = install_probe(&pic, wasm("quorum_mocks"));
+    let report: Result<dendrite_types::ComplianceReport, String> = update(
+        &pic,
+        probe,
+        Principal::anonymous(),
+        "evaluate_probe",
+        100u64,
+    );
+    let report = report.unwrap();
+    assert_eq!(
+        report.overall_status,
+        dendrite_types::ComplianceStatus::Compliant,
+        "{report:#?}"
+    );
+
     pic.install_canister(
         app,
         production.clone(),
@@ -549,13 +589,22 @@ fn production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers() 
         drive(&pic, 10);
         let ps: Vec<d_quorum::PayoutSummary> =
             query2(&pic, app, "payout_page", (None::<u64>, 100u16));
-        if ps.first().is_some_and(|p| p.complete) {
+        if ps
+            .first()
+            .is_some_and(|p| p.complete && p.maintenance_complete)
+        {
             break;
         }
     }
     let ps: Vec<d_quorum::PayoutSummary> = query2(&pic, app, "payout_page", (None::<u64>, 100u16));
     assert_eq!(ps[0].id, payout);
-    assert!(ps[0].complete);
+    assert!(ps[0].complete && ps[0].maintenance_complete);
+    let refreshed: Result<g::Neuron, g::GovernanceError> =
+        query(&pic, GOVERNANCE, "get_full_neuron", 100u64);
+    assert_eq!(
+        refreshed.unwrap().cached_neuron_stake_e8s,
+        old_stake + balance - 10_000
+    );
     assert_eq!(ps[0].fee, 10_000);
     let recipient: candid::Nat = query(
         &pic,
@@ -586,4 +635,189 @@ fn production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers() 
         health.stable_memory_pages,
         health.jobs[2].measured_instructions
     );
+}
+
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts"]
+fn raw_positive_deciding_vp_is_distinct_from_real_ballot_eligibility_and_feature_default() {
+    for inner_default in [false, true] {
+        let pic = real_pic();
+        let probe = install_probe(&pic, wasm("quorum_mocks"));
+        let at = now(&pic);
+        let minimum = if inner_default {
+            14 * 86400
+        } else {
+            6 * 2_629_800
+        };
+        let mut neurons = vec![];
+        for (id, delay) in [
+            (401, 0),
+            (402, minimum - 1),
+            (403, minimum),
+            (404, minimum + 86400),
+        ] {
+            let mut n = seed(id, user(id as u8), at);
+            n.hot_keys = vec![probe];
+            if delay == 0 {
+                n.dissolve_state = Some(g::DissolveState::WhenDissolvedTimestampSeconds(at - 1));
+                n.aging_since_timestamp_seconds = u64::MAX;
+            } else {
+                n.dissolve_state = Some(g::DissolveState::DissolveDelaySeconds(delay));
+            }
+            neurons.push(n);
+        }
+        neurons.push(seed(499, probe, at));
+        let voting = inner_default.then_some(g::VotingPowerEconomics {
+            start_reducing_voting_power_after_seconds: None,
+            clear_following_after_seconds: None,
+            neuron_minimum_dissolve_delay_to_vote_seconds: None,
+        });
+        install_real_with_voting(
+            &pic,
+            neurons,
+            vec![],
+            artifact("governance-canister"),
+            artifact("ledger-canister"),
+            voting,
+        );
+        let observed: Result<quorum_mocks::EligibilityRead, String> = update(
+            &pic,
+            probe,
+            Principal::anonymous(),
+            "eligibility_probe",
+            vec![401u64, 402, 403, 404],
+        );
+        let observed = observed.unwrap();
+        assert_eq!(observed.context.minimum_delay, minimum);
+        assert!(
+            observed.observations.iter().all(|(_, vp, _)| *vp > 0),
+            "raw VP is separately computed: {observed:?}"
+        );
+        for (id, _, eligible) in &observed.observations {
+            assert_eq!(*eligible, *id >= 403);
+        }
+        let proposal: Result<u64, String> =
+            update(&pic, probe, Principal::anonymous(), "motion_probe", 499u64);
+        let proposal = proposal.unwrap();
+        let ballots: Result<Vec<u64>, String> = update(
+            &pic,
+            probe,
+            Principal::anonymous(),
+            "ballot_probe",
+            proposal,
+        );
+        let ballots = ballots.unwrap();
+        assert!(!ballots.contains(&401));
+        assert!(!ballots.contains(&402));
+        assert!(ballots.contains(&403));
+        assert!(ballots.contains(&404));
+        println!(
+            "real eligibility minimum={minimum} inner_default={inner_default} raw={:?} ballots={ballots:?}",
+            observed.observations
+        );
+    }
+}
+
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts"]
+fn production_owned_proposer_recovers_after_real_staking_topup() {
+    let pic = real_pic();
+    let app = pic.create_canister();
+    pic.add_cycles(app, 200_000_000_000_000);
+    let at = now(&pic);
+    let mut owned = seed(300, app, at);
+    owned.account = l::staking_subaccount(app, d_quorum::state::BOOTSTRAP_NONCE);
+    owned.cached_neuron_stake_e8s = 100_000_000;
+    owned.neuron_fees_e8s = 90_000_000;
+    let destination = l::Account {
+        owner: GOVERNANCE,
+        subaccount: Some(owned.account.clone()),
+    };
+    let mut target = seed(TARGET, user(9), at);
+    target.hot_keys = vec![app];
+    target.followees = vec![fs(1, &[300, 12, 13])];
+    target.maturity_e8s_equivalent = 5_000_000_000;
+    install_real(
+        &pic,
+        vec![
+            owned,
+            target,
+            seed(12, user(12), at),
+            seed(13, user(13), at),
+        ],
+        vec![(
+            l::Account {
+                owner: user(7),
+                subaccount: None,
+            },
+            1_000_020_000,
+        )],
+        artifact("governance-canister"),
+        artifact("ledger-canister"),
+    );
+    pic.install_canister(
+        app,
+        wasm("d_quorum"),
+        encode_one(Some(d_quorum::state::Init {
+            mode: d_quorum::state::Mode::Live,
+            expected_target_controller: Some(user(9)),
+        }))
+        .unwrap(),
+        None,
+    );
+    let mut waiting = false;
+    for _ in 0..100 {
+        drive(&pic, 10);
+        let h: d_quorum::Health = query_empty(&pic, app, "health");
+        if h.proposer == Some(300)
+            && h.jobs[1]
+                .last_error
+                .as_ref()
+                .is_some_and(|e| e.contains("stake does not cover"))
+        {
+            waiting = true;
+            break;
+        }
+    }
+    assert!(waiting);
+    pic.stop_canister(app, None).unwrap();
+    let result: Result<candid::Nat, l::TransferError> = update(
+        &pic,
+        LEDGER,
+        user(7),
+        "icrc1_transfer",
+        l::TransferArg {
+            from_subaccount: None,
+            to: destination,
+            amount: 1_000_000_000u64.into(),
+            fee: Some(10_000u64.into()),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    result.unwrap();
+    let before: Result<g::Neuron, g::GovernanceError> =
+        query(&pic, GOVERNANCE, "get_full_neuron", 300u64);
+    assert_eq!(
+        before.unwrap().cached_neuron_stake_e8s,
+        100_000_000,
+        "Ledger topup alone must not be described as a cache refresh"
+    );
+    pic.start_canister(app, None).unwrap();
+    let mut opened = false;
+    for _ in 0..100 {
+        drive(&pic, 120);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if j.is_some_and(|j| matches!(j.phase, d_quorum::state::ProposalPhase::Open(_))) {
+            opened = true;
+            break;
+        }
+    }
+    assert!(
+        opened,
+        "production preflight must refresh separately funded stake"
+    );
+    let after: Result<g::Neuron, g::GovernanceError> =
+        query(&pic, GOVERNANCE, "get_full_neuron", 300u64);
+    assert_eq!(after.unwrap().cached_neuron_stake_e8s, 1_100_000_000);
 }

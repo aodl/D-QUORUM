@@ -24,6 +24,7 @@ type DissolveState = variant {
 };
 type Economics = record {
   neuron_minimum_stake_e8s : nat64;
+  voting_power_economics : opt VotingPowerEconomics;
   neuron_management_fee_per_proposal_e8s : nat64;
 };
 type Followees = record { followees : vec NeuronId };
@@ -202,6 +203,11 @@ type StoredProposal = record {
   title : opt text;
   action : opt StoredAction;
   summary : text;
+};
+type VotingPowerEconomics = record {
+  start_reducing_voting_power_after_seconds : opt nat64;
+  neuron_minimum_dissolve_delay_to_vote_seconds : opt nat64;
+  clear_following_after_seconds : opt nat64;
 };
 service : {
   get_network_economics_parameters : () -> (Economics) query;

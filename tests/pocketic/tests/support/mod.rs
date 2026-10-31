@@ -53,8 +53,17 @@ pub fn builder() -> PocketIcBuilder {
         hex::encode(Sha256::digest(&bytes)),
         "29472ea4433b30a280676c4e22e369d79d5ba6ee1b4d48bab32ebe7d0ad2b4bb"
     );
-    PocketIcBuilder::new()
-        .with_server_binary(bin)
+    let builder = PocketIcBuilder::new().with_server_binary(bin);
+    let builder = if let Ok(url) = std::env::var("D_QUORUM_POCKET_IC_URL") {
+        assert!(
+            url.starts_with("http://127.0.0.1:"),
+            "only a local fixture server is permitted"
+        );
+        builder.with_server_url(url.parse().unwrap())
+    } else {
+        builder
+    };
+    builder
         .with_nns_subnet()
         .with_application_subnet()
         .with_initial_time(pocket_ic::Time::from_nanos_since_unix_epoch(
@@ -183,6 +192,7 @@ pub fn known(id: u64) -> g::KnownNeuronData {
 }
 #[derive(CandidType)]
 struct Economics {
+    voting_power_economics: Option<g::VotingPowerEconomics>,
     neuron_minimum_stake_e8s: u64,
     max_proposals_to_keep_per_topic: u32,
     neuron_management_fee_per_proposal_e8s: u64,
@@ -259,6 +269,16 @@ pub fn install_real(
     governance_wasm: Vec<u8>,
     ledger_wasm: Vec<u8>,
 ) {
+    install_real_with_voting(pic, neurons, extra, governance_wasm, ledger_wasm, None);
+}
+pub fn install_real_with_voting(
+    pic: &PocketIc,
+    neurons: Vec<SeedNeuron>,
+    extra: Vec<(l::Account, u64)>,
+    governance_wasm: Vec<u8>,
+    ledger_wasm: Vec<u8>,
+    voting: Option<g::VotingPowerEconomics>,
+) {
     let at = now(pic);
     let gov_init = GovernanceInit {
         default_followees: vec![],
@@ -266,6 +286,7 @@ pub fn install_real(
         neuron_management_voting_period_seconds: Some(86400),
         node_providers: vec![],
         economics: Some(Economics {
+            voting_power_economics: voting,
             neuron_minimum_stake_e8s: 100_000_000,
             max_proposals_to_keep_per_topic: 100,
             neuron_management_fee_per_proposal_e8s: 10_000,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed suite execution. Validators never receive behavioural test counts."""
-import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io
+import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io,atexit
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 os.chdir(ROOT)
 (ROOT/'.cache/tmp').mkdir(parents=True,exist_ok=True)
@@ -18,7 +18,40 @@ SOURCE_FILES={f:hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest() for f i
 SOURCE_TREE_HASH=hashlib.sha256(json.dumps(SOURCE_FILES,sort_keys=True).encode()).hexdigest()
 PREPARED_ARTIFACTS={}
 
+FIXTURE_SERVER=None
+
+def fixture_server():
+    global FIXTURE_SERVER
+    if FIXTURE_SERVER is not None:
+        if FIXTURE_SERVER.poll() is not None:raise RuntimeError('managed PocketIC server exited during suite')
+        return
+    # The SDK's implicit server has a 600s hard TTL. This is a wall-clock test
+    # harness lifetime, unrelated to virtual production timers/freshness bounds.
+    port=ROOT/f'.cache/tmp/pocketic-runner-{os.getpid()}.port'
+    port.unlink(missing_ok=True)
+    log=(OUT/f'pocketic-server-{os.getpid()}.log').open('w')
+    FIXTURE_SERVER=subprocess.Popen([str(ROOT/'.cache/tools/pocket-ic'),'--ttl','43200','--hard-ttl','43200','--port-file',str(port)],stdout=log,stderr=subprocess.STDOUT)
+    def stop():
+        if FIXTURE_SERVER.poll() is None:
+            FIXTURE_SERVER.terminate()
+            try:FIXTURE_SERVER.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                FIXTURE_SERVER.kill();FIXTURE_SERVER.wait()
+        log.close();port.unlink(missing_ok=True)
+    atexit.register(stop)
+    deadline=time.monotonic()+60
+    while time.monotonic()<deadline:
+        if FIXTURE_SERVER.poll() is not None:raise RuntimeError('managed PocketIC startup failed')
+        if port.exists() and port.read_text().endswith('\n'):
+            number=int(port.read_text().strip())
+            if not 0<number<65536:raise RuntimeError('invalid PocketIC port')
+            os.environ['D_QUORUM_POCKET_IC_URL']=f'http://127.0.0.1:{number}/'
+            return
+        time.sleep(0.02)
+    raise RuntimeError('managed PocketIC startup timeout')
+
 def run(args,kind='validator',name=None,show=True):
+    if kind=='behaviour' and '--test' in args:fixture_server()
     print('+ '+' '.join(map(str,args)),flush=True)
     process=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     lines=[]
@@ -34,6 +67,7 @@ def run(args,kind='validator',name=None,show=True):
         summaries=re.findall(r'test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored;',p.stdout)
         counts={k:sum(int(s[i]) for s in summaries) for i,k in [(1,'passed'),(2,'failed'),(3,'ignored')]}
         record.update(counts)
+        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\. ok$',p.stdout)
         if not summaries or counts['passed']==0 or counts['failed']!=0:
             record['exit_code']=1;record['error']='missing positive execution, failed tests, or invalid summaries'
     results.append(record);save()
@@ -100,8 +134,8 @@ def unit():
 
 def suite(target):
     prepare()
-    if target=='protocol':
-        listing=run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--list'],name='ignored protocol discovery')
+    if target in ('protocol','capacity'):
+        listing=run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--list'],name='ignored '+target+' discovery')
         names=re.findall(r'(?m)^([A-Za-z0-9_]+): test$',listing)
         if not names:raise RuntimeError('required ignored protocol suite absent')
         for name in names:
@@ -127,7 +161,7 @@ def canonical_artifact():
     os.environ['D_QUORUM_TEST_WASM']=str(artifact)
     PREPARED_ARTIFACTS['canonical']=hashlib.sha256(artifact.read_bytes()).hexdigest()
     run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
-    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers')]:
+    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
     completed_suites.add('canonical_artifact')
 
@@ -135,6 +169,16 @@ def coverage():
     run(['cargo','llvm-cov','--version'])
     run(['cargo','llvm-cov','--locked','--workspace','--lib','--bins','--json','--output-path','dist/evidence/coverage.json'],kind='behaviour',name='instrumented unit/property coverage')
     data=json.loads((OUT/'coverage.json').read_text());(OUT/'coverage-totals.json').write_text(json.dumps(data['data'][0]['totals'],indent=2)+'\n')
+    scopes={}
+    for name,prefix in [('policy','crates/policy/'),('accounting','crates/accounting/'),('clients','crates/ic_clients/'),('transitions','canisters/d_quorum/'),('unchanged_evaluator','vendor/dendrite/')]:
+        files=[f for f in data['data'][0]['files'] if '/'+prefix in f['filename']]
+        scopes[name]={'files':[f['filename'].replace(str(ROOT)+'/', '') for f in files]}
+        for metric in ('lines','regions','functions'):
+            count=sum(f['summary'][metric]['count'] for f in files)
+            covered=sum(f['summary'][metric]['covered'] for f in files)
+            scopes[name][metric]={'count':count,'covered':covered,'percent':100*covered/count if count else 0}
+    scopes['scope']='Native only. Wasm timer/await/client paths are exercised in integration suites; those executions do not increase these native counters.'
+    (OUT/'coverage-scopes.json').write_text(json.dumps(scopes,indent=2)+'\n')
     completed_suites.add('coverage')
 
 def security():
@@ -149,9 +193,12 @@ def full():
     if SOURCE_DIRTY:raise RuntimeError('commit source before full acceptance and canonical builds')
     run(['cargo','fmt','--all','--','--check'])
     run(['cargo','clippy','--locked','--workspace','--all-targets','--','-D','warnings'])
-    unit();suite('mocked');suite('protocol');production();suite('scale');coverage();security()
+    unit();suite('mocked');suite('hardening');suite('protocol');production();suite('scale');suite('capacity');coverage();security()
     if subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()!=SOURCE_COMMIT or subprocess.check_output(['git','status','--porcelain']).strip():raise RuntimeError('source changed during acceptance; rerun from one clean commit')
     run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds');completed_suites.add('reproducible');canonical_artifact()
+    if subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()!=SOURCE_COMMIT or subprocess.check_output(['git','status','--porcelain']).strip():raise RuntimeError('source changed during canonical qualification; rerun from one clean commit')
+    for path,digest in SOURCE_FILES.items():
+        if not pathlib.Path(path).is_file() or hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()!=digest:raise RuntimeError('source bytes changed during acceptance: '+path)
     # Source matrix describes coverage, not stale assertions that tests ran.
     # Execution evidence is generated only after every required suite actually succeeds.
     matrix=json.loads((ROOT/'docs/acceptance-matrix.json').read_text())
@@ -166,7 +213,7 @@ def full():
     matrix['remote_ci']='awaits separately authorized push'
     (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')
 
-COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
+COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
 try:
     cmd=sys.argv[1] if len(sys.argv)>1 else 'help'
     if cmd not in COMMANDS:raise RuntimeError('commands: '+', '.join(COMMANDS))

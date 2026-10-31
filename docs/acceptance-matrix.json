@@ -135,6 +135,126 @@
       "requirement": "complete acceptance run with no skipped mandatory gate",
       "suite": "acceptance",
       "status": "implemented"
+    },
+    {
+      "requirement": "eligible support excludes dissolved/short-delay positive raw VP; exact threshold and feature-dependent defaults",
+      "suite": "protocol",
+      "regression": "raw_positive_deciding_vp_is_distinct_from_real_ballot_eligibility_and_feature_default",
+      "status": "implemented"
+    },
+    {
+      "requirement": "coherent economics before/after support and before publication",
+      "suite": "hardening",
+      "regression": "economics_change_during_support_scan_blocks_publication_and_preserves_context",
+      "status": "implemented"
+    },
+    {
+      "requirement": "twenty selected candidates and shared/unshared dependencies with latency/retry/upgrade",
+      "suite": "capacity",
+      "regression": "twenty_distinct_selected_with_shared_dependencies_and_latency",
+      "status": "implemented"
+    },
+    {
+      "requirement": "eighty recipients across sixteen topics with default five seats",
+      "suite": "capacity",
+      "regression": "eighty_recipients_sixteen_topics_default_five",
+      "status": "implemented"
+    },
+    {
+      "requirement": "240 recipients across sixteen topics with fifteen seats; destination planning within 1800 seconds",
+      "suite": "capacity",
+      "regression": "two_hundred_forty_recipients_fifteen_seats",
+      "status": "implemented"
+    },
+    {
+      "requirement": "thirty-day historical following readback cannot refresh reward observations; immediate new scan",
+      "suite": "hardening",
+      "regression": "thirty_day_outage_and_upgrade_reconcile_history_without_reward_freshness",
+      "status": "implemented"
+    },
+    {
+      "requirement": "cycle reserve outage and upgrade cannot manufacture observation progress",
+      "suite": "hardening",
+      "regression": "cycle_reserve_outage_does_not_fabricate_observation_progress",
+      "status": "implemented"
+    },
+    {
+      "requirement": "setter during already-sent intent target-readback await: mismatching reply causes zero obsolete retries",
+      "suite": "hardening",
+      "regression": "setter_during_paused_sent_intent_readback_never_retries_obsolete_revision",
+      "status": "implemented"
+    },
+    {
+      "requirement": "A lost success after >24h history recovery; never-sent BC fresh attempts; fee funding and upgrades",
+      "suite": "hardening",
+      "regression": "expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees",
+      "status": "implemented"
+    },
+    {
+      "requirement": "unknown A never gets fresh identity and all liabilities remain reserved",
+      "suite": "hardening",
+      "regression": "genuinely_unresolved_a_retains_all_liabilities_and_never_receives_new_identity",
+      "status": "implemented"
+    },
+    {
+      "requirement": "V1 migration preserves all obligations and Held ambiguity",
+      "suite": "unit",
+      "regression": "state::tests",
+      "status": "implemented"
+    },
+    {
+      "requirement": "creation-time insufficient funds and permission refusal terminate attempt; fresh preflight after bounded backoff",
+      "suite": "hardening",
+      "regression": "depleted_proposer_topup_refreshes_and_definite_creation_refusals_back_off_then_recover",
+      "status": "implemented"
+    },
+    {
+      "requirement": "malformed success without ID remains durable ambiguous and recovers actual proposal",
+      "suite": "hardening",
+      "regression": "malformed_success_without_id_is_durable_ambiguity_not_creation_rejection",
+      "status": "implemented"
+    },
+    {
+      "requirement": "confirmed transfer refresh failure through upgrade never resends value",
+      "suite": "hardening",
+      "regression": "confirmed_payment_refresh_failure_survives_upgrade_without_resending",
+      "status": "implemented"
+    },
+    {
+      "requirement": "production recipient refresh uses public supported command on real Governance and Ledger",
+      "suite": "protocol",
+      "regression": "production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers",
+      "status": "implemented"
+    },
+    {
+      "requirement": "unauthorized setters on dense populated state leave stable bytes and checkpoint counters unchanged",
+      "suite": "capacity",
+      "regression": "all three capacity fixtures",
+      "status": "implemented"
+    },
+    {
+      "requirement": "scoped native policy/accounting/transitions coverage distinguished from unchanged evaluator and Wasm integration",
+      "suite": "coverage",
+      "regression": "coverage-scopes.json",
+      "status": "implemented"
+    },
+    {
+      "requirement": "submitted proposal voted down retains its submitted ID and uses outcome backoff across upgrade",
+      "suite": "hardening",
+      "regression": "submitted_proposal_voted_down_is_distinct_from_creation_refusal",
+      "status": "implemented"
+    },
+    {
+      "requirement": "missing support observation or unknown visibility cannot silently become zero",
+      "suite": "unit",
+      "regression": "missing_or_unknown_visibility_is_not_confirmed_zero_support",
+      "status": "implemented"
+    },
+    {
+      "requirement": "natural production scan preserves 19000 direct VP with short-delay/dissolved positive raw VP, exact boundary and transitive distractor",
+      "suite": "hardening",
+      "regression": "eligible_direct_support_keeps_19000_despite_positive_raw_ineligible_and_transitive_vp",
+      "status": "implemented"
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."
