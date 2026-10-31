@@ -579,6 +579,19 @@ fn depleted_proposer_topup_refreshes_and_definite_creation_refusals_back_off_the
 #[test]
 #[ignore = "xtask hardening prepares production Wasm"]
 fn malformed_success_without_id_is_durable_ambiguity_not_creation_rejection() {
+    malformed_success(None);
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn zero_proposal_success_id_is_ambiguous_and_recovers_exact_history() {
+    malformed_success(Some(g::NeuronId { id: 0 }));
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn unbound_proposal_success_id_is_ambiguous_and_recovers_exact_history() {
+    malformed_success(Some(g::NeuronId { id: 9999 }));
+}
+fn malformed_success(success_id: Option<g::NeuronId>) {
     let (pic, app, w) = owned_setup();
     let _: () = update(
         &pic,
@@ -597,7 +610,7 @@ fn malformed_success_without_id_is_durable_ambiguity_not_creation_rejection() {
             reply: Some(
                 encode_one(g::ManageResponse {
                     command: Some(g::ResponseCommand::MakeProposal(g::ProposalResponse {
-                        proposal_id: None,
+                        proposal_id: success_id,
                     })),
                 })
                 .unwrap(),
@@ -616,7 +629,7 @@ fn malformed_success_without_id_is_durable_ambiguity_not_creation_rejection() {
             break;
         }
     }
-    let j = ambiguous.expect("missing success ID must remain ambiguous");
+    let j = ambiguous.expect("malformed success ID must remain ambiguous");
     pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
         .unwrap();
     for _ in 0..80 {

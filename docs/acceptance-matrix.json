@@ -273,6 +273,18 @@
       "suite": "unit",
       "regression": "delayed_controller_reply_and_report_commit_cannot_freshen_old_configuration",
       "status": "implemented"
+    },
+    {
+      "requirement": "zero success proposal ID remains ambiguous and recovers exact history without resubmission",
+      "suite": "hardening",
+      "regression": "zero_proposal_success_id_is_ambiguous_and_recovers_exact_history",
+      "status": "implemented"
+    },
+    {
+      "requirement": "unbound positive success ID is promptly read back then retained as ambiguity until exact history binds the created proposal",
+      "suite": "hardening",
+      "regression": "unbound_proposal_success_id_is_ambiguous_and_recovers_exact_history",
+      "status": "implemented"
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."

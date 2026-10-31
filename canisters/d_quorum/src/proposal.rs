@@ -233,6 +233,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     }
     let mut j = current.unwrap();
     let mut history_backlog = false;
+    let mut verify_success = false;
     match j.phase.clone() {
         Checking | Ambiguous | Intent => {
             let ambiguous = matches!(j.phase, Ambiguous | Intent);
@@ -314,7 +315,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             let response = g::propose(j.proposer, payload).await;
             match response {
                 Ok(g::ResponseCommand::MakeProposal(p)) => {
-                    j.phase = p.proposal_id.map_or(Ambiguous, |id| Open(id.id))
+                    j.phase = p
+                        .proposal_id
+                        .filter(|id| id.id != 0)
+                        .map_or(Ambiguous, |id| Open(id.id));
+                    verify_success = matches!(j.phase, Open(_));
                 }
                 Ok(g::ResponseCommand::Error(e)) if g::definite_proposal_rejection(&e) => {
                     j.retry_after = ic_cdk::api::time() / 1_000_000_000 + 3600;
@@ -328,12 +333,23 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         }
 
         Open(id) | Adopted(id) => {
-            let p = g::proposal(id)
-                .await?
-                .ok_or("authorized proposal history unavailable")?;
-            if !exact_matches(&p, &j, owner) {
-                return Err("proposal ID/fingerprint binding mismatch".into());
-            }
+            let candidate = g::proposal(id).await?;
+            let Some(p) = candidate
+                .filter(|p| p.id.as_ref().map(|n| n.id) == Some(id) && exact_matches(p, &j, owner))
+            else {
+                // A success ID is a hint until its exact action/marker is read back.
+                // An unusable hint never authorizes another submission.
+                j.phase = Ambiguous;
+                j.history_before = None;
+                j.history_pages = 0;
+                j.found.clear();
+                j.retry_after = 0;
+                state::guarded(token, |s| s.proposal = Some(j));
+                return Err(
+                    "proposal success ID could not be bound; exact history investigation retained"
+                        .into(),
+                );
+            };
             j.phase = match p.status {
                 1 => Open(id),
                 2 => {
@@ -446,6 +462,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         s.proposal = Some(j);
         s.jobs[1].next_at =
             now + if history_backlog
+                || verify_success
                 || matches!(
                     s.proposal.as_ref().unwrap().phase,
                     Checking | Preflight | Intent | Ambiguous

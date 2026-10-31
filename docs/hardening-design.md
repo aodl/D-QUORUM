@@ -40,7 +40,7 @@ Stable V2 migrates the exact V1 schema, including its original single-variant en
 
 ## Proposal and staking maintenance contracts
 
-In pinned `governance.rs::make_proposal`, typed errors return before proposal insertion and fee charging; no fallible returned error follows insertion. The audited precreation refusal classes (3,4,5,10,11,14,16) terminate that attempt with an observable error and one-hour backoff followed by fresh preflight. Unknown classes, transport failures, incompatible success replies and success without an ID remain durable ambiguous. A submitted proposal voted down is a separate status. At most one unresolved operation remains.
+In pinned `governance.rs::make_proposal`, typed errors return before proposal insertion and fee charging; no fallible returned error follows insertion. The audited precreation refusal classes (3,4,5,10,11,14,16) terminate that attempt with an observable error and one-hour backoff followed by fresh preflight. Unknown classes, transport failures, incompatible success replies and success without a positive ID remain durable ambiguous. A positive success ID receives prompt exact readback; an absent or unbound record returns to exact-history investigation without authorizing resubmission. A submitted proposal voted down is a separate status. At most one unresolved operation remains.
 
 Governance canonicalizes management-proposal titles. Recovery compares that canonical title while binding the exact summary marker, URL, proposer, target, 100% DisburseMaturity action and explicit canister default destination. A title marker alone never supplies idempotence.
 
