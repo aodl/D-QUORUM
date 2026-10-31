@@ -28,6 +28,8 @@ Support interval, oldest candidate validation, first intended write, observed re
 
 A fresh roster wakes blocked or in-flight payout admission and retires its old draft. It preserves the ordinary daily waiting period after a completed payout; a roster/configuration change cannot accelerate another distribution of later deposits.
 
+Selected revalidation ends the round immediately when the unchanged evaluator establishes NonCompliant status. Indeterminate evidence continues to block and retry; it cannot silently remove an unresolved contender. A still-compliant but materially changed manager/topic set also requires a complete new round.
+
 An already-dispatched intent survives a setter for readback. Before any new write or retry, the worker reads current mode/revision, checks observation age after awaits and uses one guarded commit checking worker generation, current revision and exact intent attempt. A mismatching old-revision readback cannot retry the obsolete roster.
 
 ## Financial obligations and attempts

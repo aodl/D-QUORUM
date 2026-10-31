@@ -281,24 +281,32 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 }
                 let mut work = work.unwrap_or_else(|| Collection::new(id));
                 if let Some(report) = work.advance_cached(&mut r.cache).await? {
-                    let mut c = policy::admit(&report).map_err(str::to_string)?;
-                    c.checked_at = work.observed_from;
-                    r.validated_at = Some(r.validated_at.unwrap_or(c.checked_at).min(c.checked_at));
-                    if !r.candidates.get(&id).is_some_and(|a| material_equal(a, &c)) {
+                    if report.overall_status == dendrite_types::ComplianceStatus::NonCompliant {
                         r.phase = Failed(
-                            "selected candidate changed; complete new round required".into(),
+                            "selected candidate changed to NonCompliant; complete new round required"
+                                .into(),
                         );
                     } else {
-                        r.candidates.insert(id, c.clone());
-                        if let Some(outcome) = r.outcomes.get_mut(&id) {
-                            outcome.checked_at = c.checked_at;
-                            outcome.admitted = Some(c);
+                        let mut c = policy::admit(&report).map_err(str::to_string)?;
+                        c.checked_at = work.observed_from;
+                        r.validated_at =
+                            Some(r.validated_at.unwrap_or(c.checked_at).min(c.checked_at));
+                        if !r.candidates.get(&id).is_some_and(|a| material_equal(a, &c)) {
+                            r.phase = Failed(
+                                "selected candidate changed; complete new round required".into(),
+                            );
+                        } else {
+                            r.candidates.insert(id, c.clone());
+                            if let Some(outcome) = r.outcomes.get_mut(&id) {
+                                outcome.checked_at = c.checked_at;
+                                outcome.admitted = Some(c);
+                            }
+                            r.phase = Revalidate {
+                                ids,
+                                offset: offset + 1,
+                                work: None,
+                            };
                         }
-                        r.phase = Revalidate {
-                            ids,
-                            offset: offset + 1,
-                            work: None,
-                        };
                     }
                 } else {
                     r.phase = Revalidate {

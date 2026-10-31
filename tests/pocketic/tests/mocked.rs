@@ -710,7 +710,8 @@ fn lost_proposal_reply_recovers_exact_history_after_upgrade_without_resubmission
 #[test]
 #[ignore = "xtask mock prepares production Wasm first"]
 fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
-    for cycle in [false, true] {
+    for scenario in ["manager_change", "noncompliant", "cycle"] {
+        let cycle = scenario == "cycle";
         let (pic, app, _) = setup(Mode::Live);
         pic.set_controllers(
             GOVERNANCE,
@@ -735,13 +736,16 @@ fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
                 "pause_full_once",
                 (100u64, 30u32),
             );
+            let mut paused = false;
             for _ in 0..800 {
                 drive(&pic, 1);
                 let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
                 if calls.iter().any(|x| x == "full_read_paused") {
+                    paused = true;
                     break;
                 }
             }
+            assert!(paused, "selected-candidate read boundary was not reached");
         }
         let mut f = fixture(now(&pic), empty, app);
         if cycle {
@@ -751,8 +755,20 @@ fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
                 .unwrap()
                 .followees = vec![fs(4, &[TARGET])];
         } else {
-            let mut manager = raw(106, user(106), now(&pic));
+            let mut manager = f
+                .neurons
+                .iter()
+                .find(|n| n.id.as_ref().unwrap().id == 105)
+                .unwrap()
+                .clone();
+            manager.id = Some(g::NeuronId { id: 106 });
+            manager.account = vec![106; 32];
+            manager.controller = Some(user(106));
             manager.known_neuron_data = Some(known(106));
+            f.known.push(g::KnownNeuron {
+                id: manager.id.clone(),
+                known_neuron_data: manager.known_neuron_data.clone(),
+            });
             f.neurons.push(manager.clone());
             f.infos.push(g::NeuronInfo {
                 id: manager.id.clone(),
@@ -767,6 +783,9 @@ fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
                 .unwrap();
             n.followees.retain(|(t, _)| *t != 1);
             n.followees.push(fs(1, &[101, 102, 103, 104, 106]));
+            if scenario == "noncompliant" {
+                n.hot_keys.push(user(7));
+            }
         }
         f.infos.sort_by_key(|i| i.id.as_ref().unwrap().id);
         let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
@@ -782,8 +801,8 @@ fn selected_manager_change_and_downstream_cycle_invalidate_before_writing() {
                 break;
             }
         }
-        assert!(failed, "material change/cycle was not rejected");
         let progress: d_quorum::ScanProgress = query_empty(&pic, app, "scan_progress");
+        assert!(failed, "{scenario} was not rejected: {progress:?}");
         assert!(
             progress
                 .last_failure
