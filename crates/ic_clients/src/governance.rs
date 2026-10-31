@@ -592,6 +592,24 @@ impl VotingContext {
         Ok(delay >= self.minimum_delay)
     }
 }
+/// The outer following map is unordered on the Governance wire. Stake/weighted
+/// age may change during refresh; identity, authority and following must not.
+pub fn same_staking_configuration(a: &Neuron, b: &Neuron) -> bool {
+    a.id == b.id
+        && a.account == b.account
+        && a.controller == b.controller
+        && a.hot_keys == b.hot_keys
+        && a.dissolve_state == b.dissolve_state
+        && a.visibility == b.visibility
+        && a.followees
+            .iter()
+            .map(|(t, fs)| (*t, fs))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            == b.followees
+                .iter()
+                .map(|(t, fs)| (*t, fs))
+                .collect::<std::collections::BTreeMap<_, _>>()
+}
 pub async fn voting_context() -> Result<VotingContext, String> {
     let e = economics().await?;
     let module = controller(GOVERNANCE).await?.module_hash;
@@ -830,6 +848,44 @@ mod eligibility_regressions {
         assert!(ctx.eligible(&n, 11).unwrap());
         n.dissolve_state = None;
         assert!(ctx.eligible(&n, 11).is_err());
+    }
+    #[test]
+    fn refresh_preserves_authority_and_following_independent_of_wire_map_order() {
+        let a = Neuron {
+            id: Some(NeuronId { id: 1 }),
+            account: vec![7; 32],
+            controller: Some(Principal::anonymous()),
+            followees: vec![
+                (
+                    1,
+                    Followees {
+                        followees: vec![NeuronId { id: 2 }],
+                    },
+                ),
+                (
+                    4,
+                    Followees {
+                        followees: vec![NeuronId { id: 3 }],
+                    },
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut b = a.clone();
+        b.followees.reverse();
+        b.cached_neuron_stake_e8s = 100;
+        assert!(same_staking_configuration(&a, &b));
+        b.followees[0].1.followees[0].id = 4;
+        assert!(!same_staking_configuration(&a, &b));
+        b = a.clone();
+        b.hot_keys.push(Principal::anonymous());
+        assert!(!same_staking_configuration(&a, &b));
+        b = a.clone();
+        b.controller = None;
+        assert!(!same_staking_configuration(&a, &b));
+        b = a.clone();
+        b.account[0] = 8;
+        assert!(!same_staking_configuration(&a, &b));
     }
     #[test]
     fn missing_or_unknown_visibility_is_not_confirmed_zero_support() {

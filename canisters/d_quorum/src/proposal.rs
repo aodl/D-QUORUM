@@ -81,6 +81,14 @@ pub async fn bootstrap(token: Token, now: u64) -> Result<(), String> {
             }
             state::guarded(token, |s| s.bootstrap = Bootstrap::Claiming)
                 .ok_or("stale bootstrap")?;
+            if !state::current(token)
+                || state::read(|s| s.config.mode) == Mode::ObserveOnly
+                || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
+            {
+                return Err(
+                    "bootstrap dispatch deferred: authorization or cycle reserve changed".into(),
+                );
+            }
             let response = g::manage(g::ManageRequest {
                 id: None,
                 neuron_id_or_subaccount: None,
@@ -484,10 +492,7 @@ async fn refresh_owned(token: Token, id: u64) -> Result<g::Neuron, String> {
         .first()
         .ok_or("refreshed proposer unavailable")?;
     quorum_ic_clients::evidence::expected_controller(n, owner, id)?;
-    if n.account != expected
-        || n.followees != before.followees
-        || n.dissolve_state != before.dissolve_state
-    {
+    if n.account != expected || !g::same_staking_configuration(before, n) {
         return Err("owned refresh changed protected settings".into());
     }
     Ok(n.clone())

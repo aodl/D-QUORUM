@@ -119,11 +119,7 @@ async fn maintain(token: Token, plan: &mut Plan) -> Result<(), String> {
             .full_neurons
             .first()
             .ok_or("refresh verification unavailable")?;
-        if after.account != d.subaccount
-            || after.controller != before.controller
-            || after.followees != before.followees
-            || after.dissolve_state != before.dissolve_state
-        {
+        if after.account != d.subaccount || !g::same_staking_configuration(before, after) {
             return Err("refresh verification changed protected configuration".into());
         }
         Ok::<(), String>(())

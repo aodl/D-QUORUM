@@ -617,7 +617,17 @@ fn production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers() 
     }
     let ps: Vec<d_quorum::PayoutSummary> = query2(&pic, app, "payout_page", (None::<u64>, 100u16));
     assert_eq!(ps[0].id, payout);
-    assert!(ps[0].complete && ps[0].maintenance_complete);
+    assert!(
+        ps[0].complete && ps[0].maintenance_complete,
+        "payout={ps:?} health={:?} transfers={:?}",
+        query_empty::<d_quorum::Health>(&pic, app, "health"),
+        query2::<_, Vec<quorum_accounting::Transfer>>(
+            &pic,
+            app,
+            "transfer_page",
+            (payout, 0u32, 100u16)
+        )
+    );
     let refreshed = public_neuron(&pic, 100);
     assert_eq!(
         refreshed.cached_neuron_stake_e8s,
