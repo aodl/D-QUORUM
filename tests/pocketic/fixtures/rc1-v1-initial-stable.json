@@ -1,0 +1,8 @@
+{
+  "generation": "PocketIC init only; ObserveOnly; expected target user(9); no timers, network canisters or financial state",
+  "gzip_sha256": "8c6efaa2731a2f7703d217a5bdf56c55ce1057427a4df51739309b2aac2b0a81",
+  "module_sha256": "1cac858b906c615c1cb9444b3177cf1a04b3a52e9e46b0c4adc32a455eb9a3e1",
+  "source_commit": "85f38e22e223d1d503988f776b21dcde51733a1d",
+  "stable_bytes": 8454144,
+  "stable_sha256": "d6b217a3e7174f53f79fb7602294d02c5b859eefb9d98cb549e25f460358f279"
+}

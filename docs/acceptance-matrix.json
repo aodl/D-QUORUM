@@ -255,6 +255,12 @@
       "suite": "hardening",
       "regression": "eligible_direct_support_keeps_19000_despite_positive_raw_ineligible_and_transitive_vp",
       "status": "implemented"
+    },
+    {
+      "requirement": "actual RC1 Wasm-produced V1 stable-memory snapshot upgrades to V2 through production Wasm and survives another upgrade; native V1 matrix preserves every financial status",
+      "suite": "hardening",
+      "regression": "reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade",
+      "status": "implemented"
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."

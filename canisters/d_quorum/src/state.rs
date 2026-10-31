@@ -353,6 +353,12 @@ enum Versioned {
     V1(Box<crate::legacy::State>),
     V2(Box<State>),
 }
+// The original V1 envelope had exactly one variant on the wire. Re-encoding
+// V1 using Versioned would add V2 to its type table and reject every real V1.
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum LegacyVersioned {
+    V1(Box<crate::legacy::State>),
+}
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 thread_local! {
  static MANAGER:RefCell<MemoryManager<DefaultMemoryImpl>>=RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
@@ -375,7 +381,12 @@ pub fn encode(s: &State) -> Vec<u8> {
 }
 pub fn decode(b: &[u8]) -> Result<State, String> {
     let v: Versioned = candid::decode_one(b).map_err(|e| e.to_string())?;
-    if candid::encode_one(&v).map_err(|e| e.to_string())? != b {
+    let original_encoding = match &v {
+        Versioned::V1(s) => candid::encode_one(LegacyVersioned::V1(s.clone())),
+        Versioned::V2(_) => candid::encode_one(&v),
+    }
+    .map_err(|e| e.to_string())?;
+    if original_encoding != b {
         return Err("stable schema did not roundtrip losslessly".into());
     }
     let s = match v {
@@ -872,7 +883,7 @@ mod migration_regressions {
     #[test]
     fn exact_v1_wire_migration_preserves_intents_and_ambiguous_held_liabilities() {
         let old = old_state();
-        let bytes = candid::encode_one(Versioned::V1(Box::new(old))).unwrap();
+        let bytes = candid::encode_one(LegacyVersioned::V1(Box::new(old))).unwrap();
         let mut new = decode(&bytes).unwrap();
         new.recover();
         assert_eq!(new.config.mode, Mode::ObserveOnly);

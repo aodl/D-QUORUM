@@ -799,3 +799,58 @@ fn eligible_direct_support_keeps_19000_despite_positive_raw_ineligible_and_trans
     assert!(score.complete);
     assert_eq!(score.scaled_score, 19_000 * quorum_policy::SCALE);
 }
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade() {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let compressed = include_bytes!("../fixtures/rc1-v1-initial-stable.bin.gz");
+    let provenance: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/rc1-v1-initial-stable.json")).unwrap();
+    assert_eq!(
+        provenance["module_sha256"],
+        "1cac858b906c615c1cb9444b3177cf1a04b3a52e9e46b0c4adc32a455eb9a3e1"
+    );
+    assert_eq!(
+        hex::encode(Sha256::digest(compressed)),
+        provenance["gzip_sha256"].as_str().unwrap()
+    );
+    let mut raw = Vec::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_end(&mut raw)
+        .unwrap();
+    assert_eq!(
+        raw.len() as u64,
+        provenance["stable_bytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        hex::encode(Sha256::digest(&raw)),
+        provenance["stable_sha256"].as_str().unwrap()
+    );
+    let w = wasm("d_quorum");
+    let pic = builder().build();
+    let app = pic.create_canister();
+    pic.install_canister(app, w.clone(), encode_one(None::<Init>).unwrap(), None);
+    pic.set_stable_memory(
+        app,
+        compressed.to_vec(),
+        pocket_ic::common::rest::BlobCompression::Gzip,
+    );
+    for _ in 0..2 {
+        pic.upgrade_canister(app, w.clone(), encode_one(None::<Mode>).unwrap(), None)
+            .unwrap();
+        let c: d_quorum::Configuration = query_empty(&pic, app, "configuration");
+        assert_eq!(c.config.mode, Mode::ObserveOnly);
+        assert_eq!(c.config.revision, 1);
+        assert_eq!(c.config.delegates_per_topic, 5);
+        assert_eq!(c.config.expected_target_controller, Some(user(9)));
+        assert!(
+            c.policy_revision
+                .starts_with(quorum_policy::POLICY_REVISION)
+        );
+        let ps: Vec<d_quorum::PayoutSummary> =
+            query2(&pic, app, "payout_page", (None::<u64>, 100u16));
+        assert!(ps.is_empty());
+    }
+}

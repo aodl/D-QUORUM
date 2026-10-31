@@ -161,7 +161,7 @@ def canonical_artifact():
     os.environ['D_QUORUM_TEST_WASM']=str(artifact)
     PREPARED_ARTIFACTS['canonical']=hashlib.sha256(artifact.read_bytes()).hexdigest()
     run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
-    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
+    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
     completed_suites.add('canonical_artifact')
 
