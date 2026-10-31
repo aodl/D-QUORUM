@@ -867,3 +867,68 @@ fn reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade() {
         assert!(ps.is_empty());
     }
 }
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn setter_during_original_following_write_preserves_intent_then_starts_current_revision() {
+    let (pic, app, _) = setup(Mode::Live, false, 100_000_000_000_000);
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "pause_follow_once",
+        60u32,
+    );
+    let mut paused = false;
+    for _ in 0..800 {
+        drive(&pic, 1);
+        let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+        if calls.iter().any(|s| s == "following_write_paused") {
+            paused = true;
+            break;
+        }
+    }
+    assert!(paused, "original following write await was not reached");
+    let old = progress(&pic, app);
+    assert_eq!(old.phase, "applying");
+    assert_eq!(old.revision, Some(0));
+    let before: d_quorum::Health = query_empty(&pic, app, "health");
+    let result: Result<u64, String> = update(&pic, app, GOVERNANCE, "set_delegates_per_topic", 3u8);
+    assert_eq!(result.unwrap(), 1);
+    let after: d_quorum::Health = query_empty(&pic, app, "health");
+    assert_eq!(before.jobs[0].generation, after.jobs[0].generation);
+    assert_eq!(progress(&pic, app).round, old.round);
+    drive(&pic, 61);
+    let mut historical = false;
+    let mut current = false;
+    for _ in 0..800 {
+        drive(&pic, 1);
+        let p = progress(&pic, app);
+        assert_ne!(p.phase, "failed", "{p:?}");
+        if p.phase == "complete" && p.round == old.round {
+            assert_eq!(p.revision, Some(0));
+            let rows: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+            assert!(rows.iter().all(|r| !r.reward_eligible));
+            historical = true;
+        }
+        if p.phase == "complete" && p.revision == Some(1) {
+            assert!(p.round > old.round);
+            current = true;
+            break;
+        }
+    }
+    assert!(
+        historical,
+        "dispatched old intent was not reconciled historically"
+    );
+    assert!(current, "current revision did not complete promptly");
+    let calls: Vec<String> = query_empty(&pic, GOVERNANCE, "recordings");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|s| s.as_str() == "set_following")
+            .count(),
+        1,
+        "the already-dispatched old write must never be retried"
+    );
+}

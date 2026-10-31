@@ -199,7 +199,7 @@
     {
       "requirement": "V1 migration preserves all obligations and Held ambiguity",
       "suite": "unit",
-      "regression": "state::tests",
+      "regression": "state::migration_regressions::exact_v1_wire_migration_preserves_intents_and_ambiguous_held_liabilities",
       "status": "implemented"
     },
     {
@@ -284,6 +284,12 @@
       "requirement": "unbound positive success ID is promptly read back then retained as ambiguity until exact history binds the created proposal",
       "suite": "hardening",
       "regression": "unbound_proposal_success_id_is_ambiguous_and_recovers_exact_history",
+      "status": "implemented"
+    },
+    {
+      "requirement": "setter during original following-write await preserves dispatched intent, reconciles historically, and promptly computes current revision without obsolete retry",
+      "suite": "hardening",
+      "regression": "setter_during_original_following_write_preserves_intent_then_starts_current_revision",
       "status": "implemented"
     }
   ],

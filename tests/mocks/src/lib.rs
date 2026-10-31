@@ -206,6 +206,14 @@ async fn manage_neuron(r: MockManage) {
     match r.command {
         Some(MockCommand::SetFollowing(f)) => {
             CALLS.with(|c| c.borrow_mut().push("set_following".into()));
+            let delay = PAUSE_FOLLOW.with(|c| c.replace(0));
+            if delay > 0 {
+                CALLS.with(|c| c.borrow_mut().push("following_write_paused".into()));
+                let _ =
+                    ic_cdk::call::Call::unbounded_wait(ic_cdk::api::canister_self(), "delay_wait")
+                        .with_arg(delay)
+                        .await;
+            }
             if SKIP_FOLLOW.with(|c| c.replace(false)) {
                 ic_cdk::api::msg_reply([0, 1, 2]);
                 return;
@@ -1037,4 +1045,10 @@ async fn ballot_probe(id: u64) -> Result<Vec<u64>, String> {
         .into_iter()
         .map(|(id, _)| id)
         .collect())
+}
+
+thread_local! {static PAUSE_FOLLOW:std::cell::Cell<u32>=const{std::cell::Cell::new(0)};}
+#[ic_cdk::update]
+fn pause_follow_once(seconds: u32) {
+    PAUSE_FOLLOW.with(|c| c.set(seconds));
 }
