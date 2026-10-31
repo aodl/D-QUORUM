@@ -5,6 +5,30 @@ use quorum_policy::TARGET;
 use sha2::Digest;
 use support::*;
 
+// The legacy get_full_neuron endpoint is authority-gated even for public neurons.
+// Use the same supported public list endpoint as the production client.
+fn public_neuron(pic: &pocket_ic::PocketIc, id: u64) -> g::Neuron {
+    let mut r: g::ListNeuronsResponse = update(
+        pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "list_neurons",
+        g::ListNeurons {
+            neuron_ids: vec![id],
+            include_neurons_readable_by_caller: false,
+            include_empty_neurons_readable_by_caller: Some(false),
+            include_public_neurons_in_full_neurons: Some(true),
+            page_number: Some(0),
+            page_size: Some(50),
+            neuron_subaccounts: None,
+        },
+    );
+    g::validate_batch(&[id], &r).unwrap();
+    let n = r.full_neurons.pop().expect("public neuron unavailable");
+    assert_eq!(n.visibility, Some(2));
+    n
+}
+
 #[test]
 #[ignore = "xtask protocol prepares pinned real Wasm first"]
 fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity() {
@@ -86,13 +110,8 @@ fn canister_origin_reads_hotkey_permissions_manager_proposal_and_real_maturity()
         };
         assert_eq!(error.error_type, code);
         assert!(g::definite_proposal_rejection(&error));
-        let n: Result<g::Neuron, g::GovernanceError> =
-            query(&pic, GOVERNANCE, "get_full_neuron", proposer);
-        assert_eq!(
-            n.unwrap().neuron_fees_e8s,
-            0,
-            "refusal must not charge a fee"
-        );
+        let n = public_neuron(&pic, proposer);
+        assert_eq!(n.neuron_fees_e8s, 0, "refusal must not charge a fee");
     }
     let proposal: Result<u64, String> = update(
         &pic,
@@ -599,10 +618,9 @@ fn production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers() 
     let ps: Vec<d_quorum::PayoutSummary> = query2(&pic, app, "payout_page", (None::<u64>, 100u16));
     assert_eq!(ps[0].id, payout);
     assert!(ps[0].complete && ps[0].maintenance_complete);
-    let refreshed: Result<g::Neuron, g::GovernanceError> =
-        query(&pic, GOVERNANCE, "get_full_neuron", 100u64);
+    let refreshed = public_neuron(&pic, 100);
     assert_eq!(
-        refreshed.unwrap().cached_neuron_stake_e8s,
+        refreshed.cached_neuron_stake_e8s,
         old_stake + balance - 10_000
     );
     assert_eq!(ps[0].fee, 10_000);
@@ -796,11 +814,9 @@ fn production_owned_proposer_recovers_after_real_staking_topup() {
         },
     );
     result.unwrap();
-    let before: Result<g::Neuron, g::GovernanceError> =
-        query(&pic, GOVERNANCE, "get_full_neuron", 300u64);
+    let before = public_neuron(&pic, 300);
     assert_eq!(
-        before.unwrap().cached_neuron_stake_e8s,
-        100_000_000,
+        before.cached_neuron_stake_e8s, 100_000_000,
         "Ledger topup alone must not be described as a cache refresh"
     );
     pic.start_canister(app, None).unwrap();
@@ -817,7 +833,6 @@ fn production_owned_proposer_recovers_after_real_staking_topup() {
         opened,
         "production preflight must refresh separately funded stake"
     );
-    let after: Result<g::Neuron, g::GovernanceError> =
-        query(&pic, GOVERNANCE, "get_full_neuron", 300u64);
-    assert_eq!(after.unwrap().cached_neuron_stake_e8s, 1_100_000_000);
+    let after = public_neuron(&pic, 300);
+    assert_eq!(after.cached_neuron_stake_e8s, 1_100_000_000);
 }
