@@ -44,7 +44,7 @@ pub fn action_matches(info: &g::ProposalInfo, owner: Principal) -> bool {
     }
     matches!(&m.command,Some(g::StoredCommand::DisburseMaturity(d)) if d.percentage_to_disburse==100 && d.to_account==Some(g::Account{owner:Some(owner),subaccount:None}) && d.to_account_identifier.is_none())
 }
-fn exact_matches(p: &g::ProposalInfo, j: &ProposalJob, owner: Principal) -> bool {
+pub fn exact_matches(p: &g::ProposalInfo, j: &ProposalJob, owner: Principal) -> bool {
     let expected = maturity_payload(&j.marker, owner);
     p.proposer.as_ref().map(|n| n.id) == Some(j.proposer)
         && action_matches(p, owner)
@@ -213,6 +213,8 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 Sha256::digest(candid::encode_one(maturity_payload(&marker, owner)).unwrap())
                     .to_vec();
             s.proposal = Some(ProposalJob {
+                executed_at: None,
+                terminal_observed_at: None,
                 operation: s.proposal_nonce,
                 proposer,
                 created_at: now,
@@ -232,7 +234,11 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
         return Ok(());
     }
     let mut j = current.unwrap();
-    let mut history_backlog = false;
+    if Sha256::digest(candid::encode_one(maturity_payload(&j.marker, owner)).unwrap()).as_slice()
+        != j.fingerprint
+    {
+        return Err("retained proposal fingerprint mismatch".into());
+    }
     let mut verify_success = false;
     match j.phase.clone() {
         Checking | Ambiguous | Intent => {
@@ -337,6 +343,9 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
             let Some(p) = candidate
                 .filter(|p| p.id.as_ref().map(|n| n.id) == Some(id) && exact_matches(p, &j, owner))
             else {
+                if j.found.contains(&id) {
+                    return Err("previously bound proposal unavailable or contradictory; execution remains unresolved".into());
+                }
                 // A success ID is a hint until its exact action/marker is read back.
                 // An unusable hint never authorizes another submission.
                 j.phase = Ambiguous;
@@ -350,6 +359,10 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                         .into(),
                 );
             };
+            if p.status == 4 && p.executed_timestamp_seconds == 0 {
+                return Err("Executed status contradicts missing execution timestamp".into());
+            }
+            j.found = vec![id];
             j.phase = match p.status {
                 1 => Open(id),
                 2 => {
@@ -357,7 +370,10 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                     Rejected(id)
                 }
                 3 => Adopted(id),
-                4 => Executed(id),
+                4 => {
+                    j.executed_at = Some(p.executed_timestamp_seconds);
+                    Executed(id)
+                }
                 5 => {
                     j.retry_after = now + DAY;
                     Failed(id)
@@ -365,78 +381,72 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 _ => return Err("unknown proposal status".into()),
             };
         }
-        Executed(id) | AwaitingFinalization(id) => {
-            let ns = g::full(vec![TARGET]).await?;
-            let n = ns
-                .full_neurons
-                .first()
-                .ok_or("managed target unavailable")?;
-            let in_progress = n
+        Executed(id) | AwaitingFinalization(id) | FinalizedReceiptUnattributed(id) => {
+            // These persisted phases were reached only through exact Executed readback
+            // (also in RC2). A missing old timestamp is not invented during migration.
+            let started = ic_cdk::api::time() / 1_000_000_000;
+            let before = selection::target().await?;
+            let pending = before
                 .maturity_disbursements_in_progress
                 .as_ref()
-                .is_some_and(|xs| {
-                    xs.iter().any(|d| {
-                        d.account_to_disburse_to
-                            == Some(g::Account {
-                                owner: Some(owner),
-                                subaccount: None,
-                            })
-                            && d.timestamp_of_disbursement_seconds
-                                .is_some_and(|t| t >= j.created_at)
+                .ok_or("required maturity-progress field unavailable")?;
+            for d in pending {
+                if d.account_to_disburse_to
+                    == Some(g::Account {
+                        owner: Some(owner),
+                        subaccount: None,
                     })
-                });
-            j.saw_disbursement |= in_progress;
-            if let Some(xs) = &n.maturity_disbursements_in_progress {
-                for d in xs {
-                    if d.account_to_disburse_to
-                        == Some(g::Account {
-                            owner: Some(owner),
-                            subaccount: None,
-                        })
-                        && d.timestamp_of_disbursement_seconds
-                            .is_some_and(|t| t >= j.created_at)
-                    {
-                        j.earliest_finalization = d.finalize_disbursement_timestamp_seconds;
-                    }
+                    && d.timestamp_of_disbursement_seconds
+                        .is_some_and(|t| t >= j.created_at)
+                {
+                    j.saw_disbursement = true;
+                    j.earliest_finalization = d.finalize_disbursement_timestamp_seconds;
                 }
             }
             j.phase = AwaitingFinalization(id);
-            // Actual default-account Mint records are recorded independently of balance changes.
-            let h = l::history(j.ledger_cursor, 100).await?;
-            let blocks = if h.first_block_index == j.ledger_cursor {
-                h.blocks
-            } else if let Some(a) = h.archived_blocks.iter().find(|a| {
-                a.start <= j.ledger_cursor && a.start.saturating_add(a.length) > j.ledger_cursor
-            }) {
-                l::archive(
-                    a,
-                    j.ledger_cursor,
-                    100.min(a.start + a.length - j.ledger_cursor),
-                )
-                .await?
-            } else {
-                vec![]
-            };
-            for (offset, b) in blocks.iter().enumerate() {
-                if let Some(l::Operation::Mint { to, amount }) = &b.transaction.operation
-                    && *to == l::account_id(owner, None)
-                    && j.earliest_finalization
-                        .is_some_and(|t| b.timestamp.timestamp_nanos / 1_000_000_000 >= t)
+            if pending.is_empty() {
+                if !state::current(token)
+                    || state::read(|s| s.config.mode != Mode::Live)
+                    || ic_cdk::api::canister_cycle_balance() < 2_000_000_000_000
                 {
-                    j.receipt = Some((j.ledger_cursor + offset as u64, amount.e8s));
+                    return Err("terminal observation deferred: authorization changed".into());
                 }
-            }
-            j.ledger_cursor += blocks.len() as u64;
-            history_backlog = j.ledger_cursor < h.chain_length;
-            if j.saw_disbursement
-                && n.maturity_disbursements_in_progress
+                // Finalization pops its record BEFORE awaiting the mint, while retaining
+                // this same neuron lock. Refresh must acquire that lock. Its typed
+                // insufficient-stake refusal also occurs only AFTER acquiring it.
+                let barrier = g::manage(g::request(
+                    TARGET,
+                    g::Command::ClaimOrRefresh(g::Claim {
+                        by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+                    }),
+                ))
+                .await?;
+                if !matches!(barrier,
+                    g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse { refreshed_neuron_id: Some(g::NeuronId { id }) }) if id == TARGET)
+                    && !matches!(
+                        barrier,
+                        g::ResponseCommand::Error(g::GovernanceError { error_type: 14, .. })
+                    )
+                {
+                    return Err("maturity finalization lock barrier unconfirmed".into());
+                }
+                let after = selection::target().await?;
+                let finished = ic_cdk::api::time() / 1_000_000_000;
+                if !after
+                    .maturity_disbursements_in_progress
                     .as_ref()
-                    .is_some_and(|xs| xs.is_empty())
-                && j.receipt.is_some()
-                && j.earliest_finalization.is_some_and(|t| now >= t)
-            {
-                j.phase = FinalizedReceiptUnattributed(id);
-                j.retry_after = now + DAY;
+                    .ok_or("terminal progress readback unavailable")?
+                    .is_empty()
+                    || !g::same_staking_configuration(&before, &after)
+                    || finished.saturating_sub(started) > 300
+                {
+                    return Err("maturity terminal proof changed or expired".into());
+                }
+                j.phase = TerminalExecutionVerified(id);
+                j.terminal_observed_at = Some(finished);
+                j.retry_after = finished.saturating_add(DAY);
+                // No mint carries this proposal's fingerprint. Keep legacy receipt
+                // observations, but do not attribute any new unrelated Ledger credit.
             }
         }
         CreationRejected { .. } => {
@@ -448,7 +458,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 return Ok(());
             }
         }
-        Rejected(_) | Failed(_) | FinalizedReceiptUnattributed(_) => {
+        Rejected(_) | Failed(_) | TerminalExecutionVerified(_) => {
             if now >= j.retry_after {
                 state::guarded(token, |s| {
                     s.proposal = None;
@@ -461,8 +471,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
     state::guarded(token, |s| {
         s.proposal = Some(j);
         s.jobs[1].next_at =
-            now + if history_backlog
-                || verify_success
+            now + if verify_success
                 || matches!(
                     s.proposal.as_ref().unwrap().phase,
                     Checking | Preflight | Intent | Ambiguous

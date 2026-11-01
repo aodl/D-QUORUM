@@ -76,63 +76,155 @@ async fn verify_history(plan: &mut Plan, i: usize) -> Result<(), String> {
     }
     Ok(())
 }
-async fn maintain(token: Token, plan: &mut Plan) -> Result<(), String> {
+// Scheduler job 4 owns only non-financial maintenance. Its awaits cannot
+// hold the payment job or its normal admission cadence.
+pub async fn maintenance(token: Token) -> Result<(), String> {
     use quorum_accounting::RefreshState;
-    let Some(i) = plan
-        .transfers
-        .iter()
-        .position(|t| t.refresh != Some(RefreshState::Complete))
-    else {
+    if !live(token) {
+        state::guarded(token, |s| s.jobs[4].next_at = clock() + DAY);
+        return Ok(());
+    }
+    let now = clock();
+    let candidate = state::read(State::next_refresh);
+    let Some((due, plan_id, i, transfer)) = candidate else {
+        state::guarded(token, |s| s.jobs[4].next_at = now + DAY);
         return Ok(());
     };
-    if !live(token) {
+    if due > now {
+        state::guarded(token, |s| s.jobs[4].next_at = due);
         return Ok(());
     }
-    let d = plan.transfers[i].destination.clone();
-    let result = async {
-        let r = g::full(vec![d.neuron_id]).await?;
-        let before = r
-            .full_neurons
-            .first()
-            .ok_or("refresh pending: public recipient unavailable")?;
-        if before.account != d.subaccount || before.visibility != Some(2) {
-            return Err("refresh pending: recipient binding/visibility changed".into());
-        }
-        if !live(token) {
-            return Err("refresh deferred: inactive worker".into());
-        }
-        let result = g::manage(g::request(
-            d.neuron_id,
-            g::Command::ClaimOrRefresh(g::Claim {
-                by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
-            }),
-        ))
-        .await?;
-        if !matches!(result, g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
-            refreshed_neuron_id: Some(g::NeuronId { id })
-        }) if id == d.neuron_id)
-        {
-            return Err("refresh returned another neuron".into());
-        }
-        let r = g::full(vec![d.neuron_id]).await?;
-        let after = r
-            .full_neurons
-            .first()
-            .ok_or("refresh verification unavailable")?;
-        if after.account != d.subaccount || !g::same_staking_configuration(before, after) {
-            return Err("refresh verification changed protected configuration".into());
-        }
-        Ok::<(), String>(())
+    // A lost callback on the last reserved call must not buy a ninth attempt.
+    if matches!(
+        transfer.refresh,
+        Some(RefreshState::RetryAt { attempts: 8.., .. })
+    ) {
+        state::guarded_if(
+            token,
+            |s| {
+                s.completed_payouts
+                    .iter()
+                    .find(|p| p.id == plan_id)
+                    .and_then(|p| p.transfers.get(i))
+                    .is_some_and(|t| t == &transfer)
+            },
+            |s| {
+                s.completed_payouts
+                    .iter_mut()
+                    .find(|p| p.id == plan_id)
+                    .unwrap()
+                    .transfers[i]
+                    .refresh = Some(RefreshState::Abandoned {
+                    reason: "bounded maintenance exhausted; last dispatched completion unverified"
+                        .into(),
+                });
+                s.jobs[4].next_at = clock() + 10;
+            },
+        );
+        return Ok(());
     }
-    .await;
-    match result {
-        Ok(()) => plan.transfers[i].refresh = Some(RefreshState::Complete),
-        Err(reason) => {
-            plan.transfers[i].refresh = Some(RefreshState::Waiting {
-                reason: quorum_ic_clients::bounded(reason),
-            });
-            state::guarded(token, |s| s.jobs[2].next_at = clock() + 3600);
-        }
+    let attempts = match transfer.refresh {
+        Some(RefreshState::RetryAt { attempts, .. }) => attempts.saturating_add(1),
+        _ => 1,
+    };
+    let delay = (3600u64 << attempts.saturating_sub(1).min(5)).min(DAY);
+    let reserved = RefreshState::RetryAt {
+        attempts,
+        next_at: now.saturating_add(delay),
+        reason: "refresh dispatched; completion not yet verified".into(),
+    };
+    let binding = transfer.destination.clone();
+    state::guarded_if(
+        token,
+        |s| {
+            s.completed_payouts
+                .iter()
+                .find(|p| p.id == plan_id)
+                .and_then(|p| p.transfers.get(i))
+                .is_some_and(|t| t == &transfer)
+        },
+        |s| {
+            s.completed_payouts
+                .iter_mut()
+                .find(|p| p.id == plan_id)
+                .unwrap()
+                .transfers[i]
+                .refresh = Some(reserved.clone());
+        },
+    )
+    .ok_or("stale maintenance reservation")?;
+    let result = refresh_destination(token, &binding).await;
+    let refresh = match result {
+        Ok(()) => RefreshState::Complete,
+        Err(reason) if attempts >= 8 => RefreshState::Abandoned {
+            reason: format!(
+                "bounded maintenance exhausted after {attempts} attempts: {}",
+                quorum_ic_clients::bounded(reason)
+            ),
+        },
+        Err(reason) => RefreshState::RetryAt {
+            attempts,
+            next_at: clock().saturating_add(delay),
+            reason: quorum_ic_clients::bounded(reason),
+        },
+    };
+    state::guarded_if(
+        token,
+        |s| {
+            s.completed_payouts
+                .iter()
+                .find(|p| p.id == plan_id)
+                .and_then(|p| p.transfers.get(i))
+                .is_some_and(|t| {
+                    t.destination == binding
+                        && t.status == transfer.status
+                        && t.refresh == Some(reserved.clone())
+                })
+        },
+        |s| {
+            s.completed_payouts
+                .iter_mut()
+                .find(|p| p.id == plan_id)
+                .unwrap()
+                .transfers[i]
+                .refresh = Some(refresh);
+            s.jobs[4].next_at = clock() + 10;
+        },
+    );
+    Ok(())
+}
+async fn refresh_destination(token: Token, d: &Destination) -> Result<(), String> {
+    let r = g::full(vec![d.neuron_id]).await?;
+    let before = r
+        .full_neurons
+        .first()
+        .ok_or("refresh pending: public recipient unavailable")?;
+    if before.account != d.subaccount || before.visibility != Some(2) {
+        return Err("refresh pending: original recipient binding/visibility unavailable".into());
+    }
+    if !live(token) {
+        return Err("refresh deferred: inactive worker".into());
+    }
+    let result = g::manage(g::request(
+        d.neuron_id,
+        g::Command::ClaimOrRefresh(g::Claim {
+            by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+        }),
+    ))
+    .await?;
+    if !matches!(result, g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+        refreshed_neuron_id: Some(g::NeuronId { id })
+    }) if id == d.neuron_id)
+    {
+        return Err("refresh did not confirm original neuron".into());
+    }
+    let r = g::full(vec![d.neuron_id]).await?;
+    let after = r
+        .full_neurons
+        .first()
+        .ok_or("refresh verification unavailable")?;
+    if after.account != d.subaccount || !g::same_staking_configuration(before, after) {
+        return Err("refresh verification changed protected configuration".into());
     }
     Ok(())
 }
@@ -148,18 +240,8 @@ pub async fn step(token: Token, _now: u64) -> Result<(), String> {
     let owner = ic_cdk::api::canister_self();
     if let Some(mut plan) = active {
         if plan.complete() {
-            if !plan.maintenance_complete() {
-                maintain(token, &mut plan).await?;
-                state::guarded(token, |s| s.payout = Some(plan));
-                return Ok(());
-            }
             state::guarded(token, |s| {
-                s.completed_payouts.push(plan);
-                if s.completed_payouts.len() > 32 {
-                    s.completed_payouts.remove(0);
-                }
-                s.payout = None;
-                s.jobs[2].next_at = clock() + DAY;
+                s.retire_financial_plan(clock());
             });
             return Ok(());
         }
@@ -181,8 +263,14 @@ pub async fn step(token: Token, _now: u64) -> Result<(), String> {
                 state::guarded(token, |s| s.jobs[2].next_at = clock() + 3600);
             }
             TransferStatus::Unknown { .. } if expired => verify_history(&mut plan, i).await?,
+            TransferStatus::Cooldown { until_ns, .. } if ic_cdk::api::time() < until_ns => {
+                state::guarded(token, |s| {
+                    s.jobs[2].next_at = until_ns.div_ceil(1_000_000_000)
+                });
+            }
             TransferStatus::Prepared
             | TransferStatus::Rejected { .. }
+            | TransferStatus::Cooldown { .. }
             | TransferStatus::Unknown { .. } => {
                 if !live(token) {
                     return Ok(());
@@ -241,8 +329,12 @@ pub async fn step(token: Token, _now: u64) -> Result<(), String> {
                                 | l::TransferError::CreatedInFuture { .. }
                                 | l::TransferError::BadBurn { .. }),
                             )) if !unknown => {
-                                plan.reject(i, format!("verified no-execution rejection: {e:?}"))
-                                    .map_err(str::to_string)?;
+                                plan.reject(
+                                    i,
+                                    format!("verified no-execution rejection: {e:?}"),
+                                    ic_cdk::api::time(),
+                                )
+                                .map_err(str::to_string)?;
                                 state::guarded(token, |s| s.jobs[2].next_at = clock() + 120);
                             }
                             Ok(Err(l::TransferError::TooOld)) => {
@@ -263,18 +355,11 @@ pub async fn step(token: Token, _now: u64) -> Result<(), String> {
         state::guarded(token, |s| s.payout = Some(plan));
         return Ok(());
     }
-    if let Some((index, mut p)) = state::read(|s| {
-        s.completed_payouts
-            .iter()
-            .enumerate()
-            .find(|(_, p)| !p.maintenance_complete())
-            .map(|(i, p)| (i, p.clone()))
-    }) {
-        maintain(token, &mut p).await?;
+    let not_before = state::read(|s| s.payout_not_before);
+    if clock() < not_before {
         state::guarded(token, |s| {
-            if s.completed_payouts.get(index).is_some_and(|x| x.id == p.id) {
-                s.completed_payouts[index] = p;
-            }
+            s.draft = None;
+            s.jobs[2].next_at = not_before;
         });
         return Ok(());
     }
@@ -381,6 +466,7 @@ pub async fn step(token: Token, _now: u64) -> Result<(), String> {
             return Err("economics changed during payout admission".into());
         }
         if !live(token)
+            || clock() < state::read(|s| s.payout_not_before)
             || !roster.reward_eligible(revision, clock())
             || clock().saturating_sub(draft.started_at) > 1800
             || draft

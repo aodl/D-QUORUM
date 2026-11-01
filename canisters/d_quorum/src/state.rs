@@ -159,7 +159,7 @@ pub enum Bootstrap {
     Verifying(u64),
     Ready(u64),
 }
-#[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub enum ProposalPhase {
     Checking,
     Preflight,
@@ -170,12 +170,15 @@ pub enum ProposalPhase {
     Executed(u64),
     AwaitingFinalization(u64),
     FinalizedReceiptUnattributed(u64),
+    TerminalExecutionVerified(u64),
     Rejected(u64),
     Failed(u64),
     CreationRejected { error_type: i32, reason: String },
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct ProposalJob {
+    pub executed_at: Option<u64>,
+    pub terminal_observed_at: Option<u64>,
     pub operation: u64,
     pub proposer: u64,
     pub created_at: u64,
@@ -201,6 +204,8 @@ pub struct PayoutDraft {
 }
 #[derive(Clone, Debug, CandidType, Deserialize)]
 pub struct State {
+    pub payout_not_before: u64,
+    pub pruned_unfinished_refreshes: u64,
     pub metrics: Checkpoints,
     pub policy_pin: String,
     pub config: Config,
@@ -252,6 +257,8 @@ impl State {
             return Err("write modes require the reviewed target controller".into());
         }
         Ok(Self {
+            payout_not_before: 0,
+            pruned_unfinished_refreshes: 0,
             metrics: Default::default(),
             policy_pin: Self::current_policy_pin(),
             config: Config {
@@ -260,7 +267,7 @@ impl State {
                 delegates_per_topic: 5,
                 revision: 0,
             },
-            jobs: vec![Job::default(); 4],
+            jobs: vec![Job::default(); 5],
             round_nonce: 0,
             round: None,
             applied: None,
@@ -314,10 +321,53 @@ impl State {
                 self.draft = None;
                 job.generation = job.generation.checked_add(1).expect("generation overflow");
                 job.busy_until = 0;
-                job.next_at = now;
+                job.next_at = now.max(self.payout_not_before);
             }
         }
         self.applied = Some(applied);
+    }
+    pub fn retire_financial_plan(&mut self, now: u64) -> bool {
+        if !self.payout.as_ref().is_some_and(Plan::complete) {
+            return false;
+        }
+        let plan = self.payout.take().unwrap();
+        self.completed_payouts.push(plan);
+        if self.completed_payouts.len() > 32 {
+            let old = self.completed_payouts.remove(0);
+            self.pruned_unfinished_refreshes = self
+                .pruned_unfinished_refreshes
+                .checked_add(
+                    old.transfers
+                        .iter()
+                        .filter(|t| t.refresh != Some(quorum_accounting::RefreshState::Complete))
+                        .count() as u64,
+                )
+                .expect("maintenance retention counter overflow");
+        }
+        self.draft = None;
+        self.payout_not_before = now.saturating_add(DAY);
+        self.jobs[2].next_at = self.payout_not_before;
+        self.jobs[4].next_at = now;
+        true
+    }
+    pub fn next_refresh(&self) -> Option<(u64, u64, usize, quorum_accounting::Transfer)> {
+        use quorum_accounting::RefreshState;
+        self.completed_payouts
+            .iter()
+            .flat_map(|p| {
+                p.transfers.iter().enumerate().filter_map(move |(i, t)| {
+                    let due = match &t.refresh {
+                        Some(RefreshState::Complete | RefreshState::Abandoned { .. }) => {
+                            return None;
+                        }
+                        Some(RefreshState::RetryAt { next_at, .. }) => *next_at,
+                        _ => 0,
+                    };
+                    Some((due, p.id, i, t))
+                })
+            })
+            .min_by_key(|(due, id, i, _)| (*due, *id, *i))
+            .map(|(due, id, i, t)| (due, id, i, t.clone()))
     }
     pub fn recover(&mut self) {
         let pin = Self::current_policy_pin();
@@ -365,7 +415,13 @@ impl State {
 #[derive(Clone, Debug, CandidType, Deserialize)]
 enum Versioned {
     V1(Box<crate::legacy::State>),
-    V2(Box<State>),
+    V2(Box<crate::legacy_v2::State>),
+    V3(Box<State>),
+}
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum V2Versioned {
+    V1(Box<crate::legacy::State>),
+    V2(Box<crate::legacy_v2::State>),
 }
 // The original V1 envelope had exactly one variant on the wire. Re-encoding
 // V1 using Versioned would add V2 to its type table and reject every real V1.
@@ -389,7 +445,7 @@ fn stable<R>(f: impl FnOnce(&mut StableCell<Vec<u8>, Memory>) -> R) -> R {
     })
 }
 pub fn encode(s: &State) -> Vec<u8> {
-    let b = candid::encode_one(Versioned::V2(Box::new(s.clone()))).expect("stable encode");
+    let b = candid::encode_one(Versioned::V3(Box::new(s.clone()))).expect("stable encode");
     assert!(b.len() <= 64 * 1024 * 1024, "stable state limit");
     b
 }
@@ -397,20 +453,25 @@ pub fn decode(b: &[u8]) -> Result<State, String> {
     let v: Versioned = candid::decode_one(b).map_err(|e| e.to_string())?;
     let original_encoding = match &v {
         Versioned::V1(s) => candid::encode_one(LegacyVersioned::V1(s.clone())),
-        Versioned::V2(_) => candid::encode_one(&v),
+        Versioned::V2(s) => candid::encode_one(V2Versioned::V2(s.clone())),
+        Versioned::V3(_) => candid::encode_one(&v),
     }
     .map_err(|e| e.to_string())?;
     if original_encoding != b {
         return Err("stable schema did not roundtrip losslessly".into());
     }
     let s = match v {
-        Versioned::V2(s) => *s,
+        Versioned::V3(s) => *s,
+        Versioned::V2(s) => migrate_v2(*s, observation_time())?,
         Versioned::V1(s) => migrate_v1(*s)?,
     };
-    if s.jobs.len() != 4
+    if s.jobs.len() != 5
         || !(1..=15).contains(&s.config.delegates_per_topic)
         || s.payout.as_ref().is_some_and(|p| !p.invariant())
-        || s.completed_payouts.iter().any(|p| !p.invariant())
+        || s.completed_payouts.len() > 32
+        || s.completed_payouts
+            .iter()
+            .any(|p| !p.invariant() || !p.complete())
     {
         return Err("stable invariants".into());
     }
@@ -575,6 +636,8 @@ mod tests {
         )
         .unwrap();
         s.proposal = Some(ProposalJob {
+            executed_at: None,
+            terminal_observed_at: None,
             operation: 7,
             proposer: 9,
             created_at: 1,
@@ -657,13 +720,87 @@ pub fn guarded_if<R>(
     }
     Some(change(f))
 }
-fn migrate_v1(old: crate::legacy::State) -> Result<State, String> {
-    fn wire<T: candid::CandidType + for<'d> serde::Deserialize<'d>>(
-        x: impl candid::CandidType,
-    ) -> Result<T, String> {
-        candid::decode_one(&candid::encode_one(x).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())
+fn wire<T: candid::CandidType + for<'d> serde::Deserialize<'d>>(
+    x: impl candid::CandidType,
+) -> Result<T, String> {
+    candid::decode_one(&candid::encode_one(x).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+fn observation_time() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        ic_cdk::api::time() / 1_000_000_000
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+fn migrate_v2(old: crate::legacy_v2::State, now: u64) -> Result<State, String> {
+    if old.jobs.len() != 4 {
+        return Err("invalid V2 scheduler shape".into());
+    }
+    fn plan(old: crate::legacy_v2::accounting::Plan, now: u64) -> Result<Plan, String> {
+        let mut p: Plan = wire(old)?;
+        for t in &mut p.transfers {
+            if matches!(t.status, quorum_accounting::TransferStatus::Held { .. })
+                && t.attempt.as_ref().is_some_and(|a| !a.may_have_executed)
+            {
+                t.status = quorum_accounting::TransferStatus::Cooldown {
+                    until_ns: now
+                        .saturating_mul(1_000_000_000)
+                        .saturating_add(quorum_accounting::REFUSAL_COOLDOWN_NS),
+                    reason:
+                        "V2 retained a typed no-execution proof; retry after migration cooldown"
+                            .into(),
+                };
+            }
+            if matches!(
+                t.status,
+                quorum_accounting::TransferStatus::Confirmed { .. }
+            ) && t.refresh.is_none()
+            {
+                t.refresh = Some(quorum_accounting::RefreshState::Pending);
+            }
+        }
+        Ok(p)
+    }
+    let mut jobs = old.jobs;
+    jobs.resize_with(5, Job::default);
+    let payout_not_before = if old.completed_payouts.is_empty() {
+        0
+    } else {
+        jobs[2].next_at.max(now.saturating_add(DAY))
+    };
+    Ok(State {
+        payout_not_before,
+        pruned_unfinished_refreshes: 0,
+        metrics: old.metrics,
+        policy_pin: old.policy_pin,
+        config: old.config,
+        jobs,
+        round_nonce: old.round_nonce,
+        round: old.round,
+        applied: old.applied,
+        last_complete_scan: old.last_complete_scan,
+        bootstrap: old.bootstrap,
+        proposer: old.proposer,
+        proposal_nonce: old.proposal_nonce,
+        proposal: old.proposal.map(wire).transpose()?,
+        payout_nonce: old.payout_nonce,
+        draft: old.draft,
+        payout: old.payout.map(|p| plan(p, now)).transpose()?,
+        completed_payouts: old
+            .completed_payouts
+            .into_iter()
+            .map(|p| plan(p, now))
+            .collect::<Result<_, _>>()?,
+        observed_balance: old.observed_balance,
+        balance_observed_at: old.balance_observed_at,
+        initialized_at: old.initialized_at,
+    })
+}
+fn migrate_v1(old: crate::legacy::State) -> Result<State, String> {
     let mut s = State::new(
         Init {
             mode: Mode::ObserveOnly,
@@ -678,6 +815,7 @@ fn migrate_v1(old: crate::legacy::State) -> Result<State, String> {
         .checked_add(1)
         .ok_or("revision overflow")?;
     s.jobs = wire(old.jobs)?;
+    s.jobs.resize_with(5, Job::default);
     s.round_nonce = old.round_nonce;
     s.last_complete_scan = old.last_complete_scan;
     s.bootstrap = wire(old.bootstrap)?;
@@ -721,6 +859,9 @@ fn migrate_v1(old: crate::legacy::State) -> Result<State, String> {
         .into_iter()
         .map(migrate_plan)
         .collect::<Result<_, _>>()?;
+    if !s.completed_payouts.is_empty() {
+        s.payout_not_before = observation_time().saturating_add(DAY);
+    }
     for j in &mut s.jobs {
         j.next_at = 0;
         j.busy_until = 0;
@@ -1008,5 +1149,340 @@ mod migration_regressions {
         assert_eq!(s.jobs[2].next_at, 102);
         assert_eq!(s.jobs[2].generation, 9);
         assert_eq!(s.jobs[2].busy_until, 0);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_regressions {
+    use super::*;
+    use quorum_accounting::{RefreshState, TransferStatus};
+    fn state() -> State {
+        State::new(
+            Init {
+                mode: Mode::ObserveOnly,
+                expected_target_controller: None,
+            },
+            1,
+        )
+        .unwrap()
+    }
+    fn paid(id: u64) -> Plan {
+        let mut p = Plan::build(
+            id,
+            1,
+            100_001,
+            10,
+            1,
+            0,
+            vec![
+                Destination {
+                    neuron_id: 1,
+                    subaccount: vec![1; 32],
+                    validated_at: 1,
+                },
+                Destination {
+                    neuron_id: 2,
+                    subaccount: vec![2; 32],
+                    validated_at: 1,
+                },
+            ],
+        )
+        .unwrap();
+        for i in 0..2 {
+            p.dispatch(i, 100 + i as u64).unwrap();
+            p.confirm(i, id * 10 + i as u64).unwrap();
+        }
+        p
+    }
+    #[test]
+    fn settled_finances_retire_and_failed_refresh_cannot_starve_the_next_recipient() {
+        let mut s = state();
+        let original = paid(1);
+        s.payout = Some(original.clone());
+        assert!(s.retire_financial_plan(1000));
+        assert!(s.payout.is_none());
+        assert_eq!(s.completed_payouts[0], original);
+        assert_eq!(s.payout_not_before, 1000 + DAY);
+        assert_eq!(s.jobs[2].next_at, 1000 + DAY);
+        let (_, id, i, _) = s.next_refresh().unwrap();
+        assert_eq!((id, i), (1, 0));
+        s.completed_payouts[0].transfers[0].refresh = Some(RefreshState::RetryAt {
+            reason: "unavailable".into(),
+            attempts: 1,
+            next_at: 4600,
+        });
+        assert_eq!(s.next_refresh().unwrap().2, 1);
+        s.completed_payouts[0].transfers[1].refresh = Some(RefreshState::Complete);
+        assert_eq!(s.next_refresh().unwrap().0, 4600);
+        let mut restored = decode(&encode(&s)).unwrap();
+        restored.recover();
+        assert_eq!(restored.payout_not_before, 1000 + DAY);
+        assert_eq!(
+            restored.completed_payouts[0].transfers[0].attempt,
+            original.transfers[0].attempt
+        );
+        restored.completed_payouts[0].transfers[0].refresh = Some(RefreshState::Abandoned {
+            reason: "bounded maintenance exhausted".into(),
+        });
+        assert!(restored.next_refresh().is_none());
+        assert!(restored.completed_payouts[0].complete());
+        assert!(!restored.completed_payouts[0].maintenance_complete());
+        assert_eq!(restored.completed_payouts[0].abandoned_refreshes(), 1);
+    }
+    #[test]
+    fn retention_prunes_only_settled_history_and_reports_unfinished_maintenance() {
+        let mut s = state();
+        for id in 1..=33 {
+            s.payout = Some(paid(id));
+            assert!(s.retire_financial_plan(id));
+        }
+        assert_eq!(s.completed_payouts.len(), 32);
+        assert_eq!(s.pruned_unfinished_refreshes, 2);
+        assert_eq!(s.completed_payouts[0].id, 2);
+        let mut unresolved = paid(34);
+        unresolved.transfers[0].status = TransferStatus::Unknown { attempts: 1 };
+        unresolved.transfers[0].refresh = None;
+        s.payout = Some(unresolved.clone());
+        assert!(!s.retire_financial_plan(34));
+        assert_eq!(s.payout, Some(unresolved));
+        assert_eq!(s.completed_payouts.len(), 32);
+        assert_eq!(s.pruned_unfinished_refreshes, 2);
+    }
+    fn v2(
+        status: crate::legacy_v2::accounting::TransferStatus,
+        may_have_executed: bool,
+    ) -> crate::legacy_v2::State {
+        use crate::legacy_v2::{self as v, accounting as a};
+        let prepared = matches!(status, a::TransferStatus::Prepared);
+        let confirmed = matches!(status, a::TransferStatus::Confirmed { .. });
+        let attempt = a::Attempt {
+            number: 12,
+            fee: 10,
+            memo: vec![12],
+            created_at_time: 100,
+            may_have_executed,
+        };
+        v::State {
+            metrics: Checkpoints::default(),
+            policy_pin: State::current_policy_pin(),
+            config: Config {
+                mode: Mode::ObserveOnly,
+                expected_target_controller: None,
+                delegates_per_topic: 5,
+                revision: 7,
+            },
+            jobs: vec![Job::default(); 4],
+            round_nonce: 8,
+            round: Some(Round::new(8, 7, 1)),
+            applied: None,
+            last_complete_scan: Some((1, 2)),
+            bootstrap: Bootstrap::Inactive,
+            proposer: None,
+            proposal_nonce: 0,
+            proposal: None,
+            payout_nonce: 9,
+            draft: None,
+            payout: Some(a::Plan {
+                id: 9,
+                roster_round: 8,
+                balance: 100,
+                observed_at: 1,
+                fee: 10,
+                dust: 0,
+                ledger_anchor: 0,
+                initial_fee: 10,
+                additional_fee_funding: 0,
+                transfers: vec![a::Transfer {
+                    destination: a::Destination {
+                        neuron_id: 1,
+                        subaccount: vec![1; 32],
+                        validated_at: 1,
+                    },
+                    amount: 90,
+                    memo: vec![12],
+                    created_at_time: if prepared { 0 } else { 100 },
+                    status,
+                    history_cursor: 3,
+                    attempt: if prepared { None } else { Some(attempt) },
+                    rejected_attempts: if prepared {
+                        vec![]
+                    } else {
+                        (1..12)
+                            .map(|number| a::Attempt {
+                                number,
+                                fee: 10,
+                                memo: vec![number as u8],
+                                created_at_time: 80 + u64::from(number),
+                                may_have_executed: false,
+                            })
+                            .collect()
+                    },
+                    refresh: if confirmed {
+                        Some(a::RefreshState::Waiting {
+                            reason: "offline".into(),
+                        })
+                    } else {
+                        None
+                    },
+                }],
+            }),
+            completed_payouts: vec![],
+            observed_balance: Some(100),
+            balance_observed_at: Some(2),
+            initialized_at: 1,
+        }
+    }
+    #[test]
+    fn genuine_v2_wire_retains_every_financial_class_and_only_proven_refusals_gain_cooldown() {
+        use crate::legacy_v2::accounting::TransferStatus as O;
+        for (old_status, may) in [
+            (O::Prepared, false),
+            (O::Unknown { attempts: 12 }, true),
+            (O::Verifying { block: 7 }, true),
+            (O::Confirmed { block: 7 }, true),
+            (
+                O::Rejected {
+                    reason: "typed".into(),
+                },
+                false,
+            ),
+            (
+                O::Held {
+                    reason: "arbitrary text does not prove rejection".into(),
+                },
+                false,
+            ),
+            (
+                O::Held {
+                    reason: "bounded definite-rejection attempts exhausted".into(),
+                },
+                true,
+            ),
+        ] {
+            let old = v2(old_status, may);
+            let original = old.payout.as_ref().unwrap().clone();
+            let bytes = candid::encode_one(V2Versioned::V2(Box::new(old))).unwrap();
+            let restored = decode(&bytes).unwrap();
+            assert_eq!(restored.jobs.len(), 5);
+            assert_eq!(restored.config.mode, Mode::ObserveOnly);
+            assert_eq!(restored.config.revision, 7);
+            assert_eq!(restored.round.as_ref().unwrap().id, 8);
+            let p = restored.payout.as_ref().unwrap();
+            let t = &p.transfers[0];
+            let before = &original.transfers[0];
+            assert_eq!(p.id, original.id);
+            assert_eq!(t.amount, before.amount);
+            assert_eq!(t.memo, before.memo);
+            assert_eq!(t.created_at_time, before.created_at_time);
+            assert_eq!(t.history_cursor, before.history_cursor);
+            assert_eq!(t.destination.subaccount, before.destination.subaccount);
+            assert_eq!(
+                candid::encode_one(&t.rejected_attempts).unwrap(),
+                candid::encode_one(&before.rejected_attempts).unwrap()
+            );
+            assert_eq!(
+                candid::encode_one(&t.attempt).unwrap(),
+                candid::encode_one(&before.attempt).unwrap()
+            );
+            if matches!(before.status, O::Held { .. }) {
+                assert_eq!(matches!(t.status, TransferStatus::Cooldown { .. }), !may);
+            }
+            if let O::Confirmed { block } = before.status {
+                assert_eq!(t.status, TransferStatus::Confirmed { block });
+                assert_eq!(p.reserved().unwrap(), 0);
+            }
+            assert!(p.invariant());
+            assert_eq!(
+                encode(&decode(&encode(&restored)).unwrap()),
+                encode(&restored)
+            );
+        }
+    }
+    #[test]
+    fn v2_complete_maintenance_and_maturity_evidence_migrate_without_invented_observations() {
+        use crate::legacy_v2::{self as v, accounting::TransferStatus as O};
+        for phase in [
+            v::ProposalPhase::Open(12),
+            v::ProposalPhase::Adopted(12),
+            v::ProposalPhase::Executed(12),
+            v::ProposalPhase::AwaitingFinalization(12),
+            v::ProposalPhase::FinalizedReceiptUnattributed(12),
+        ] {
+            let mut old = v2(O::Confirmed { block: 7 }, true);
+            old.completed_payouts.push(old.payout.take().unwrap());
+            old.proposer = Some(11);
+            old.proposal_nonce = 2;
+            old.proposal = Some(v::ProposalJob {
+                operation: 2,
+                proposer: 11,
+                created_at: 5,
+                marker: "exact marker".into(),
+                fingerprint: vec![9; 32],
+                phase,
+                history_before: Some(2),
+                history_pages: 1,
+                found: vec![12],
+                saw_disbursement: false,
+                earliest_finalization: None,
+                ledger_cursor: 4,
+                receipt: None,
+                retry_after: 100,
+            });
+            let old_job = old.proposal.clone().unwrap();
+            let bytes = candid::encode_one(V2Versioned::V2(Box::new(old))).unwrap();
+            let s = decode(&bytes).unwrap();
+            assert!(s.payout.is_none());
+            assert!(s.completed_payouts[0].complete());
+            assert_eq!(s.completed_payouts[0].pending_refreshes(), 1);
+            assert_eq!(s.payout_not_before, DAY);
+            let j = s.proposal.as_ref().unwrap();
+            assert_eq!(j.marker, old_job.marker);
+            assert_eq!(j.fingerprint, old_job.fingerprint);
+            assert_eq!(
+                candid::encode_one(&j.phase).unwrap(),
+                candid::encode_one(wire::<ProposalPhase>(old_job.phase).unwrap()).unwrap()
+            );
+            assert!(
+                j.executed_at.is_none()
+                    && j.terminal_observed_at.is_none()
+                    && j.earliest_finalization.is_none()
+            );
+            assert!(!j.saw_disbursement);
+            assert!(j.receipt.is_none());
+            let mut restored = decode(&encode(&s)).unwrap();
+            restored.recover();
+            assert_eq!(restored.config.mode, Mode::ObserveOnly);
+        }
+    }
+    #[test]
+    fn v2_observed_maturity_progress_and_receipt_are_retained_exactly() {
+        use crate::legacy_v2::{self as v, accounting::TransferStatus as O};
+        let mut old = v2(O::Confirmed { block: 77 }, true);
+        old.proposal = Some(v::ProposalJob {
+            operation: 2,
+            proposer: 11,
+            created_at: 5,
+            marker: "bound".into(),
+            fingerprint: vec![8; 32],
+            phase: v::ProposalPhase::AwaitingFinalization(12),
+            history_before: None,
+            history_pages: 2,
+            found: vec![12],
+            saw_disbursement: true,
+            earliest_finalization: Some(604805),
+            ledger_cursor: 80,
+            receipt: Some((79, 123456)),
+            retry_after: 100,
+        });
+        let bytes = candid::encode_one(V2Versioned::V2(Box::new(old))).unwrap();
+        let s = decode(&bytes).unwrap();
+        let j = s.proposal.as_ref().unwrap();
+        assert_eq!(j.phase, ProposalPhase::AwaitingFinalization(12));
+        assert!(j.saw_disbursement);
+        assert_eq!(j.earliest_finalization, Some(604805));
+        assert_eq!(j.receipt, Some((79, 123456)));
+        assert_eq!(j.ledger_cursor, 80);
+        assert!(j.executed_at.is_none() && j.terminal_observed_at.is_none());
+        assert_eq!(encode(&decode(&encode(&s)).unwrap()), encode(&s));
     }
 }

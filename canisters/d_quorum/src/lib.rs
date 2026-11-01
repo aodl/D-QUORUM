@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 mod legacy;
+mod legacy_v2;
 mod payout;
 pub mod proposal;
 mod selection;
@@ -41,7 +42,7 @@ fn now() -> u64 {
 }
 fn arm() {
     // Timers are heap-only; upgrades remove old timers and install one of each.
-    for job in 0..4 {
+    for job in 0..5 {
         ic_cdk_timers::set_timer_interval(Duration::from_secs(10), move || async move {
             tick(job).await;
         });
@@ -99,6 +100,7 @@ async fn tick(job: usize) {
             1 => proposal::step(t, now()).await,
             2 => payout::step(t, now()).await,
             3 => proposal::bootstrap(t, now()).await,
+            4 => payout::maintenance(t).await,
             _ => unreachable!(),
         };
         if !state::current(t) {
@@ -491,6 +493,9 @@ fn transfer_page(payout_id: u64, offset: u32, count: u16) -> Vec<quorum_accounti
 }
 #[derive(Clone, Debug, CandidType, Serialize, Deserialize)]
 pub struct Health {
+    pub pending_refreshes: u64,
+    pub abandoned_refreshes: u64,
+    pub pruned_unfinished_refreshes: u64,
     pub checkpoints: state::Checkpoints,
     pub cycles: u128,
     pub stable_snapshot_bytes: u64,
@@ -504,6 +509,19 @@ pub struct Health {
 #[ic_cdk::query]
 fn health() -> Health {
     state::read(|s| Health {
+        pending_refreshes: s
+            .completed_payouts
+            .iter()
+            .chain(s.payout.iter())
+            .map(|p| p.pending_refreshes() as u64)
+            .sum(),
+        abandoned_refreshes: s
+            .completed_payouts
+            .iter()
+            .chain(s.payout.iter())
+            .map(|p| p.abandoned_refreshes() as u64)
+            .sum(),
+        pruned_unfinished_refreshes: s.pruned_unfinished_refreshes,
         checkpoints: s.metrics.clone(),
         cycles: ic_cdk::api::canister_cycle_balance(),
         stable_snapshot_bytes: state::snapshot_size(),

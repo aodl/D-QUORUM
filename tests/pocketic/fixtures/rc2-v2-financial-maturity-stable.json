@@ -1,0 +1,11 @@
+{
+  "app": "dllsh-pd777-77776-qaaaa-cai",
+  "generation": "Actual RC2 production natural timers with scripted Governance/Ledger; one exact confirmed payment, incomplete stake refresh, exact Executed proposal with no observed transient disbursement; Live only in local PocketIC",
+  "gzip_sha256": "46c3c481af42e89946a8315f0f19f3058d22052c22ff897de5c603de9bdd5b57",
+  "ledger_history_sha256": "ca27d44ef0c3284758b21c4d5f245ca93d4f996ccceadb178ac3413e635b85b9",
+  "module_sha256": "867a31ec9a95b68b2d8a983d1e3ed406119b67a67b96270c3ef666093dc57019",
+  "source_commit": "e14c9cb2fcc511472dfe273f9cee355c5d9f4a83",
+  "stable_bytes": 8454144,
+  "stable_sha256": "8044e8b0d43d095d7497365b3f517d26e9983add72c99e3f55cc8dd6f514c88f",
+  "time_seconds": 1800003760
+}

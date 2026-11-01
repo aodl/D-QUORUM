@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub const MIN_SHARE: u64 = 1;
 pub const RETRY_WINDOW_NS: u64 = 23 * 60 * 60 * 1_000_000_000;
+pub const REFUSAL_EPISODE: u32 = 12;
+/// Audit detail only; possibly executed identities are never stored/pruned here.
+pub const REFUSAL_HISTORY: usize = 12;
+pub const REFUSAL_COOLDOWN_NS: u64 = 86_400 * 1_000_000_000;
 #[derive(Clone, Debug, Eq, PartialEq, CandidType, Serialize, Deserialize)]
 pub struct Destination {
     pub neuron_id: u64,
@@ -14,6 +18,7 @@ pub struct Destination {
 pub enum TransferStatus {
     Prepared,
     Rejected { reason: String },
+    Cooldown { until_ns: u64, reason: String },
     Unknown { attempts: u32 },
     Verifying { block: u64 },
     Confirmed { block: u64 },
@@ -23,7 +28,17 @@ pub enum TransferStatus {
 pub enum RefreshState {
     Pending,
     Complete,
-    Waiting { reason: String },
+    Waiting {
+        reason: String,
+    },
+    RetryAt {
+        reason: String,
+        attempts: u32,
+        next_at: u64,
+    },
+    Abandoned {
+        reason: String,
+    },
 }
 #[derive(Clone, Debug, Eq, PartialEq, CandidType, Serialize, Deserialize)]
 pub struct Attempt {
@@ -148,6 +163,24 @@ impl Plan {
             .iter()
             .all(|t| t.refresh == Some(RefreshState::Complete))
     }
+    pub fn pending_refreshes(&self) -> usize {
+        self.transfers
+            .iter()
+            .filter(|t| {
+                matches!(t.status, TransferStatus::Confirmed { .. })
+                    && !matches!(
+                        t.refresh,
+                        Some(RefreshState::Complete | RefreshState::Abandoned { .. })
+                    )
+            })
+            .count()
+    }
+    pub fn abandoned_refreshes(&self) -> usize {
+        self.transfers
+            .iter()
+            .filter(|t| matches!(t.refresh, Some(RefreshState::Abandoned { .. })))
+            .count()
+    }
     pub fn confirmed_cost(&self) -> u128 {
         self.transfers
             .iter()
@@ -223,6 +256,43 @@ impl Plan {
             } else if !matches!(t.status, TransferStatus::Prepared) || t.created_at_time != 0 {
                 return false;
             }
+            if t.rejected_attempts.len() > REFUSAL_HISTORY {
+                return false;
+            }
+            if let Some(a) = &t.attempt {
+                let proof_consistent = match t.status {
+                    TransferStatus::Rejected { .. } | TransferStatus::Cooldown { .. } => {
+                        !a.may_have_executed
+                    }
+                    TransferStatus::Unknown { attempts } => {
+                        a.may_have_executed && (1..=12).contains(&attempts)
+                    }
+                    TransferStatus::Verifying { .. } | TransferStatus::Confirmed { .. } => {
+                        a.may_have_executed
+                    }
+                    TransferStatus::Held { .. } => true, // Historical ambiguity is never inferred from its reason.
+                    TransferStatus::Prepared => false,
+                };
+                if a.number == 0
+                    || !proof_consistent
+                    || matches!(t.status, TransferStatus::Cooldown { until_ns: 0, .. })
+                {
+                    return false;
+                }
+                let mut previous = 0;
+                for rejected in &t.rejected_attempts {
+                    if rejected.may_have_executed
+                        || rejected.number <= previous
+                        || rejected.number >= a.number
+                        || rejected.created_at_time == 0
+                    {
+                        return false;
+                    }
+                    previous = rejected.number;
+                }
+            } else if !t.rejected_attempts.is_empty() {
+                return false;
+            }
             if let TransferStatus::Confirmed { block } = t.status
                 && !blocks.insert(block)
             {
@@ -237,16 +307,25 @@ impl Plan {
     pub fn dispatch(&mut self, index: usize, now: u64) -> Result<(), &'static str> {
         let t = self.transfers.get_mut(index).ok_or("transfer index")?;
         let attempts = match &t.status {
-            TransferStatus::Prepared | TransferStatus::Rejected { .. } => {
+            TransferStatus::Prepared
+            | TransferStatus::Rejected { .. }
+            | TransferStatus::Cooldown { .. } => {
                 if t.attempt.as_ref().is_some_and(|a| a.may_have_executed) {
                     return Err("prior attempt unresolved");
                 }
-                let number = t.attempt.as_ref().map_or(1, |a| a.number + 1);
-                if number > 12 {
-                    return Err("bounded definite-rejection attempts exhausted");
+                if matches!(t.status, TransferStatus::Cooldown { until_ns, .. } if now < until_ns) {
+                    return Err("definite-refusal episode cooling down");
                 }
+                let number = t
+                    .attempt
+                    .as_ref()
+                    .map_or(Some(1), |a| a.number.checked_add(1))
+                    .ok_or("attempt identity space exhausted")?;
                 if let Some(a) = t.attempt.take() {
                     t.rejected_attempts.push(a);
+                    if t.rejected_attempts.len() > REFUSAL_HISTORY {
+                        t.rejected_attempts.remove(0);
+                    }
                 }
                 let a = Attempt {
                     number,
@@ -274,11 +353,21 @@ impl Plan {
         t.status = TransferStatus::Unknown { attempts };
         Ok(())
     }
-    pub fn reject(&mut self, index: usize, reason: String) -> Result<(), &'static str> {
+    pub fn reject(&mut self, index: usize, reason: String, now: u64) -> Result<(), &'static str> {
         let t = self.transfers.get_mut(index).ok_or("transfer index")?;
+        if !matches!(t.status, TransferStatus::Unknown { attempts: 1 }) {
+            return Err("a rejection cannot erase earlier execution uncertainty");
+        }
         let a = t.attempt.as_mut().ok_or("missing attempt")?;
         a.may_have_executed = false;
-        t.status = TransferStatus::Rejected { reason };
+        t.status = if a.number.is_multiple_of(REFUSAL_EPISODE) {
+            TransferStatus::Cooldown {
+                until_ns: now.saturating_add(REFUSAL_COOLDOWN_NS),
+                reason,
+            }
+        } else {
+            TransferStatus::Rejected { reason }
+        };
         Ok(())
     }
     pub fn confirm(&mut self, index: usize, block: u64) -> Result<(), &'static str> {
@@ -291,10 +380,12 @@ impl Plan {
         if t.attempt.is_none() {
             return Err("no dispatched attempt");
         }
-        if let TransferStatus::Confirmed { block: b } = t.status
-            && b != block
-        {
-            return Err("conflicting confirmation");
+        if let TransferStatus::Confirmed { block: b } = t.status {
+            return if b == block {
+                Ok(())
+            } else {
+                Err("conflicting confirmation")
+            };
         }
         t.status = TransferStatus::Confirmed { block };
         t.refresh = Some(RefreshState::Pending);
@@ -321,7 +412,7 @@ mod tests {
         p.dispatch(0, 2).unwrap();
         p.confirm(0, 8).unwrap();
         p.dispatch(1, 3).unwrap();
-        p.reject(1, "BadFee".into()).unwrap();
+        p.reject(1, "BadFee".into(), 2).unwrap();
         assert!(p.invariant());
         assert_eq!(p.transfers[1].amount, snapshot.transfers[1].amount);
         assert!(p.dispatch(0, 3).is_err());
@@ -470,7 +561,7 @@ mod hardening {
     fn definite_rejection_may_start_new_attempt_but_extra_fees_require_funding() {
         let mut p = plan();
         p.dispatch(0, 100).unwrap();
-        p.reject(0, "BadFee".into()).unwrap();
+        p.reject(0, "BadFee".into(), 2).unwrap();
         p = restart(p);
         assert!(p.fund_fee(12_000, p.balance).is_err());
         p.fund_fee(12_000, p.balance + 6000).unwrap();
@@ -484,5 +575,122 @@ mod hardening {
         assert!(p.invariant());
         p.transfers[1].amount -= 1;
         assert!(!p.invariant());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_regressions {
+    use super::*;
+    fn plan() -> Plan {
+        Plan::build(
+            7,
+            3,
+            1_000_003,
+            10_000,
+            1,
+            99,
+            (1..=3)
+                .map(|id| Destination {
+                    neuron_id: id,
+                    subaccount: vec![id as u8; 32],
+                    validated_at: 1,
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+    fn restart(p: Plan) -> Plan {
+        candid::decode_one(&candid::encode_one(p).unwrap()).unwrap()
+    }
+    #[test]
+    fn repeated_definite_refusals_cross_two_episodes_without_changing_obligations() {
+        let mut p = plan();
+        let original = p.clone();
+        let mut identities = Vec::new();
+        let mut now = 100;
+        for n in 1..=27 {
+            p.dispatch(0, now).unwrap();
+            let attempt = p.transfers[0].attempt.clone().unwrap();
+            assert_eq!(attempt.number, n);
+            assert!(identities.iter().all(|a: &Attempt| a.memo != attempt.memo));
+            p.reject(0, "verified typed refusal".into(), now + 1)
+                .unwrap();
+            let mut rejected = attempt;
+            rejected.may_have_executed = false;
+            identities.push(rejected);
+            if let TransferStatus::Cooldown { until_ns, .. } = p.transfers[0].status {
+                let retained = p.transfers[0].attempt.clone();
+                assert!(p.dispatch(0, until_ns - 1).is_err());
+                assert_eq!(p.transfers[0].attempt, retained);
+                p = restart(p);
+                now = until_ns;
+                if n == 12 {
+                    assert!(p.fund_fee(12_000, p.reserved().unwrap() + p.dust).is_err());
+                    p.fund_fee(12_000, p.balance + 6_000).unwrap();
+                    assert_eq!(p.additional_fee_funding, 6_000);
+                }
+            } else {
+                now += 120_000_000_000;
+            }
+            assert!(p.invariant());
+            for (t, o) in p.transfers.iter().zip(&original.transfers) {
+                assert_eq!(t.destination, o.destination);
+                assert_eq!(t.amount, o.amount);
+            }
+        }
+        assert_eq!(p.transfers[0].rejected_attempts, identities[14..26]);
+        assert_eq!(p.transfers[0].attempt.as_ref(), identities.last());
+        p.dispatch(0, now + 1).unwrap();
+        p.confirm(0, 100).unwrap();
+        for i in 1..3 {
+            p.dispatch(i, now + 2 + i as u64).unwrap();
+            p.confirm(i, 100 + i as u64).unwrap();
+        }
+        assert!(p.complete());
+        assert!(!p.maintenance_complete());
+        assert_eq!(p.pending_refreshes(), 3);
+        assert_eq!(p.reserved().unwrap(), 0);
+        p.transfers[0].refresh = Some(RefreshState::Complete);
+        p.confirm(0, 100).unwrap();
+        assert_eq!(p.transfers[0].refresh, Some(RefreshState::Complete));
+        assert!(p.invariant());
+    }
+    #[test]
+    fn twelve_ambiguous_replies_never_gain_a_new_identity_after_cooldown() {
+        let mut p = plan();
+        p.dispatch(0, 100).unwrap();
+        let identity = p.transfers[0].attempt.clone();
+        for _ in 1..12 {
+            p.dispatch(0, 101).unwrap();
+        }
+        assert!(
+            p.reject(0, "refusal on an ambiguous retry".into(), 102)
+                .is_err()
+        );
+        assert!(p.dispatch(0, 103).is_err());
+        p = restart(p);
+        assert!(p.dispatch(0, 100 + REFUSAL_COOLDOWN_NS * 3).is_err());
+        assert_eq!(p.transfers[0].attempt, identity);
+        assert!(p.transfers[0].rejected_attempts.is_empty());
+        assert!(!p.complete());
+        assert!(p.invariant());
+    }
+    #[test]
+    fn execution_proof_cannot_be_changed_by_cooldown_or_repeated_confirmation() {
+        let mut p = plan();
+        p.dispatch(0, 100).unwrap();
+        let mut forged = p.clone();
+        forged.transfers[0].status = TransferStatus::Cooldown {
+            until_ns: 500,
+            reason: "text is not proof".into(),
+        };
+        assert!(!forged.invariant());
+        assert!(forged.dispatch(0, 600).is_err());
+        p.confirm(0, 7).unwrap();
+        p.transfers[0].refresh = Some(RefreshState::Complete);
+        p.confirm(0, 7).unwrap();
+        assert_eq!(p.transfers[0].refresh, Some(RefreshState::Complete));
+        assert!(p.confirm(0, 8).is_err());
+        assert!(p.invariant());
     }
 }

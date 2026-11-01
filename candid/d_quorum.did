@@ -71,10 +71,13 @@ type Exclusion = record {
   candidate : nat64;
 };
 type Health = record {
+  pruned_unfinished_refreshes : nat64;
   stable_memory_pages : nat64;
+  pending_refreshes : nat64;
   jobs : vec Job;
   staged_balance : opt nat64;
   bootstrap : Bootstrap;
+  abandoned_refreshes : nat64;
   cycles : nat;
   checkpoints : Checkpoints;
   proposer : opt nat64;
@@ -112,10 +115,12 @@ type ProposalJob = record {
   found : vec nat64;
   saw_disbursement : bool;
   retry_after : nat64;
+  executed_at : opt nat64;
   receipt : opt record { nat64; nat64 };
   created_at : nat64;
   ledger_cursor : nat64;
   earliest_finalization : opt nat64;
+  terminal_observed_at : opt nat64;
   operation : nat64;
   history_pages : nat64;
   fingerprint : blob;
@@ -127,6 +132,7 @@ type ProposalPhase = variant {
   Preflight;
   Failed : nat64;
   Open : nat64;
+  TerminalExecutionVerified : nat64;
   Ambiguous;
   Rejected : nat64;
   Checking;
@@ -138,8 +144,10 @@ type ProposalPhase = variant {
   CreationRejected : record { error_type : int32; reason : text };
 };
 type RefreshState = variant {
+  Abandoned : record { reason : text };
   Complete;
   Waiting : record { reason : text };
+  RetryAt : record { attempts : nat32; next_at : nat64; reason : text };
   Pending;
 };
 type Result = variant { Ok : nat64; Err : text };
@@ -202,6 +210,7 @@ type TransferStatus = variant {
   Prepared;
   Rejected : record { reason : text };
   Unknown : record { attempts : nat32 };
+  Cooldown : record { until_ns : nat64; reason : text };
   Verifying : record { block : nat64 };
 };
 type VotingContext = record {

@@ -24,57 +24,12 @@ fn setup(mode: Mode, three: bool, cycles: u128) -> (pocket_ic::PocketIc, Princip
     pic.set_controllers(empty, None, vec![]).unwrap();
     let mut f = fixture(now(&pic), empty, app);
     if three {
-        let base = f
-            .neurons
-            .iter()
-            .find(|n| n.id.as_ref().unwrap().id == 100)
-            .unwrap()
-            .clone();
-        for (id, first) in [(106, 2010), (112, 2020)] {
-            let mut c = base.clone();
-            c.id = Some(g::NeuronId { id });
-            c.account = vec![id as u8; 32];
-            c.known_neuron_data = Some(known(id));
-            c.followees.retain(|(t, _)| *t != 1);
-            c.followees
-                .push(fs(1, &(first..first + 5).collect::<Vec<_>>()));
-            c.followees.retain(|(t, _)| *t != 4);
-            c.followees
-                .push(fs(4, &(first..first + 3).collect::<Vec<_>>()));
-            f.neurons.push(c);
-            for manager in first..first + 5 {
-                let mut n = raw(manager, user(3), now(&pic));
-                n.known_neuron_data = Some(known(manager));
-                n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
-                f.neurons.push(n);
-            }
-        }
-        f.neurons
-            .iter_mut()
-            .find(|n| n.id.as_ref().unwrap().id == 200)
-            .unwrap()
-            .followees = vec![fs(4, &[100, 106, 112])];
-        f.infos = f
-            .neurons
-            .iter()
-            .map(|n| g::NeuronInfo {
-                id: n.id.clone(),
-                retrieved_at_timestamp_seconds: now(&pic),
-                known_neuron_data: n.known_neuron_data.clone(),
-                visibility: n.visibility,
-            })
-            .collect();
-        f.known = f
-            .neurons
-            .iter()
-            .filter_map(|n| {
-                n.known_neuron_data.clone().map(|m| g::KnownNeuron {
-                    id: n.id.clone(),
-                    known_neuron_data: Some(m),
-                })
-            })
-            .collect();
-        f.infos.sort_by_key(|n| n.id.as_ref().unwrap().id);
+        add_candidates(
+            &mut f,
+            now(&pic),
+            &[(106, 2010), (112, 2020)],
+            &[100, 106, 112],
+        );
     }
     for id in [GOVERNANCE, LEDGER] {
         pic.create_canister_with_id(None, None, id).unwrap();
@@ -100,6 +55,118 @@ fn setup(mode: Mode, three: bool, cycles: u128) -> (pocket_ic::PocketIc, Princip
         None,
     );
     (pic, app, w)
+}
+fn add_candidates(
+    f: &mut quorum_mocks::Fixture,
+    at: u64,
+    additions: &[(u64, u64)],
+    support: &[u64],
+) {
+    let base = f
+        .neurons
+        .iter()
+        .find(|n| n.id.as_ref().unwrap().id == 100)
+        .unwrap()
+        .clone();
+    for &(id, first) in additions {
+        let mut c = base.clone();
+        c.id = Some(g::NeuronId { id });
+        c.account = vec![id as u8; 32];
+        c.known_neuron_data = Some(known(id));
+        c.followees.retain(|(t, _)| *t != 1 && *t != 4);
+        c.followees
+            .push(fs(1, &(first..first + 5).collect::<Vec<_>>()));
+        c.followees
+            .push(fs(4, &(first..first + 3).collect::<Vec<_>>()));
+        f.neurons.push(c);
+        for manager in first..first + 5 {
+            let mut n = raw(manager, user(3), at);
+            n.known_neuron_data = Some(known(manager));
+            n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
+            f.neurons.push(n);
+        }
+    }
+    f.neurons
+        .iter_mut()
+        .find(|n| n.id.as_ref().unwrap().id == 200)
+        .unwrap()
+        .followees = vec![fs(4, support)];
+    f.infos = f
+        .neurons
+        .iter()
+        .map(|n| g::NeuronInfo {
+            id: n.id.clone(),
+            retrieved_at_timestamp_seconds: at,
+            known_neuron_data: n.known_neuron_data.clone(),
+            visibility: n.visibility,
+        })
+        .collect();
+    f.known = f
+        .neurons
+        .iter()
+        .filter_map(|n| {
+            n.known_neuron_data.clone().map(|m| g::KnownNeuron {
+                id: n.id.clone(),
+                known_neuron_data: Some(m),
+            })
+        })
+        .collect();
+    f.infos.sort_by_key(|n| n.id.as_ref().unwrap().id);
+}
+fn follow_support(pic: &pocket_ic::PocketIc, ids: &[u64]) {
+    let r: g::ManageResponse = update(
+        pic,
+        GOVERNANCE,
+        user(2),
+        "manage_neuron",
+        g::request(
+            200,
+            g::Command::SetFollowing(g::SetFollowing {
+                topic_following: Some(vec![g::Following {
+                    topic: Some(4),
+                    followees: Some(ids.iter().map(|id| g::NeuronId { id: *id }).collect()),
+                }]),
+            }),
+        ),
+    );
+    assert!(matches!(
+        r.command,
+        Some(g::ResponseCommand::SetFollowing(_))
+    ));
+}
+fn plans(pic: &pocket_ic::PocketIc, app: Principal) -> Vec<d_quorum::PayoutSummary> {
+    query2(pic, app, "payout_page", (None::<u64>, 100u16))
+}
+fn plan_transfers(pic: &pocket_ic::PocketIc, app: Principal, id: u64) -> Vec<Transfer> {
+    query2(pic, app, "transfer_page", (id, 0u32, 100u16))
+}
+fn assert_exact_payment_blocks(pic: &pocket_ic::PocketIc, app: Principal, ts: &[Transfer]) {
+    use quorum_ic_clients::ledger as l;
+    let h: l::History = update(
+        pic,
+        LEDGER,
+        Principal::anonymous(),
+        "query_blocks",
+        l::BlocksArgs {
+            start: 0,
+            length: 100,
+        },
+    );
+    for t in ts {
+        let TransferStatus::Confirmed { block } = t.status else {
+            panic!("unsettled {t:?}")
+        };
+        let a = t.attempt.as_ref().unwrap();
+        assert!(l::matches(
+            &h.blocks[(block - h.first_block_index) as usize],
+            app,
+            &t.destination.subaccount,
+            t.amount,
+            a.fee,
+            &a.memo,
+            a.created_at_time
+        ));
+    }
 }
 fn progress(pic: &pocket_ic::PocketIc, app: Principal) -> d_quorum::ScanProgress {
     query_empty(pic, app, "scan_progress")
@@ -680,7 +747,7 @@ fn confirmed_payment_refresh_failure_survives_upgrade_without_resending() {
         if ts.first().is_some_and(|t| {
             matches!(
                 t.refresh,
-                Some(quorum_accounting::RefreshState::Waiting { .. })
+                Some(quorum_accounting::RefreshState::RetryAt { .. })
             )
         }) {
             assert!(matches!(ts[0].status, TransferStatus::Confirmed { .. }));
@@ -930,5 +997,731 @@ fn setter_during_original_following_write_preserves_intent_then_starts_current_r
             .count(),
         1,
         "the already-dispatched old write must never be retried"
+    );
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn settled_payments_and_later_rosters_progress_despite_permanent_refresh_rejection() {
+    maintenance_does_not_block(None);
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn settled_payments_and_later_rosters_progress_despite_private_recipient() {
+    maintenance_does_not_block(Some(false));
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn settled_payments_and_later_rosters_progress_despite_missing_recipient() {
+    maintenance_does_not_block(Some(true));
+}
+fn maintenance_does_not_block(hidden: Option<bool>) {
+    use quorum_accounting::RefreshState;
+    let (pic, app, w) = setup(Mode::Live, false, 200_000_000_000_000);
+    let empty = pic.create_canister();
+    pic.set_controllers(empty, None, vec![]).unwrap();
+    let mut f = fixture(now(&pic), empty, app);
+    add_candidates(
+        &mut f,
+        now(&pic),
+        &[(106, 2010), (112, 2020), (118, 2030)],
+        &[100, 106],
+    );
+    let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "replace", f);
+    wait(&pic, app, "complete");
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "reject_refresh_for",
+        Some(100u64),
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_init",
+        2_000_000u64,
+    );
+    drive(&pic, 86400);
+    for _ in 0..150 {
+        drive(&pic, 10);
+        if plans(&pic, app).first().is_some_and(|p| p.complete)
+            && plan_transfers(&pic, app, 1)
+                .get(1)
+                .is_some_and(|t| t.refresh == Some(RefreshState::Complete))
+        {
+            break;
+        }
+    }
+    let original = plan_transfers(&pic, app, 1);
+    assert_eq!(original.len(), 2);
+    assert_eq!(
+        original
+            .iter()
+            .map(|t| t.destination.neuron_id)
+            .collect::<Vec<_>>(),
+        vec![100, 106]
+    );
+    assert!(original.iter().all(|t| t.amount == 990_000));
+    assert_exact_payment_blocks(&pic, app, &original);
+    assert!(matches!(
+        original[0].refresh,
+        Some(RefreshState::RetryAt { .. })
+    ));
+    assert_eq!(original[1].refresh, Some(RefreshState::Complete));
+    let settled_at = now(&pic);
+    assert_eq!(plans(&pic, app)[0].reserved, 0);
+    if let Some(missing) = hidden {
+        let _: () = update(
+            &pic,
+            GOVERNANCE,
+            Principal::anonymous(),
+            "hide_neuron",
+            (100u64, missing),
+        );
+    }
+    follow_support(&pic, &[112, 118]);
+    drive(&pic, 3 * 86400);
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    drive(&pic, 5 * 86400);
+    for _ in 0..1000 {
+        drive(&pic, 1);
+        let rows: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+        if rows
+            .iter()
+            .any(|r| r.topic == 4 && r.applied == vec![112, 118] && r.reward_eligible)
+        {
+            break;
+        }
+    }
+    let rows: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+    assert!(
+        rows.iter()
+            .any(|r| r.topic == 4 && r.applied == vec![112, 118] && r.reward_eligible),
+        "{rows:?}"
+    );
+    assert_eq!(plans(&pic, app).len(), 1);
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_deposit",
+        2_000_000u64,
+    );
+    // A deposit is observed only through the existing daily admission schedule.
+    let deadline = query_empty::<d_quorum::Health>(&pic, app, "health").jobs[2].next_at;
+    assert!(deadline > settled_at + 86400);
+    if deadline > now(&pic) + 10 {
+        drive(&pic, deadline - now(&pic) - 10);
+        assert_eq!(plans(&pic, app).len(), 1);
+    }
+    drive(&pic, 20);
+    for _ in 0..200 {
+        drive(&pic, 10);
+        if plans(&pic, app).iter().any(|p| p.id == 2 && p.complete) {
+            break;
+        }
+    }
+    let later = plan_transfers(&pic, app, 2);
+    assert_eq!(
+        later
+            .iter()
+            .map(|t| t.destination.neuron_id)
+            .collect::<Vec<_>>(),
+        vec![112, 118]
+    );
+    assert!(later.iter().all(|t| t.amount == 990_000));
+    assert_exact_payment_blocks(&pic, app, &later);
+    let retained = plan_transfers(&pic, app, 1);
+    for (a, b) in original.iter().zip(&retained) {
+        assert_eq!(a.destination, b.destination);
+        assert_eq!(a.amount, b.amount);
+        assert_eq!(a.attempt, b.attempt);
+        assert_eq!(a.status, b.status);
+    }
+    assert_ne!(retained[0].refresh, Some(RefreshState::Complete));
+    assert_eq!(retained[1].refresh, Some(RefreshState::Complete));
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").blocks,
+        4
+    );
+    assert!(
+        plans(&pic, app)
+            .iter()
+            .all(|p| p.complete && p.reserved == 0)
+    );
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn fourteen_definite_transfer_refusals_recover_after_cooldown_upgrade_fee_and_funding() {
+    let (pic, app, w) = setup(Mode::Live, true, 200_000_000_000_000);
+    wait(&pic, app, "complete");
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_init",
+        3_000_000u64,
+    );
+    for _ in 0..14 {
+        let _: () = update(
+            &pic,
+            LEDGER,
+            Principal::anonymous(),
+            "ledger_fault",
+            quorum_mocks::LedgerFault::InsufficientFunds,
+        );
+    }
+    drive(&pic, 86400);
+    let mut cooldown = None;
+    for _ in 0..500 {
+        drive(&pic, 120);
+        let ts = transfers(&pic, app);
+        if ts
+            .first()
+            .is_some_and(|t| matches!(t.status, TransferStatus::Cooldown { .. }))
+        {
+            cooldown = Some(ts);
+            break;
+        }
+    }
+    let original = cooldown.expect("twelve refusals must enter recoverable cooldown");
+    let a = original[0].attempt.as_ref().unwrap();
+    assert_eq!(a.number, 12);
+    assert!(!a.may_have_executed);
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").transfer_calls,
+        12
+    );
+    assert!(original[1..].iter().all(|t| t.attempt.is_none()));
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_fee",
+        12_000u64,
+    );
+    drive(&pic, 3600);
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").transfer_calls,
+        12
+    );
+    // Existing reservations forbid reducing any net entitlement to pay the extra fees.
+    drive(&pic, 86400);
+    for _ in 0..20 {
+        drive(&pic, 10);
+    }
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").transfer_calls,
+        12
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_deposit",
+        6_000u64,
+    );
+    for _ in 0..500 {
+        drive(&pic, 120);
+        if plans(&pic, app).first().is_some_and(|p| p.complete) {
+            break;
+        }
+    }
+    let ts = transfers(&pic, app);
+    assert_exact_payment_blocks(&pic, app, &ts);
+    assert_eq!(ts[0].attempt.as_ref().unwrap().number, 15);
+    assert_eq!(
+        ts[0].rejected_attempts.len(),
+        quorum_accounting::REFUSAL_HISTORY
+    );
+    assert_eq!(ts[0].rejected_attempts.first().unwrap().number, 3);
+    assert_eq!(ts[0].rejected_attempts.last().unwrap().number, 14);
+    for (old, t) in original.iter().zip(&ts) {
+        assert_eq!(old.destination, t.destination);
+        assert_eq!(old.amount, t.amount);
+        assert_eq!(t.amount, 990_000);
+    }
+    assert_eq!(plans(&pic, app)[0].additional_fee_funding, 6_000);
+    let stats = query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats");
+    assert_eq!(stats.blocks, 3);
+    assert_eq!(stats.transfer_calls, 17);
+    assert_eq!(stats.balance, 0);
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn executed_maturity_without_transient_progress_requires_lock_barrier_and_never_attributes_deposits()
+ {
+    use d_quorum::state::ProposalPhase as P;
+    let (pic, app, w) = owned_setup();
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_staking_fund",
+        1_000_000_000u64,
+    );
+    let mut first = None;
+    for _ in 0..400 {
+        drive(&pic, 10);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j
+            && matches!(j.phase, P::Open(1))
+        {
+            first = Some(j);
+            break;
+        }
+    }
+    let original = first.expect("exact operation not submitted");
+    // Adopted is durable but must never be interpreted as Executed.
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "proposal_status",
+        (1u64, 3i32),
+    );
+    drive(&pic, 3601);
+    assert!(matches!(
+        query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap()
+            .phase,
+        P::Adopted(1)
+    ));
+    pic.stop_canister(app, None).unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "proposal_status",
+        (1u64, 4i32),
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_deposit",
+        12345u64,
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_mint",
+        (app, 45678u64),
+    );
+    drive(&pic, 30 * 86400);
+    pic.upgrade_canister(app, w.clone(), encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "reject_refresh_for",
+        Some(quorum_policy::TARGET),
+    );
+    pic.start_canister(app, None).unwrap();
+    for _ in 0..100 {
+        drive(&pic, 120);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        if matches!(j.phase, P::Executed(1) | P::AwaitingFinalization(1)) {
+            assert!(j.executed_at.is_some());
+            break;
+        }
+    }
+    // Persisted exact execution proof remains usable even if proposal history is pruned later.
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "prune_proposals",
+        (),
+    );
+    drive(&pic, 3601);
+    let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+        .unwrap();
+    assert!(!matches!(j.phase, P::TerminalExecutionVerified(_)));
+    assert!(j.terminal_observed_at.is_none() && j.receipt.is_none());
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "reject_refresh_for",
+        None::<u64>,
+    );
+    for _ in 0..100 {
+        drive(&pic, 120);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        if matches!(j.phase, P::TerminalExecutionVerified(1)) {
+            assert_eq!(j.marker, original.marker);
+            assert_eq!(j.fingerprint, original.fingerprint);
+            assert!(!j.saw_disbursement && j.earliest_finalization.is_none());
+            assert!(j.terminal_observed_at.is_some());
+            assert!(j.receipt.is_none());
+            assert_eq!(
+                query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+                    .iter()
+                    .filter(|s| *s == "make_proposal")
+                    .count(),
+                1
+            );
+            return;
+        }
+    }
+    panic!("durable exact execution plus lock barrier and empty progress did not recover");
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn bound_open_proposal_with_pruned_history_remains_unresolved_across_upgrade() {
+    use d_quorum::state::ProposalPhase as P;
+    let (pic, app, w) = owned_setup();
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_staking_fund",
+        1_000_000_000u64,
+    );
+    let mut original = None;
+    for _ in 0..400 {
+        drive(&pic, 10);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j
+            && matches!(j.phase, P::Open(1))
+            && j.found == vec![1]
+        {
+            original = Some(j);
+            break;
+        }
+    }
+    let original = original.expect("proposal not bound");
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "prune_proposals",
+        (),
+    );
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    drive(&pic, 30 * 86400);
+    for _ in 0..3 {
+        drive(&pic, 3601);
+    }
+    let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+        .unwrap();
+    assert_eq!(j.phase, P::Open(1));
+    assert_eq!(j.found, vec![1]);
+    assert_eq!(j.marker, original.marker);
+    assert_eq!(j.fingerprint, original.fingerprint);
+    assert!(j.terminal_observed_at.is_none());
+    assert_eq!(
+        query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+            .iter()
+            .filter(|s| *s == "make_proposal")
+            .count(),
+        1
+    );
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal() {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let provenance: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            root().join("tests/pocketic/fixtures/rc2-v2-financial-maturity-stable.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        provenance["source_commit"],
+        "e14c9cb2fcc511472dfe273f9cee355c5d9f4a83"
+    );
+    assert_eq!(
+        provenance["module_sha256"],
+        "867a31ec9a95b68b2d8a983d1e3ed406119b67a67b96270c3ef666093dc57019"
+    );
+    let compressed = std::fs::read(
+        root().join("tests/pocketic/fixtures/rc2-v2-financial-maturity-stable.bin.gz"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(&compressed)),
+        provenance["gzip_sha256"].as_str().unwrap()
+    );
+    let mut stable = Vec::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_end(&mut stable)
+        .unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(&stable)),
+        provenance["stable_sha256"].as_str().unwrap()
+    );
+    let blocks_bytes =
+        std::fs::read(root().join("tests/pocketic/fixtures/rc2-v2-ledger-blocks.candid")).unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(&blocks_bytes)),
+        provenance["ledger_history_sha256"].as_str().unwrap()
+    );
+    let blocks: Vec<quorum_ic_clients::ledger::Block> = candid::decode_one(&blocks_bytes).unwrap();
+    let (pic, app, w) = owned_setup();
+    assert_eq!(app.to_text(), provenance["app"].as_str().unwrap());
+    pic.stop_canister(app, None).unwrap();
+    pic.set_time(pocket_ic::Time::from_nanos_since_unix_epoch(
+        provenance["time_seconds"].as_u64().unwrap() * 1_000_000_000,
+    ));
+    let _: () = update(&pic, LEDGER, Principal::anonymous(), "ledger_init", 0u64);
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_staking_fund",
+        1_000_000_000u64,
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_restore_history",
+        blocks,
+    );
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "reject_refresh_for",
+        Some(100u64),
+    );
+    pic.set_stable_memory(
+        app,
+        stable,
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    pic.upgrade_canister(app, w.clone(), encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    pic.start_canister(app, None).unwrap();
+    let original = transfers(&pic, app);
+    assert_eq!(original.len(), 1);
+    assert_eq!(original[0].amount, 1_990_000);
+    assert_eq!(original[0].status, TransferStatus::Confirmed { block: 0 });
+    assert_exact_payment_blocks(&pic, app, &original);
+    let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+        .unwrap();
+    assert!(matches!(
+        j.phase,
+        d_quorum::state::ProposalPhase::Executed(1)
+    ));
+    assert!(j.executed_at.is_none() && !j.saw_disbursement && j.earliest_finalization.is_none());
+    for _ in 0..100 {
+        drive(&pic, 120);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        if matches!(
+            j.phase,
+            d_quorum::state::ProposalPhase::TerminalExecutionVerified(1)
+        ) && query_empty::<d_quorum::Health>(&pic, app, "health").pending_refreshes == 1
+        {
+            break;
+        }
+    }
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let retained = transfers(&pic, app);
+    assert_eq!(retained[0].destination, original[0].destination);
+    assert_eq!(retained[0].amount, original[0].amount);
+    assert_eq!(retained[0].attempt, original[0].attempt);
+    assert_eq!(retained[0].status, original[0].status);
+    assert_ne!(
+        retained[0].refresh,
+        Some(quorum_accounting::RefreshState::Complete)
+    );
+    assert_eq!(plans(&pic, app)[0].reserved, 0);
+    let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+        .unwrap();
+    assert!(matches!(
+        j.phase,
+        d_quorum::state::ProposalPhase::TerminalExecutionVerified(1)
+    ));
+    assert!(j.executed_at.is_none() && j.receipt.is_none() && j.terminal_observed_at.is_some());
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").transfer_calls,
+        0
+    );
+    assert!(
+        !query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+            .iter()
+            .any(|s| s == "make_proposal")
+    );
+    assert_eq!(
+        query_empty::<d_quorum::Configuration>(&pic, app, "configuration")
+            .config
+            .mode,
+        Mode::Live
+    );
+}
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn twelve_ambiguous_transfer_replies_remain_bound_after_cooldown_and_upgrade() {
+    let (pic, app, w) = setup(Mode::Live, true, 200_000_000_000_000);
+    wait(&pic, app, "complete");
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_init",
+        3_000_000u64,
+    );
+    for _ in 0..12 {
+        let _: () = update(
+            &pic,
+            LEDGER,
+            Principal::anonymous(),
+            "ledger_fault",
+            quorum_mocks::LedgerFault::LoseReplyWithoutCommit,
+        );
+    }
+    drive(&pic, 86400);
+    let mut original = None;
+    for _ in 0..100 {
+        drive(&pic, 10);
+        let ts = transfers(&pic, app);
+        if ts
+            .first()
+            .is_some_and(|t| matches!(t.status, TransferStatus::Held { .. }))
+        {
+            original = Some(ts);
+            break;
+        }
+    }
+    let original = original.expect("ambiguous retries not bounded");
+    assert_eq!(original[0].attempt.as_ref().unwrap().number, 1);
+    assert!(original[0].attempt.as_ref().unwrap().may_have_executed);
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").transfer_calls,
+        12
+    );
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_fee",
+        12_000u64,
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_deposit",
+        6_000u64,
+    );
+    drive(&pic, 3 * 86400);
+    for _ in 0..3 {
+        drive(&pic, 3601);
+    }
+    let retained = transfers(&pic, app);
+    assert_eq!(retained[0].attempt, original[0].attempt);
+    assert!(retained[0].rejected_attempts.is_empty());
+    assert!(retained[1..].iter().all(|t| t.attempt.is_none()));
+    assert_eq!(plans(&pic, app)[0].reserved, 3_000_000);
+    assert!(!plans(&pic, app)[0].complete);
+    let stats = query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats");
+    assert_eq!(stats.transfer_calls, 12);
+    assert_eq!(stats.blocks, 0);
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn maintenance_last_attempt_lost_during_upgrade_remains_bounded_and_never_resends_payment() {
+    use quorum_accounting::RefreshState as R;
+    let (pic, app, w) = setup(Mode::Live, false, 200_000_000_000_000);
+    wait(&pic, app, "complete");
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "reject_refresh_for",
+        Some(100u64),
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_init",
+        1_000_000u64,
+    );
+    drive(&pic, 86400);
+    for expected in 1..=7 {
+        let mut due = None;
+        for _ in 0..100 {
+            drive(&pic, 10);
+            if let Some(t) = transfers(&pic, app).first()
+                && let Some(R::RetryAt {
+                    attempts,
+                    next_at,
+                    reason,
+                }) = &t.refresh
+                && *attempts == expected
+                && !reason.contains("not yet verified")
+            {
+                due = Some(*next_at);
+                break;
+            }
+        }
+        let due = due.unwrap_or_else(|| panic!("maintenance attempt {expected} not reached"));
+        if expected == 7 {
+            let _: () = update(
+                &pic,
+                GOVERNANCE,
+                Principal::anonymous(),
+                "pause_full_once",
+                (100u64, 3600u32),
+            );
+        }
+        drive(&pic, due.saturating_sub(now(&pic)) + 1);
+    }
+    let original = transfers(&pic, app)[0].clone();
+    assert!(matches!(
+        original.refresh,
+        Some(R::RetryAt { attempts: 8, .. })
+    ));
+    assert!(
+        query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+            .iter()
+            .any(|s| s == "full_read_paused")
+    );
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    drive(&pic, 86401);
+    for _ in 0..20 {
+        drive(&pic, 10);
+    }
+    let t = transfers(&pic, app)[0].clone();
+    assert!(matches!(t.refresh, Some(R::Abandoned { .. })));
+    assert_eq!(t.attempt, original.attempt);
+    assert_eq!(t.status, original.status);
+    assert_eq!(
+        query_empty::<quorum_mocks::LedgerStats>(&pic, LEDGER, "ledger_stats").blocks,
+        1
+    );
+    assert_eq!(
+        query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+            .iter()
+            .filter(|s| s.as_str() == "refresh:100")
+            .count(),
+        7
     );
 }

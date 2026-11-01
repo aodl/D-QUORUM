@@ -288,6 +288,19 @@ async fn manage_neuron(r: MockManage) {
                     .cloned()
             });
             if let Some(n) = n {
+                CALLS.with(|c| c.borrow_mut().push(format!("refresh:{}", id)));
+                if REJECT_REFRESH.with(|s| s.borrow().contains(&id)) {
+                    reply(
+                        "manage_neuron",
+                        g::ManageResponse {
+                            command: Some(g::ResponseCommand::Error(g::GovernanceError {
+                                error_type: 1,
+                                error_message: "persistent test refresh rejection".into(),
+                            })),
+                        },
+                    );
+                    return;
+                }
                 if n.controller != Some(caller) && FAIL_REFRESH.with(|c| c.replace(false)) {
                     reply(
                         "manage_neuron",
@@ -387,6 +400,10 @@ async fn manage_neuron(r: MockManage) {
 }
 #[ic_cdk::update]
 fn get_network_economics_parameters() -> g::Economics {
+    CALLS.with(|c| {
+        c.borrow_mut()
+            .push("get_network_economics_parameters".into())
+    });
     g::Economics {
         voting_power_economics: Some(g::VotingPowerEconomics {
             start_reducing_voting_power_after_seconds: Some(15_778_800),
@@ -399,6 +416,7 @@ fn get_network_economics_parameters() -> g::Economics {
 }
 #[ic_cdk::update]
 fn list_proposals(r: g::ListProposals) -> g::Proposals {
+    CALLS.with(|c| c.borrow_mut().push("list_proposals".into()));
     PROPOSALS.with(|ps| g::Proposals {
         proposal_info: ps
             .borrow()
@@ -416,6 +434,7 @@ fn list_proposals(r: g::ListProposals) -> g::Proposals {
 }
 #[ic_cdk::update]
 fn get_proposal_info(id: u64) -> Option<g::ProposalInfo> {
+    CALLS.with(|c| c.borrow_mut().push("get_proposal_info".into()));
     PROPOSALS.with(|ps| {
         ps.borrow()
             .iter()
@@ -665,6 +684,10 @@ pub enum LedgerFault {
 }
 #[derive(Default)]
 struct LedgerModel {
+    balance_calls: u64,
+    fee_calls: u64,
+    history_calls: u64,
+    transfer_calls: u64,
     staking_funding: u64,
     recipients: std::collections::BTreeMap<Vec<u8>, u64>,
     balance: u64,
@@ -695,6 +718,10 @@ fn ledger_fault(f: LedgerFault) {
 }
 #[derive(CandidType, Deserialize, Debug)]
 pub struct LedgerStats {
+    pub balance_calls: u64,
+    pub fee_calls: u64,
+    pub history_calls: u64,
+    pub transfer_calls: u64,
     pub balance: u64,
     pub fee: u64,
     pub blocks: u64,
@@ -704,6 +731,10 @@ fn ledger_stats() -> LedgerStats {
     LEDGER_MODEL.with(|m| {
         let m = m.borrow();
         LedgerStats {
+            balance_calls: m.balance_calls,
+            fee_calls: m.fee_calls,
+            history_calls: m.history_calls,
+            transfer_calls: m.transfer_calls,
             balance: m.balance,
             fee: m.fee,
             blocks: m.blocks.len() as u64,
@@ -713,7 +744,8 @@ fn ledger_stats() -> LedgerStats {
 #[ic_cdk::update]
 fn icrc1_balance_of(a: l::Account) -> candid::Nat {
     LEDGER_MODEL.with(|m| {
-        let m = m.borrow();
+        let mut m = m.borrow_mut();
+        m.balance_calls += 1;
         match a.subaccount {
             Some(subaccount) => m
                 .recipients
@@ -727,7 +759,11 @@ fn icrc1_balance_of(a: l::Account) -> candid::Nat {
 }
 #[ic_cdk::update]
 fn icrc1_fee() -> candid::Nat {
-    LEDGER_MODEL.with(|m| m.borrow().fee.into())
+    LEDGER_MODEL.with(|m| {
+        let mut m = m.borrow_mut();
+        m.fee_calls += 1;
+        m.fee.into()
+    })
 }
 #[ic_cdk::update(manual_reply = true)]
 fn icrc1_transfer(arg: l::TransferArg) {
@@ -735,6 +771,7 @@ fn icrc1_transfer(arg: l::TransferArg) {
     let at = ic_cdk::api::time();
     let (result, lost) = LEDGER_MODEL.with(|m| {
         let mut m = m.borrow_mut();
+        m.transfer_calls += 1;
         let timestamp = arg.created_at_time.unwrap_or(at);
         let fee = l::nat(arg.fee.clone().unwrap_or_else(|| m.fee.into())).unwrap();
         let amount = l::nat(arg.amount.clone()).unwrap();
@@ -846,6 +883,7 @@ fn icrc1_transfer(arg: l::TransferArg) {
 fn query_blocks(arg: l::BlocksArgs) -> l::History {
     LEDGER_MODEL.with(|m| {
         let mut m = m.borrow_mut();
+        m.history_calls += 1;
         if matches!(m.faults.front(), Some(LedgerFault::LagHistory)) {
             m.faults.pop_front();
             return l::History {
@@ -892,10 +930,14 @@ fn proposal_status(args: (u64, i32)) {
     assert!((1..=5).contains(&args.1));
     PROPOSALS.with(|ps| {
         let mut ps = ps.borrow_mut();
-        ps.iter_mut()
+        let p = ps
+            .iter_mut()
             .find(|p| p.id.as_ref().unwrap().id == args.0)
-            .unwrap()
-            .status = args.1;
+            .unwrap();
+        p.status = args.1;
+        if args.1 == 4 {
+            p.executed_timestamp_seconds = ic_cdk::api::time() / 1_000_000_000;
+        }
     });
 }
 
@@ -1051,4 +1093,91 @@ thread_local! {static PAUSE_FOLLOW:std::cell::Cell<u32>=const{std::cell::Cell::n
 #[ic_cdk::update]
 fn pause_follow_once(seconds: u32) {
     PAUSE_FOLLOW.with(|c| c.set(seconds));
+}
+
+thread_local! {static REJECT_REFRESH: RefCell<std::collections::BTreeSet<u64>> = const { RefCell::new(std::collections::BTreeSet::new()) };}
+#[ic_cdk::update]
+fn reject_refresh_for(id: Option<u64>) {
+    REJECT_REFRESH.with(|s| {
+        if let Some(id) = id {
+            s.borrow_mut().insert(id);
+        } else {
+            s.borrow_mut().clear();
+        }
+    });
+}
+#[ic_cdk::update]
+fn hide_neuron(arg: (u64, bool)) {
+    FIXTURE.with(|f| {
+        let mut f = f.borrow_mut();
+        if arg.1 {
+            f.neurons.retain(|n| n.id.as_ref().unwrap().id != arg.0);
+            f.infos.retain(|n| n.id.as_ref().unwrap().id != arg.0);
+            f.known.retain(|n| n.id.as_ref().unwrap().id != arg.0);
+        } else {
+            if let Some(n) = f
+                .neurons
+                .iter_mut()
+                .find(|n| n.id.as_ref().unwrap().id == arg.0)
+            {
+                n.visibility = Some(1);
+            }
+            if let Some(n) = f
+                .infos
+                .iter_mut()
+                .find(|n| n.id.as_ref().unwrap().id == arg.0)
+            {
+                n.visibility = Some(1);
+            }
+        }
+    });
+}
+#[ic_cdk::update]
+fn ledger_mint(arg: (Principal, u64)) {
+    LEDGER_MODEL.with(|m| {
+        let mut m = m.borrow_mut();
+        m.balance += arg.1;
+        let at = ic_cdk::api::time();
+        m.blocks.push(l::Block {
+            timestamp: l::Timestamp {
+                timestamp_nanos: at,
+            },
+            transaction: l::Transaction {
+                memo: 123,
+                icrc1_memo: None,
+                created_at_time: l::Timestamp {
+                    timestamp_nanos: at,
+                },
+                operation: Some(l::Operation::Mint {
+                    to: l::account_id(arg.0, None),
+                    amount: l::Tokens { e8s: arg.1 },
+                }),
+            },
+        });
+    });
+}
+
+#[ic_cdk::update]
+fn maturity_progress(progress: Option<Vec<g::MaturityDisbursement>>) {
+    FIXTURE.with(|f| {
+        f.borrow_mut()
+            .neurons
+            .iter_mut()
+            .find(|n| n.id.as_ref().unwrap().id == quorum_policy_target())
+            .unwrap()
+            .maturity_disbursements_in_progress = progress;
+    });
+}
+#[ic_cdk::update]
+fn prune_proposals() {
+    PROPOSALS.with(|ps| ps.borrow_mut().clear());
+}
+
+#[ic_cdk::update]
+fn ledger_restore_history(blocks: Vec<l::Block>) {
+    // Only the isolated recording fixture exposes restore; no production endpoint.
+    LEDGER_MODEL.with(|m| {
+        assert!(m.borrow().blocks.is_empty());
+        m.borrow_mut().blocks = blocks;
+    });
 }

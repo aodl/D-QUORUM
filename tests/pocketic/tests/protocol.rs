@@ -846,3 +846,871 @@ fn production_owned_proposer_recovers_after_real_staking_topup() {
     let after = public_neuron(&pic, 300);
     assert_eq!(after.cached_neuron_stake_e8s, 1_100_000_000);
 }
+
+// Local real-protocol lifecycle fixture. The production Wasm uses only its natural timers.
+fn lifecycle_real(
+    maturity: u64,
+    rewards: u64,
+    cycles: u128,
+) -> (pocket_ic::PocketIc, Principal, Principal) {
+    let pic = real_pic();
+    let app = pic
+        .create_canister_with_params(
+            None,
+            pocket_ic::CreateCanisterParams {
+                cycles: Some(cycles),
+                settings: Some(pocket_ic::CanisterSettings {
+                    freezing_threshold: Some(0u64.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let blackhole = pic.create_canister();
+    pic.set_controllers(blackhole, None, vec![]).unwrap();
+    let probe = install_probe(&pic, wasm("quorum_mocks"));
+    let at = now(&pic);
+    let mut neurons = vec![];
+    for (id, first) in [(100, 101), (106, 2010), (112, 2020), (118, 2030)] {
+        let mut c = seed(id, blackhole, at);
+        if id == 100 {
+            c.cached_neuron_stake_e8s = 50_000;
+        }
+        c.known_neuron_data = Some(known(id));
+        c.followees = dendrite_types::RECOGNISED_TOPICS
+            .into_iter()
+            .map(|t| {
+                if t == 1 {
+                    fs(t, &(first..first + 5).collect::<Vec<_>>())
+                } else if t == 4 {
+                    fs(t, &(first..first + 3).collect::<Vec<_>>())
+                } else {
+                    fs(t, &[dendrite_types::ALPHA_VOTE_NEURON_ID])
+                }
+            })
+            .collect();
+        neurons.push(c);
+        for manager in first..first + 5 {
+            let mut n = seed(manager, user((manager % 200) as u8), at);
+            n.known_neuron_data = Some(known(manager));
+            n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
+            neurons.push(n);
+        }
+    }
+    for id in [
+        dendrite_types::ALPHA_VOTE_NEURON_ID,
+        dendrite_types::OMEGA_REJECT_NEURON_ID,
+    ] {
+        neurons.push(seed(id, user(1), at));
+    }
+    let mut follower = seed(200, user(2), at);
+    follower.followees = vec![fs(4, &[100, 106])];
+    neurons.push(follower);
+    let mut target = seed(TARGET, user(9), at);
+    target.hot_keys = vec![app];
+    target.followees = vec![fs(1, &[300, 12, 13])];
+    target.maturity_e8s_equivalent = maturity;
+    neurons.push(target);
+    let mut proposer = seed(300, app, at);
+    proposer.account = l::staking_subaccount(app, d_quorum::state::BOOTSTRAP_NONCE);
+    neurons.extend([
+        proposer,
+        seed(12, user(12), at),
+        seed(13, user(13), at),
+        seed(499, probe, at),
+    ]);
+    let mut unrelated = seed(301, user(8), at);
+    unrelated.maturity_e8s_equivalent = 3_000_000_000;
+    neurons.push(unrelated);
+    let mut funds = vec![(
+        l::Account {
+            owner: user(7),
+            subaccount: None,
+        },
+        10_000_000_000_000,
+    )];
+    if rewards > 0 {
+        funds.push((
+            l::Account {
+                owner: app,
+                subaccount: None,
+            },
+            rewards,
+        ));
+    }
+    install_real(
+        &pic,
+        neurons,
+        funds,
+        artifact("governance-canister"),
+        artifact("ledger-canister"),
+    );
+    pic.install_canister(
+        app,
+        wasm("d_quorum"),
+        encode_one(Some(d_quorum::state::Init {
+            mode: d_quorum::state::Mode::Live,
+            expected_target_controller: Some(user(9)),
+        }))
+        .unwrap(),
+        None,
+    );
+    (pic, app, probe)
+}
+fn wait_real_reward_roster(pic: &pocket_ic::PocketIc, app: Principal) {
+    // Establish ordinary following before testing new voting-reward accrual.
+    // Also let natural continuations finish before the next virtual-day jump.
+    for _ in 0..800 {
+        let rows: Vec<d_quorum::RosterView> = query2(pic, app, "roster_page", (0u16, 100u16));
+        if query_empty::<d_quorum::ScanProgress>(pic, app, "scan_progress").phase == "complete"
+            && rows
+                .iter()
+                .any(|r| r.topic == 4 && r.applied == vec![100, 106] && r.reward_eligible)
+        {
+            return;
+        }
+        drive(pic, 10);
+    }
+    panic!(
+        "real voting fixture lacks a fresh completed roster: {:?}",
+        query_empty::<d_quorum::Health>(pic, app, "health")
+    );
+}
+fn real_plans(pic: &pocket_ic::PocketIc, app: Principal) -> Vec<d_quorum::PayoutSummary> {
+    query2(pic, app, "payout_page", (None::<u64>, 100u16))
+}
+fn real_transfers(
+    pic: &pocket_ic::PocketIc,
+    app: Principal,
+    id: u64,
+) -> Vec<quorum_accounting::Transfer> {
+    query2(pic, app, "transfer_page", (id, 0u32, 100u16))
+}
+fn real_vote(pic: &pocket_ic::PocketIc, manager: u64, controller: Principal, id: u64) {
+    let _: RawResponse = update(
+        pic,
+        GOVERNANCE,
+        controller,
+        "manage_neuron",
+        VoteRequest {
+            neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: manager })),
+            command: Some(VoteCommand::RegisterVote(Vote {
+                vote: 1,
+                proposal: Some(g::NeuronId { id }),
+            })),
+        },
+    );
+}
+fn real_fund(pic: &pocket_ic::PocketIc, to: Principal, amount: u64) {
+    let r: Result<candid::Nat, l::TransferError> = update(
+        pic,
+        LEDGER,
+        user(7),
+        "icrc1_transfer",
+        l::TransferArg {
+            from_subaccount: None,
+            to: l::Account {
+                owner: to,
+                subaccount: None,
+            },
+            amount: amount.into(),
+            fee: Some(10_000u64.into()),
+            memo: None,
+            created_at_time: None,
+        },
+    );
+    r.unwrap();
+}
+fn real_set_support(pic: &pocket_ic::PocketIc, ids: &[u64]) {
+    let r: g::ManageResponse = update(
+        pic,
+        GOVERNANCE,
+        user(2),
+        "manage_neuron",
+        g::request(
+            200,
+            g::Command::SetFollowing(g::SetFollowing {
+                topic_following: Some(vec![g::Following {
+                    topic: Some(4),
+                    followees: Some(ids.iter().map(|id| g::NeuronId { id: *id }).collect()),
+                }]),
+            }),
+        ),
+    );
+    assert!(matches!(
+        r.command,
+        Some(g::ResponseCommand::SetFollowing(_))
+    ));
+}
+fn real_confirmed_evidence(
+    pic: &pocket_ic::PocketIc,
+    app: Principal,
+    ts: &[quorum_accounting::Transfer],
+) {
+    for t in ts {
+        let quorum_accounting::TransferStatus::Confirmed { block } = t.status else {
+            panic!("unconfirmed {t:?}")
+        };
+        let h: l::History = query(
+            pic,
+            LEDGER,
+            "query_blocks",
+            l::BlocksArgs {
+                start: block,
+                length: 1,
+            },
+        );
+        // Small lifecycle fixtures retain their settlement blocks in the main Ledger.
+        assert_eq!(h.first_block_index, block);
+        let a = t.attempt.as_ref().unwrap();
+        assert!(l::matches(
+            &h.blocks[0],
+            app,
+            &t.destination.subaccount,
+            t.amount,
+            a.fee,
+            &a.memo,
+            a.created_at_time
+        ));
+    }
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake() {
+    use quorum_accounting::RefreshState as R;
+    let wall = std::time::Instant::now();
+    let (pic, app, _) = lifecycle_real(0, 2_000_000, 200_000_000_000_000);
+    let start = now(&pic);
+    let initial_cycles = pic.cycle_balance(app);
+    for _ in 0..800 {
+        drive(&pic, 10);
+        let ts = real_transfers(&pic, app, 1);
+        if ts.len() == 2 && ts[1].refresh == Some(R::Complete) {
+            break;
+        }
+    }
+    let original = real_transfers(&pic, app, 1);
+    assert_eq!(original.len(), 2);
+    real_confirmed_evidence(&pic, app, &original);
+    assert_eq!(
+        original
+            .iter()
+            .map(|t| t.destination.neuron_id)
+            .collect::<Vec<_>>(),
+        vec![100, 106]
+    );
+    assert!(matches!(original[0].refresh, Some(R::RetryAt { .. })));
+    assert_eq!(original[1].refresh, Some(R::Complete));
+    // The pinned refresh rejects A's still-positive stake below its one-ICP minimum.
+    let a = public_neuron(&pic, 100);
+    assert_eq!(a.cached_neuron_stake_e8s, 50_000);
+    let balance: candid::Nat = query(
+        &pic,
+        LEDGER,
+        "icrc1_balance_of",
+        l::Account {
+            owner: GOVERNANCE,
+            subaccount: Some(a.account),
+        },
+    );
+    assert_eq!(l::nat(balance).unwrap(), 1_040_000);
+    let b = public_neuron(&pic, 106);
+    assert_eq!(b.cached_neuron_stake_e8s, 10_000_990_000);
+    real_set_support(&pic, &[112, 118]);
+    drive(&pic, 3 * 86400);
+    pic.upgrade_canister(
+        app,
+        wasm("d_quorum"),
+        encode_one(None::<d_quorum::state::Mode>).unwrap(),
+        None,
+    )
+    .unwrap();
+    drive(&pic, 5 * 86400);
+    for _ in 0..1200 {
+        drive(&pic, 1);
+        let rs: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+        if rs
+            .iter()
+            .any(|r| r.topic == 4 && r.applied == vec![112, 118] && r.reward_eligible)
+        {
+            break;
+        }
+    }
+    let rs: Vec<d_quorum::RosterView> = query2(&pic, app, "roster_page", (0u16, 100u16));
+    assert!(
+        rs.iter()
+            .any(|r| r.topic == 4 && r.applied == vec![112, 118] && r.reward_eligible)
+    );
+    real_fund(&pic, app, 2_000_000);
+    let due = query_empty::<d_quorum::Health>(&pic, app, "health").jobs[2].next_at;
+    if due > now(&pic) + 10 {
+        drive(&pic, due - now(&pic) - 10);
+        assert_eq!(real_plans(&pic, app).len(), 1);
+    }
+    drive(&pic, 20);
+    for _ in 0..100 {
+        drive(&pic, 10);
+        if real_plans(&pic, app)
+            .iter()
+            .any(|p| p.id == 2 && p.complete && p.maintenance_complete)
+        {
+            break;
+        }
+    }
+    let later = real_transfers(&pic, app, 2);
+    assert_eq!(
+        later
+            .iter()
+            .map(|t| t.destination.neuron_id)
+            .collect::<Vec<_>>(),
+        vec![112, 118]
+    );
+    assert!(later.iter().all(|t| t.amount == 990_000));
+    real_confirmed_evidence(&pic, app, &later);
+    let retained = real_transfers(&pic, app, 1);
+    for (x, y) in original.iter().zip(&retained) {
+        assert_eq!(x.amount, y.amount);
+        assert_eq!(x.destination, y.destination);
+        assert_eq!(x.attempt, y.attempt);
+        assert_eq!(x.status, y.status);
+    }
+    let h: d_quorum::Health = query_empty(&pic, app, "health");
+    assert_eq!(h.pending_refreshes + h.abandoned_refreshes, 1);
+    let metrics = serde_json::json!({"scenario":"A","virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"cycle_delta":initial_cycles-pic.cycle_balance(app),"checkpoints":h.checkpoints,"stable_bytes":h.stable_snapshot_bytes,"pending_refreshes":h.pending_refreshes,"abandoned_refreshes":h.abandoned_refreshes,"unpaid_obligations":real_plans(&pic,app).iter().map(|p|p.recipient_count-p.confirmed_count).sum::<u32>(),"exact_payments":4,"production_natural_timers":true});
+    std::fs::write(
+        root().join("dist/evidence/lifecycle-real-A.json"),
+        serde_json::to_string_pretty(&metrics).unwrap(),
+    )
+    .unwrap();
+    println!("{metrics}");
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn missed_entire_maturity_window_recovers_real_execution_and_later_distinct_harvest() {
+    missed_real_maturity_window(MaturityOutage::Open);
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn missed_entire_maturity_window_recovers_across_real_upgrade() {
+    missed_real_maturity_window(MaturityOutage::Upgrade);
+}
+#[derive(Clone, Copy, Debug)]
+enum MaturityOutage {
+    Open,
+    Upgrade,
+    Executed,
+    CycleReserve,
+    LostCreationReply,
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn missed_maturity_window_resumes_from_real_executed_state() {
+    missed_real_maturity_window(MaturityOutage::Executed);
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn missed_maturity_window_recovers_after_real_cycle_reserve_interruption() {
+    missed_real_maturity_window(MaturityOutage::CycleReserve);
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window() {
+    missed_real_maturity_window(MaturityOutage::LostCreationReply);
+}
+fn missed_real_maturity_window(outage: MaturityOutage) {
+    let upgrade = matches!(
+        outage,
+        MaturityOutage::Upgrade | MaturityOutage::CycleReserve
+    );
+    let mut lost_identity = None;
+    use d_quorum::state::ProposalPhase as P;
+    let wall = std::time::Instant::now();
+    let (pic, app, probe) = lifecycle_real(
+        5_000_000_000,
+        0,
+        if matches!(outage, MaturityOutage::CycleReserve) {
+            2_500_000_000_000
+        } else {
+            200_000_000_000_000
+        },
+    );
+    let start = now(&pic);
+    let initial_cycles = pic.cycle_balance(app);
+    let mut original = None;
+    for _ in 0..3000 {
+        if matches!(outage, MaturityOutage::LostCreationReply) {
+            pic.advance_time(std::time::Duration::from_secs(1));
+            pic.tick();
+        } else {
+            drive(&pic, 10);
+        }
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j {
+            if matches!(outage, MaturityOutage::LostCreationReply)
+                && matches!(j.phase, P::Intent)
+                && lost_identity.is_none()
+            {
+                lost_identity = Some((j.marker.clone(), j.fingerprint.clone()));
+                // Capture the real persisted pre-await image. PocketIC's management
+                // upgrade helper otherwise drains the successful callback first.
+                // Discard that callback by restoring this exact crash checkpoint;
+                // Governance retains its actual created proposal throughout.
+                let crash_checkpoint = pic.get_stable_memory(app);
+                pic.stop_canister(app, None).unwrap();
+                pic.set_stable_memory(
+                    app,
+                    crash_checkpoint,
+                    pocket_ic::common::rest::BlobCompression::NoCompression,
+                );
+                pic.upgrade_canister(
+                    app,
+                    wasm("d_quorum"),
+                    encode_one(None::<d_quorum::state::Mode>).unwrap(),
+                    None,
+                )
+                .unwrap();
+                pic.start_canister(app, None).unwrap();
+                let retained = query_empty::<Option<d_quorum::state::ProposalJob>>(
+                    &pic,
+                    app,
+                    "proposal_progress",
+                )
+                .unwrap();
+                assert!(
+                    matches!(retained.phase, P::Ambiguous),
+                    "the actual durable Intent image must recover as ambiguous"
+                );
+            } else if matches!(j.phase, P::Open(_)) {
+                original = Some(j);
+                break;
+            }
+        }
+    }
+    let original = original.expect("real maturity proposal not submitted");
+    let P::Open(id) = original.phase else {
+        unreachable!()
+    };
+    wait_real_reward_roster(&pic, app);
+    println!(
+        "maturity {outage:?}: exact proposal {id}, ordinary roster established, cycles={}",
+        pic.cycle_balance(app)
+    );
+    if matches!(outage, MaturityOutage::LostCreationReply) {
+        assert_eq!(
+            lost_identity,
+            Some((original.marker.clone(), original.fingerprint.clone()))
+        );
+    }
+    if matches!(outage, MaturityOutage::Executed) {
+        real_vote(&pic, 12, user(12), id);
+        let mut observed = false;
+        for _ in 0..800 {
+            drive(&pic, 10);
+            let j =
+                query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+                    .unwrap();
+            if matches!(j.phase,P::Executed(x) if x==id) {
+                assert!(!j.saw_disbursement);
+                observed = true;
+                break;
+            }
+        }
+        assert!(observed, "must suspend before observing transient progress");
+        pic.stop_canister(app, None).unwrap();
+    } else {
+        pic.stop_canister(app, None).unwrap();
+        if matches!(outage, MaturityOutage::CycleReserve) {
+            // Consume the explicit setup margin before manager approval, using
+            // actual local allocation charges. No disbursement is pending yet.
+            pic.start_canister(app, None).unwrap();
+            pic.update_canister_settings(
+                app,
+                None,
+                pocket_ic::CanisterSettings {
+                    compute_allocation: Some(99u64.into()),
+                    freezing_threshold: Some(0u64.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            for _ in 0..100 {
+                if pic.cycle_balance(app) < 2_000_000_000_000 {
+                    break;
+                }
+                drive(&pic, 60);
+            }
+            pic.update_canister_settings(
+                app,
+                None,
+                pocket_ic::CanisterSettings {
+                    compute_allocation: Some(0u64.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert!(
+                pic.cycle_balance(app) < 2_000_000_000_000,
+                "allocation charges did not reach reserve: {}",
+                pic.cycle_balance(app)
+            );
+            println!(
+                "maturity CycleReserve: measured cycles below reserve={}",
+                pic.cycle_balance(app)
+            );
+        }
+        real_vote(&pic, 12, user(12), id);
+    }
+    drive(&pic, 60);
+    let p: Option<g::ProposalInfo> = query(&pic, GOVERNANCE, "get_proposal_info", id);
+    let p = p.unwrap();
+    assert_eq!(p.status, 4);
+    assert!(p.executed_timestamp_seconds > 0);
+    assert!(d_quorum::proposal::exact_matches(&p, &original, app));
+    assert!(
+        !public_neuron(&pic, TARGET)
+            .maturity_disbursements_in_progress
+            .unwrap()
+            .is_empty()
+    );
+    // An independent real maturity command produces an unrelated mint to this account.
+    let unrelated: g::ManageResponse = update(
+        &pic,
+        GOVERNANCE,
+        user(8),
+        "manage_neuron",
+        g::ManagedMaturity {
+            id: None,
+            neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: 301 })),
+            command: Some(g::MaturityCommand::DisburseMaturity(g::DisburseMaturity {
+                percentage_to_disburse: 100,
+                to_account: Some(g::Account {
+                    owner: Some(app),
+                    subaccount: None,
+                }),
+                to_account_identifier: None,
+            })),
+        },
+    );
+    assert!(matches!(
+        unrelated.command,
+        Some(g::ResponseCommand::DisburseMaturity(_))
+    ));
+    // The automation misses every observation while Governance finalizes the real mint.
+    drive(&pic, 9 * 86400);
+    for _ in 0..20 {
+        drive(&pic, 60);
+    }
+    assert!(
+        public_neuron(&pic, TARGET)
+            .maturity_disbursements_in_progress
+            .unwrap()
+            .is_empty()
+    );
+    let credit: candid::Nat = query(
+        &pic,
+        LEDGER,
+        "icrc1_balance_of",
+        l::Account {
+            owner: app,
+            subaccount: None,
+        },
+    );
+    let credited = l::nat(credit).unwrap();
+    assert!((7_600_000_000..=8_400_000_000).contains(&credited));
+    let anchor: l::History = query(
+        &pic,
+        LEDGER,
+        "query_blocks",
+        l::BlocksArgs {
+            start: 0,
+            length: 0,
+        },
+    );
+    let mint_history: l::History = query(
+        &pic,
+        LEDGER,
+        "query_blocks",
+        l::BlocksArgs {
+            start: anchor.chain_length - 2,
+            length: 2,
+        },
+    );
+    assert_eq!(mint_history.blocks.len(), 2);
+    let mut mint_amounts = Vec::new();
+    for b in &mint_history.blocks {
+        let Some(l::Operation::Mint { to, amount }) = &b.transaction.operation else {
+            panic!("expected actual mints");
+        };
+        assert_eq!(*to, l::account_id(app, None));
+        mint_amounts.push(amount.e8s);
+    }
+    mint_amounts.sort();
+    assert_eq!(mint_amounts.iter().sum::<u64>(), credited);
+    assert!((2_850_000_000..=3_150_000_000).contains(&mint_amounts[0]));
+    assert!((4_750_000_000..=5_250_000_000).contains(&mint_amounts[1]));
+    // A separate deposit is authoritative money but never receipt attribution for this proposal.
+    real_fund(&pic, app, 12345);
+    if upgrade {
+        if matches!(outage, MaturityOutage::CycleReserve) {
+            pic.stop_canister(app, None).unwrap();
+        }
+        pic.upgrade_canister(
+            app,
+            wasm("d_quorum"),
+            encode_one(None::<d_quorum::state::Mode>).unwrap(),
+            None,
+        )
+        .unwrap();
+    }
+    pic.start_canister(app, None).unwrap();
+    if matches!(outage, MaturityOutage::CycleReserve) {
+        let before = query_empty::<d_quorum::Health>(&pic, app, "health");
+        drive(&pic, 3601);
+        let after = query_empty::<d_quorum::Health>(&pic, app, "health");
+        assert_eq!(before.jobs[1].steps, after.jobs[1].steps);
+        assert!(!matches!(
+            query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+                .unwrap()
+                .phase,
+            P::TerminalExecutionVerified(_)
+        ));
+        pic.add_cycles(app, 100_000_000_000_000);
+    }
+    let mut terminal = None;
+    for _ in 0..800 {
+        drive(&pic, 10);
+        let j: Option<d_quorum::state::ProposalJob> = query_empty(&pic, app, "proposal_progress");
+        if let Some(j) = j
+            && matches!(j.phase,P::TerminalExecutionVerified(x) if x==id)
+        {
+            terminal = Some(j);
+            break;
+        }
+    }
+    let terminal = terminal.unwrap_or_else(|| {
+        panic!(
+            "missed real window stuck: {:?}",
+            query_empty::<d_quorum::Health>(&pic, app, "health")
+        )
+    });
+    assert_eq!(terminal.marker, original.marker);
+    assert_eq!(terminal.fingerprint, original.fingerprint);
+    assert!(!terminal.saw_disbursement && terminal.earliest_finalization.is_none());
+    assert!(terminal.receipt.is_none());
+    assert_eq!(terminal.executed_at, Some(p.executed_timestamp_seconds));
+    wait_real_reward_roster(&pic, app);
+    let mut next = None;
+    // Accrue actual Governance voting rewards; no fixture edit or fabricated maturity top-up.
+    for day in 0..60 {
+        wait_real_reward_roster(&pic, app);
+        let motion: Result<u64, String> =
+            update(&pic, probe, Principal::anonymous(), "motion_probe", 499u64);
+        let motion = motion.unwrap();
+        real_vote(
+            &pic,
+            dendrite_types::OMEGA_REJECT_NEURON_ID,
+            user(1),
+            motion,
+        );
+        drive(&pic, 86400);
+        for _ in 0..12 {
+            drive(&pic, 10);
+            let j: Option<d_quorum::state::ProposalJob> =
+                query_empty(&pic, app, "proposal_progress");
+            if let Some(j) = j
+                && let P::Open(next_id) = j.phase
+                && next_id != id
+            {
+                assert!(j.operation > original.operation);
+                assert_ne!(j.marker, original.marker);
+                next = Some(next_id);
+                break;
+            }
+            let h: d_quorum::Health = query_empty(&pic, app, "health");
+            if h.jobs[1].busy_until == 0 && h.jobs[1].next_at > now(&pic) {
+                let waiting: Option<d_quorum::state::ProposalJob> =
+                    query_empty(&pic, app, "proposal_progress");
+                if waiting
+                    .as_ref()
+                    .is_none_or(|j| matches!(j.phase, P::TerminalExecutionVerified(_)))
+                {
+                    break;
+                }
+            }
+        }
+        if next.is_some() {
+            break;
+        }
+        if day % 10 == 0 {
+            println!(
+                "real subsequent accrual day={day} maturity={}",
+                public_neuron(&pic, TARGET).maturity_e8s_equivalent
+            );
+        }
+    }
+    let next = next.expect("later naturally accrued maturity did not reach a distinct proposal");
+    let history: g::Proposals = update(
+        &pic,
+        GOVERNANCE,
+        app,
+        "list_proposals",
+        g::ListProposals {
+            limit: 100,
+            before_proposal: None,
+            include_reward_status: vec![],
+            exclude_topic: vec![],
+            include_all_manage_neuron_proposals: Some(true),
+            include_status: vec![],
+            return_self_describing_action: Some(false),
+            omit_large_fields: Some(false),
+        },
+    );
+    assert_eq!(
+        history
+            .proposal_info
+            .iter()
+            .filter(|p| d_quorum::proposal::exact_matches(p, &original, app))
+            .count(),
+        1
+    );
+    let health: d_quorum::Health = query_empty(&pic, app, "health");
+    let status = pic.canister_status(app, None).unwrap();
+    let added_cycles = if matches!(outage, MaturityOutage::CycleReserve) {
+        100_000_000_000_000u128
+    } else {
+        0
+    };
+    let metrics = serde_json::json!({"scenario":"B","creation_reply_fault":if matches!(outage,MaturityOutage::LostCreationReply) {"actual Intent checkpoint restored after discarding callback; real Governance creation"} else {"none"},"cycle_delta":initial_cycles+added_cycles-pic.cycle_balance(app),"cycle_funding_added":added_cycles,"checkpoints":health.checkpoints,"stable_bytes":health.stable_snapshot_bytes,"heap_bytes":status.memory_metrics.wasm_memory_size.to_string(),"stable_pages":health.stable_memory_pages,"pending_refreshes":health.pending_refreshes,"abandoned_refreshes":health.abandoned_refreshes,"fixture_nonvoting_treasury_e8s":10_000_000_000_000u64,"outage":format!("{outage:?}"),"upgrade_during_disbursement_outage":upgrade,"original_proposal":id,"next_proposal":next,"actual_minted_e8s":credited,"receipt_attribution":"unresolved; no proposal identity in mint","missed_progress_observation":true,"virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"production_natural_timers":true});
+    std::fs::write(
+        root().join(format!("dist/evidence/lifecycle-real-B-{outage:?}.json")),
+        serde_json::to_string_pretty(&metrics).unwrap(),
+    )
+    .unwrap();
+    println!("{metrics}");
+}
+
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn repeated_real_ledger_refusals_recover_after_durable_cooldown() {
+    use quorum_accounting::TransferStatus as T;
+    let (pic, app, _) = lifecycle_real(0, 2_000_000, 200_000_000_000_000);
+    let wall = std::time::Instant::now();
+    let start = now(&pic);
+    let mut rejected = 0;
+    let mut prior = None;
+    let mut upgraded = false;
+    for _ in 0..20000 {
+        // Single natural rounds expose the real cross-subnet dispatch boundary.
+        pic.advance_time(std::time::Duration::from_secs(1));
+        pic.tick();
+        let ts = real_transfers(&pic, app, 1);
+        let Some(t) = ts.first() else { continue };
+        if let T::Cooldown { until_ns, .. } = t.status {
+            assert_eq!(t.attempt.as_ref().unwrap().number, 12);
+            if !upgraded {
+                let exact = t.attempt.clone();
+                pic.upgrade_canister(
+                    app,
+                    wasm("d_quorum"),
+                    encode_one(None::<d_quorum::state::Mode>).unwrap(),
+                    None,
+                )
+                .unwrap();
+                assert_eq!(real_transfers(&pic, app, 1)[0].attempt, exact);
+                real_fund(&pic, app, 2_000);
+                upgraded = true;
+            }
+            pic.advance_time(std::time::Duration::from_secs(
+                until_ns.div_ceil(1_000_000_000).saturating_sub(now(&pic)) + 1,
+            ));
+            continue;
+        }
+        if matches!(t.status, T::Unknown { attempts: 1 })
+            && t.attempt.as_ref().is_some_and(|a| a.number > rejected)
+            && rejected < 14
+        {
+            let a = t.attempt.clone().unwrap();
+            let balance: candid::Nat = query(
+                &pic,
+                LEDGER,
+                "icrc1_balance_of",
+                l::Account {
+                    owner: app,
+                    subaccount: None,
+                },
+            );
+            let balance = l::nat(balance).unwrap();
+            // Test-only adversarial debit at the validated-balance/transfer boundary.
+            // PocketIC impersonates this LOCAL fixture canister; production has no such endpoint.
+            let debit = pic
+                .submit_call(
+                    LEDGER,
+                    app,
+                    "icrc1_transfer",
+                    encode_one(l::TransferArg {
+                        from_subaccount: None,
+                        to: l::Account {
+                            owner: user(7),
+                            subaccount: None,
+                        },
+                        amount: (balance - 10_000).into(),
+                        fee: Some(10_000u64.into()),
+                        memo: None,
+                        created_at_time: None,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            let bytes = pic.await_call(debit).unwrap();
+            let debited: Result<candid::Nat, l::TransferError> =
+                candid::decode_one(&bytes).unwrap();
+            debited.expect("fault debit missed dispatch boundary");
+            for _ in 0..20 {
+                pic.tick();
+            }
+            let after = real_transfers(&pic, app, 1);
+            assert!(
+                matches!(after[0].status, T::Rejected { .. } | T::Cooldown { .. }),
+                "real typed refusal boundary was not reached: {:?}",
+                after[0]
+            );
+            assert!(!after[0].attempt.as_ref().unwrap().may_have_executed);
+            assert_eq!(after[0].attempt.as_ref().unwrap().memo, a.memo);
+            assert_eq!(after[0].amount, 990_000);
+            prior = Some(after[0].clone());
+            rejected += 1;
+            real_fund(&pic, app, balance);
+            if rejected != 12 {
+                pic.advance_time(std::time::Duration::from_secs(120));
+            }
+        }
+        if real_plans(&pic, app).first().is_some_and(|p| p.complete) {
+            break;
+        }
+    }
+    assert_eq!(rejected, 14);
+    assert!(upgraded);
+    let ts = real_transfers(&pic, app, 1);
+    real_confirmed_evidence(&pic, app, &ts);
+    assert_eq!(ts.len(), 2);
+    assert_eq!(ts[0].attempt.as_ref().unwrap().number, 15);
+    assert_eq!(
+        ts[0].rejected_attempts.len(),
+        quorum_accounting::REFUSAL_HISTORY
+    );
+    assert_eq!(ts[0].rejected_attempts.first().unwrap().number, 3);
+    assert_eq!(ts[0].rejected_attempts.last().unwrap().number, 14);
+    let prior = prior.unwrap();
+    assert_eq!(ts[0].amount, prior.amount);
+    assert_eq!(ts[0].destination, prior.destination);
+    assert_eq!(ts[1].attempt.as_ref().unwrap().number, 1);
+    let h = query_empty::<d_quorum::Health>(&pic, app, "health");
+    let metrics = serde_json::json!({"scenario":"C","real_typed_refusals":rejected,"successful_payment_attempt":15,"adversary":"local PocketIC impersonated debit between validated balance and dispatch; actual pinned Ledger InsufficientFunds","virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"checkpoints":h.checkpoints,"stable_bytes":h.stable_snapshot_bytes,"production_natural_timers":true});
+    std::fs::write(
+        root().join("dist/evidence/lifecycle-real-C.json"),
+        serde_json::to_string_pretty(&metrics).unwrap(),
+    )
+    .unwrap();
+    println!("{metrics}");
+}

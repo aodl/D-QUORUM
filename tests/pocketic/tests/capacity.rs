@@ -352,7 +352,34 @@ fn exercise(n: usize, seats: u8) {
             .contains(&m.as_str())
         })
         .count();
-    let metrics = serde_json::json!({"recipients":n,"cycle_delta":initial_cycles-pic.cycle_balance(app),"recorded_neuron_reads":recorded_neuron_reads,"call_measurement_scope":"recorded public-neuron read requests; excludes economics, management-canister and Ledger calls; cycle delta covers all canister jobs","compliant_contenders":2*n,"manager_count_range":[5,15],"seats":seats,"selected_within_seconds":applied-start,"validation_to_intent_seconds":intended-validated,"validation_to_readback_seconds":readback-validated,"oldest_destination_age_at_plan_detection_seconds":plan.unwrap()-oldest_destination,"plan_started_after_applied_seconds":plan.unwrap()-applied,"total_virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"checkpoint_metrics":after.checkpoints,"stable_snapshot_bytes":after.stable_snapshot_bytes,"heap_bytes":status.memory_metrics.wasm_memory_size.to_string(),"stable_pages":after.stable_memory_pages,"dense_score_entries":scores.len(),"scope":"production constants and natural timers; discovery retry, latency and upgrade; all obligations paid once and refreshed"});
+    let ledger_stats: quorum_mocks::LedgerStats = query_empty(&pic, LEDGER, "ledger_stats");
+    let governance_replies = recorded
+        .iter()
+        .filter(|m| {
+            [
+                "list_known_neurons",
+                "get_neuron_index",
+                "list_neurons",
+                "get_neuron_info",
+                "manage_neuron",
+                "get_network_economics_parameters",
+                "list_proposals",
+                "get_proposal_info",
+                "make_proposal_reply",
+            ]
+            .contains(&m.as_str())
+        })
+        .count();
+    let financial_liabilities = transfers
+        .iter()
+        .filter(|t| {
+            !matches!(
+                t.status,
+                quorum_accounting::TransferStatus::Confirmed { .. }
+            )
+        })
+        .count();
+    let metrics = serde_json::json!({"recipients":n,"governance_recorded_replies":governance_replies,"ledger_calls":{"balance":ledger_stats.balance_calls,"fee":ledger_stats.fee_calls,"history":ledger_stats.history_calls,"transfers":ledger_stats.transfer_calls},"pending_refreshes":after.pending_refreshes,"abandoned_refreshes":after.abandoned_refreshes,"pending_financial_liabilities":financial_liabilities,"cycle_delta":initial_cycles-pic.cycle_balance(app),"recorded_neuron_reads":recorded_neuron_reads,"call_measurement_scope":"public-neuron reads are a subset of recorded Governance endpoint completions; Ledger counters include all replicated fixture calls, including Governance refresh reads; management-canister calls are not instrumented; cycle delta covers all jobs","compliant_contenders":2*n,"manager_count_range":[5,15],"seats":seats,"selected_within_seconds":applied-start,"validation_to_intent_seconds":intended-validated,"validation_to_readback_seconds":readback-validated,"oldest_destination_age_at_plan_detection_seconds":plan.unwrap()-oldest_destination,"plan_started_after_applied_seconds":plan.unwrap()-applied,"total_virtual_seconds":now(&pic)-start,"wall_seconds":wall.elapsed().as_secs_f64(),"checkpoint_metrics":after.checkpoints,"stable_snapshot_bytes":after.stable_snapshot_bytes,"heap_bytes":status.memory_metrics.wasm_memory_size.to_string(),"stable_pages":after.stable_memory_pages,"dense_score_entries":scores.len(),"scope":"production constants and natural timers; discovery retry, latency and upgrade; all obligations paid once and refreshed"});
     std::fs::create_dir_all(root().join("dist/evidence")).unwrap();
     std::fs::write(
         root().join(format!("dist/evidence/capacity-{n}.json")),
