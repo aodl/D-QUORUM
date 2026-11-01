@@ -30,7 +30,8 @@ def fixture_server():
     port=ROOT/f'.cache/tmp/pocketic-runner-{os.getpid()}.port'
     port.unlink(missing_ok=True)
     log=(OUT/f'pocketic-server-{os.getpid()}.log').open('w')
-    FIXTURE_SERVER=subprocess.Popen([str(ROOT/'.cache/tools/pocket-ic'),'--ttl','43200','--hard-ttl','43200','--port-file',str(port)],stdout=log,stderr=subprocess.STDOUT)
+    # Keep server/sandbox teardown signals out of the qualification launcher's group.
+    FIXTURE_SERVER=subprocess.Popen([str(ROOT/'.cache/tools/pocket-ic'),'--ttl','43200','--hard-ttl','43200','--port-file',str(port)],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     def stop():
         if FIXTURE_SERVER.poll() is None:
             FIXTURE_SERVER.terminate()
