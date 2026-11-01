@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed suite execution. Validators never receive behavioural test counts."""
-import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io,atexit
+import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io,atexit,shutil
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 os.chdir(ROOT)
 (ROOT/'.cache/tmp').mkdir(parents=True,exist_ok=True)
@@ -63,12 +63,16 @@ def run(args,kind='validator',name=None,show=True):
     p=Result();p.returncode=process.returncode;p.stdout=''.join(lines)
     if not show and p.returncode:print(p.stdout,flush=True)
     record={'name':name or ' '.join(map(str,args)),'kind':kind,'exit_code':p.returncode}
+    log_name=f"{sys.argv[1]}-{len(results)+1:03}-"+re.sub(r'[^a-zA-Z0-9_.-]+','-',record['name'])[:100]+'.log'
+    (OUT/log_name).write_text(p.stdout)
+    record['log']=log_name
+    record['log_sha256']=hashlib.sha256(p.stdout.encode()).hexdigest()
     if kind=='behaviour':
         summaries=re.findall(r'test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored;',p.stdout)
         counts={k:sum(int(s[i]) for s in summaries) for i,k in [(1,'passed'),(2,'failed'),(3,'ignored')]}
         record.update(counts)
-        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\. ok$',p.stdout)
-        if not summaries or counts['passed']==0 or counts['failed']!=0:
+        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)
+        if not summaries or counts['passed']==0 or counts['failed']!=0 or counts['ignored']!=0 or len(record['executed_tests'])!=counts['passed']:
             record['exit_code']=1;record['error']='missing positive execution, failed tests, or invalid summaries'
     results.append(record);save()
     if record['exit_code']!=0: raise RuntimeError(f"required gate failed: {record['name']}")
@@ -109,9 +113,35 @@ def provision():
         didc.write_bytes(b);didc.chmod(0o755)
     run([didc,'--version'],name='pinned didc executable')
     run([didc,'check','candid/d_quorum.did'],name='public Candid typecheck')
+    public_compatibility()
     for dependency in ('governance','ledger'):
         run([didc,'check',f'candid/{dependency}.upstream.did',f'candid/{dependency}-client.did'],name=dependency+' interface compatibility')
 
+
+def public_compatibility():
+    old=ROOT/'tests/pocketic/fixtures/rc2-interface.did'
+    new=ROOT/'candid/d_quorum.did'
+    if hashlib.sha256(old.read_bytes()).hexdigest()!='6a06f8c56ed0b856f8e834be15518953d318910c238326653dc4ac391d0ccebb':
+        raise RuntimeError('historical RC2 interface checksum')
+    def methods(path):
+        return dict(re.findall(r'^  (\w+) : (.*);$',path.read_text().split('service :',1)[1],re.M))
+    def types(path):
+        return dict(re.findall(r'^type (\w+) = (.*?);\n(?=type |service )',path.read_text(),re.M|re.S))
+    before,after=methods(old),methods(new)
+    # Signatures refer to the same named responses; input tuples/modes/methods stay exact.
+    if before!=after:raise RuntimeError('public method or request signature changed')
+    b,a=types(old),types(new)
+    changed=sorted(k for k in set(b)|set(a) if b.get(k)!=a.get(k))
+    expected=['Health','ProposalJob','ProposalPhase','RefreshState','TransferStatus']
+    if changed!=expected:raise RuntimeError('unexpected public type changes: '+str(changed))
+    p=subprocess.run([ROOT/'.cache/tools/didc','check',new,old],capture_output=True,text=True)
+    if p.returncode==0:raise RuntimeError('expected explicit response-variant compatibility boundary absent')
+    report={'unchanged_methods_requests_and_modes':sorted(before),'changed_response_types':changed,
+            'old_response_decoders_require_update':True,'subtyping_diagnostic':p.stdout+p.stderr,
+            'historical_interface_sha256':hashlib.sha256(old.read_bytes()).hexdigest()}
+    (OUT/'interface-compatibility.json').write_text(json.dumps(report,indent=2)+'\n')
+    results.append({'name':'public request compatibility and explicit response extension boundary','kind':'validator','exit_code':0,'evidence':'interface-compatibility.json'})
+    save()
 
 def download(url,path,digest):
     if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest()==digest:return
@@ -142,6 +172,11 @@ def suite(target):
             run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name=target+':'+name)
     else:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--nocapture','--test-threads=1'],kind='behaviour',name=target)
+    if target in ('capacity','protocol'):
+        # Canonical repeats use the same fixture output names. Retain both measurements.
+        pattern='capacity-*.json' if target=='capacity' else 'lifecycle-real-*.json'
+        for path in OUT.glob(pattern):
+            shutil.copyfile(path,path.with_name('prepared-'+path.name))
     completed_suites.add({'mocked':'mock'}.get(target,target))
 
 def production():
@@ -161,7 +196,7 @@ def canonical_artifact():
     os.environ['D_QUORUM_TEST_WASM']=str(artifact)
     PREPARED_ARTIFACTS['canonical']=hashlib.sha256(artifact.read_bytes()).hexdigest()
     run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
-    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
+    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('hardening','reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal'),('protocol','financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake'),('protocol','missed_entire_maturity_window_recovers_across_real_upgrade'),('protocol','lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window'),('hardening','maintenance_last_attempt_lost_during_upgrade_remains_bounded_and_never_resends_payment'),('protocol','repeated_real_ledger_refusals_recover_after_durable_cooldown'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
         run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
     completed_suites.add('canonical_artifact')
 
@@ -170,7 +205,7 @@ def coverage():
     run(['cargo','llvm-cov','--locked','--workspace','--lib','--bins','--json','--output-path','dist/evidence/coverage.json'],kind='behaviour',name='instrumented unit/property coverage')
     data=json.loads((OUT/'coverage.json').read_text());(OUT/'coverage-totals.json').write_text(json.dumps(data['data'][0]['totals'],indent=2)+'\n')
     scopes={}
-    for name,prefix in [('policy','crates/policy/'),('accounting','crates/accounting/'),('clients','crates/ic_clients/'),('transitions','canisters/d_quorum/'),('unchanged_evaluator','vendor/dendrite/')]:
+    for name,prefix in [('policy','crates/policy/'),('accounting','crates/accounting/'),('clients','crates/ic_clients/'),('transitions','canisters/d_quorum/'),('payout_lifecycle','canisters/d_quorum/src/payout.rs'),('maturity_lifecycle','canisters/d_quorum/src/proposal.rs'),('stable_migration','canisters/d_quorum/src/state.rs'),('unchanged_evaluator','vendor/dendrite/')]:
         files=[f for f in data['data'][0]['files'] if '/'+prefix in f['filename']]
         scopes[name]={'files':[f['filename'].replace(str(ROOT)+'/', '') for f in files]}
         for metric in ('lines','regions','functions'):
@@ -207,8 +242,14 @@ def full():
             requirement['status']='executed'
             continue
         if requirement.get('mandatory',True) and (requirement['status']!='implemented' or requirement['suite'] not in completed_suites):raise RuntimeError('mandatory behavioural matrix still contains unqualified requirements')
+        executions=[g for g in results if g['kind']=='behaviour' and (requirement['suite']!='canonical_artifact' or g['name'].startswith('canonical:'))]
+        seen={name for gate in executions for name in gate.get('executed_tests',[])}
+        if any(name not in seen for name in requirement.get('tests',[])):
+            raise RuntimeError('mandatory behavioural case absent from execution: '+requirement['requirement'])
         requirement['status']='executed' if requirement['suite'] in completed_suites else 'unrun'
     matrix['local_gates_passed']=True
+    matrix['qualified']=True
+    matrix['qualification_scope']='local undeployed candidate only; no hosted CI or mainnet compatibility assertion'
     matrix['source_commit']=SOURCE_COMMIT
     matrix['remote_ci']='awaits separately authorized push'
     (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')

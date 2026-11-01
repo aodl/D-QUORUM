@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: qualification-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 env:
   CARGO_INCREMENTAL: 0
   CARGO_BUILD_JOBS: 2
@@ -42,7 +42,7 @@ jobs:
   production:
     name: Production artifact
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -76,10 +76,9 @@ jobs:
           if-no-files-found: error
   canonical:
     name: Canonical reproducibility
-    if: github.event_name != 'pull_request'
     needs: [behavioral, production, security, coverage]
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -88,6 +87,7 @@ jobs:
       - run: cargo run --locked -p xtask -- reproducible
       - run: cargo run --locked -p xtask -- canonical_artifact
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: canonical-candidate
           path: |
@@ -106,6 +106,7 @@ jobs:
       - run: cargo install cargo-llvm-cov --version 0.6.16 --locked
       - run: cargo run --locked -p xtask -- coverage
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: native-coverage
           path: dist/evidence/

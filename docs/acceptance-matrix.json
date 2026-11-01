@@ -291,6 +291,177 @@
       "suite": "hardening",
       "regression": "setter_during_original_following_write_preserves_intent_then_starts_current_revision",
       "status": "implemented"
+    },
+    {
+      "requirement": "confirmed payment settlement independent of maintenance; no retirement of an uncertain transfer",
+      "suite": "unit",
+      "status": "implemented",
+      "tests": [
+        "state::lifecycle_regressions::settled_finances_retire_and_failed_refresh_cannot_starve_the_next_recipient",
+        "state::lifecycle_regressions::retention_prunes_only_settled_history_and_reports_unfinished_maintenance"
+      ]
+    },
+    {
+      "requirement": "maintenance fairness, durable reservation before await and explicit bounded nonfinancial retention",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "settled_payments_and_later_rosters_progress_despite_permanent_refresh_rejection"
+      ]
+    },
+    {
+      "requirement": "private or missing paid recipient cannot block another refresh or a later fresh-roster payout after upgrade",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "settled_payments_and_later_rosters_progress_despite_private_recipient",
+        "settled_payments_and_later_rosters_progress_despite_missing_recipient"
+      ]
+    },
+    {
+      "requirement": "normal daily admission survives financial retirement, roster changes, deposits and upgrade",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "settled_payments_and_later_rosters_progress_despite_permanent_refresh_rejection"
+      ]
+    },
+    {
+      "requirement": "real Ledger confirmations A/B; actual unsupported stake refresh; later C/D paid exactly once after upgrade",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake"
+      ]
+    },
+    {
+      "requirement": "exact Executed proof and shared-neuron lock barrier recover a completely missed progress window",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "missed_entire_maturity_window_recovers_real_execution_and_later_distinct_harvest"
+      ]
+    },
+    {
+      "requirement": "missed real maturity window across upgrade and cycle reserve interruption; fresh preflight permits a later distinct harvest",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "missed_entire_maturity_window_recovers_across_real_upgrade",
+        "missed_maturity_window_recovers_after_real_cycle_reserve_interruption"
+      ]
+    },
+    {
+      "requirement": "resume Open and Executed real proposal phases; Adopted stays unresolved until exact Executed readback",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "missed_entire_maturity_window_recovers_real_execution_and_later_distinct_harvest",
+        "missed_maturity_window_resumes_from_real_executed_state"
+      ]
+    },
+    {
+      "requirement": "real proposal creation reply interrupted at persisted Intent; exact history recovers without resubmission",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window"
+      ]
+    },
+    {
+      "requirement": "empty progress plus failed lock barrier is unresolved; unrelated deposits and mints never supply receipt attribution",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "executed_maturity_without_transient_progress_requires_lock_barrier_and_never_attributes_deposits"
+      ]
+    },
+    {
+      "requirement": "pruned bound Open history remains unresolved; retained Executed evidence remains durable across pruning and upgrade",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "bound_open_proposal_with_pruned_history_remains_unresolved_across_upgrade",
+        "executed_maturity_without_transient_progress_requires_lock_barrier_and_never_attributes_deposits"
+      ]
+    },
+    {
+      "requirement": "multiple conclusive refusal episodes preserve monotonic exact identities, equal entitlements and fee funding",
+      "suite": "unit",
+      "status": "implemented",
+      "tests": [
+        "lifecycle_regressions::repeated_definite_refusals_cross_two_episodes_without_changing_obligations"
+      ]
+    },
+    {
+      "requirement": "fourteen definite Ledger refusals recover after cooldown, upgrade, fee change and new funding",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "fourteen_definite_transfer_refusals_recover_after_cooldown_upgrade_fee_and_funding"
+      ]
+    },
+    {
+      "requirement": "twelve ambiguous replies remain the original funded liability after cooldown, upgrade and funding",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "twelve_ambiguous_transfer_replies_remain_bound_after_cooldown_and_upgrade"
+      ]
+    },
+    {
+      "requirement": "real Ledger repeated typed no-execution refusals eventually pay the original obligation once and unblock later recipients",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "repeated_real_ledger_refusals_recover_after_durable_cooldown"
+      ]
+    },
+    {
+      "requirement": "genuine frozen V2 financial and maturity wire migration; ambiguity never inferred from Held reason strings",
+      "suite": "unit",
+      "status": "implemented",
+      "tests": [
+        "state::lifecycle_regressions::genuine_v2_wire_retains_every_financial_class_and_only_proven_refusals_gain_cooldown",
+        "state::lifecycle_regressions::v2_complete_maintenance_and_maturity_evidence_migrate_without_invented_observations",
+        "state::lifecycle_regressions::v2_observed_maturity_progress_and_receipt_are_retained_exactly"
+      ]
+    },
+    {
+      "requirement": "actual RC2 Wasm V2 checkpoint migrates through two production upgrades without duplicate payment or proposal",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal"
+      ]
+    },
+    {
+      "requirement": "canonical production repeats actual V2 migration and all three corrected financial lifecycles",
+      "suite": "canonical_artifact",
+      "status": "implemented",
+      "tests": [
+        "reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal",
+        "financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake",
+        "missed_entire_maturity_window_recovers_across_real_upgrade",
+        "repeated_real_ledger_refusals_recover_after_durable_cooldown"
+      ]
+    },
+    {
+      "requirement": "maintenance call reservation survives lost eighth callback; upgrade cannot authorize a ninth attempt or resend payment",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "maintenance_last_attempt_lost_during_upgrade_remains_bounded_and_never_resends_payment"
+      ]
+    },
+    {
+      "requirement": "bounded twelve-entry recent exact conclusive-refusal audit history; current ambiguous and confirmed identities remain exact without a hash archive",
+      "suite": "unit",
+      "status": "implemented",
+      "tests": [
+        "lifecycle_regressions::repeated_definite_refusals_cross_two_episodes_without_changing_obligations",
+        "lifecycle_regressions::twelve_ambiguous_replies_never_gain_a_new_identity_after_cooldown"
+      ]
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."
