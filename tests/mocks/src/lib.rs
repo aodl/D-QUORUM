@@ -289,7 +289,8 @@ async fn manage_neuron(r: MockManage) {
             });
             if let Some(n) = n {
                 CALLS.with(|c| c.borrow_mut().push(format!("refresh:{}", id)));
-                if REJECT_REFRESH.with(|s| s.borrow().contains(&id)) {
+                if let Some(script) = REJECT_REFRESH.with(|s| s.borrow().get(&id).cloned()) {
+                    SCRIPTS.with(|s| s.borrow_mut().push_front(script));
                     reply(
                         "manage_neuron",
                         g::ManageResponse {
@@ -469,6 +470,20 @@ async fn read_probe(ids: Vec<u64>) -> Result<ReadProbe, String> {
 #[ic_cdk::update]
 async fn full_probe(ids: Vec<u64>) -> Result<u64, String> {
     Ok(g::full(ids).await?.full_neurons.len() as u64)
+}
+#[ic_cdk::update]
+async fn maturity_barrier_probe(id: u64) -> Result<(), String> {
+    g::maturity_finalization_barrier(id).await
+}
+#[ic_cdk::update]
+async fn refresh_probe(id: u64) -> Result<g::ResponseCommand, String> {
+    g::manage(g::request(
+        id,
+        g::Command::ClaimOrRefresh(g::Claim {
+            by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+        }),
+    ))
+    .await
 }
 #[ic_cdk::update]
 async fn follow_probe(args: (u64, i32, Vec<u64>)) -> Result<(), String> {
@@ -1095,16 +1110,36 @@ fn pause_follow_once(seconds: u32) {
     PAUSE_FOLLOW.with(|c| c.set(seconds));
 }
 
-thread_local! {static REJECT_REFRESH: RefCell<std::collections::BTreeSet<u64>> = const { RefCell::new(std::collections::BTreeSet::new()) };}
+thread_local! {static REJECT_REFRESH: RefCell<std::collections::BTreeMap<u64, Script>> = const { RefCell::new(std::collections::BTreeMap::new()) };}
 #[ic_cdk::update]
 fn reject_refresh_for(id: Option<u64>) {
     REJECT_REFRESH.with(|s| {
         if let Some(id) = id {
-            s.borrow_mut().insert(id);
+            s.borrow_mut().insert(
+                id,
+                Script {
+                    method: "manage_neuron".into(),
+                    reply: Some(
+                        candid::encode_one(g::ManageResponse {
+                            command: Some(g::ResponseCommand::Error(g::GovernanceError {
+                                error_type: 1,
+                                error_message: "persistent test refresh rejection".into(),
+                            })),
+                        })
+                        .unwrap(),
+                    ),
+                    reject: None,
+                },
+            );
         } else {
             s.borrow_mut().clear();
         }
     });
+}
+#[ic_cdk::update]
+fn refresh_reply_for(arg: (u64, Script)) {
+    assert_eq!(arg.1.method, "manage_neuron");
+    REJECT_REFRESH.with(|s| s.borrow_mut().insert(arg.0, arg.1));
 }
 #[ic_cdk::update]
 fn hide_neuron(arg: (u64, bool)) {

@@ -853,6 +853,14 @@ fn lifecycle_real(
     rewards: u64,
     cycles: u128,
 ) -> (pocket_ic::PocketIc, Principal, Principal) {
+    lifecycle_real_with_target_stake(maturity, rewards, cycles, 10_000_000_000)
+}
+fn lifecycle_real_with_target_stake(
+    maturity: u64,
+    rewards: u64,
+    cycles: u128,
+    target_stake: u64,
+) -> (pocket_ic::PocketIc, Principal, Principal) {
     let pic = real_pic();
     let app = pic
         .create_canister_with_params(
@@ -908,6 +916,7 @@ fn lifecycle_real(
     follower.followees = vec![fs(4, &[100, 106])];
     neurons.push(follower);
     let mut target = seed(TARGET, user(9), at);
+    target.cached_neuron_stake_e8s = target_stake;
     target.hot_keys = vec![app];
     target.followees = vec![fs(1, &[300, 12, 13])];
     target.maturity_e8s_equivalent = maturity;
@@ -1194,6 +1203,146 @@ fn missed_entire_maturity_window_recovers_real_execution_and_later_distinct_harv
 #[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
 fn missed_entire_maturity_window_recovers_across_real_upgrade() {
     missed_real_maturity_window(MaturityOutage::Upgrade);
+}
+#[test]
+#[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
+fn missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier() {
+    use d_quorum::state::ProposalPhase as P;
+    let (pic, app, probe) =
+        lifecycle_real_with_target_stake(5_000_000_000, 0, 200_000_000_000_000, 50_000);
+    // The actual pinned Governance/Ledger pair produces the reviewed enum variant.
+    let refused: g::ManageResponse = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "manage_neuron",
+        g::request(
+            TARGET,
+            g::Command::ClaimOrRefresh(g::Claim {
+                by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+            }),
+        ),
+    );
+    assert!(matches!(
+        refused.command,
+        Some(g::ResponseCommand::Error(g::GovernanceError {
+            error_type: 14,
+            ..
+        }))
+    ));
+    let ordinary: Result<g::ResponseCommand, String> =
+        update(&pic, probe, Principal::anonymous(), "refresh_probe", TARGET);
+    assert!(ordinary.is_err());
+    let barrier: Result<(), String> = update(
+        &pic,
+        probe,
+        Principal::anonymous(),
+        "maturity_barrier_probe",
+        TARGET,
+    );
+    barrier.unwrap();
+    let original = (0..3000)
+        .find_map(|_| {
+            drive(&pic, 10);
+            query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+                .filter(|j| matches!(j.phase, P::Open(_)))
+        })
+        .expect("real exact maturity proposal not submitted");
+    let P::Open(id) = original.phase else {
+        unreachable!()
+    };
+    pic.stop_canister(app, None).unwrap();
+    real_vote(&pic, 12, user(12), id);
+    drive(&pic, 60);
+    let executed: Option<g::ProposalInfo> = query(&pic, GOVERNANCE, "get_proposal_info", id);
+    let executed = executed.unwrap();
+    assert_eq!(executed.status, 4);
+    assert!(executed.executed_timestamp_seconds > 0);
+    assert!(d_quorum::proposal::exact_matches(&executed, &original, app));
+    assert!(
+        !public_neuron(&pic, TARGET)
+            .maturity_disbursements_in_progress
+            .unwrap()
+            .is_empty()
+    );
+    drive(&pic, 9 * 86400);
+    for _ in 0..20 {
+        drive(&pic, 60);
+    }
+    assert!(
+        public_neuron(&pic, TARGET)
+            .maturity_disbursements_in_progress
+            .unwrap()
+            .is_empty()
+    );
+    // A separate authoritative deposit remains funds, not a receipt for this command.
+    real_fund(&pic, app, 12345);
+    pic.upgrade_canister(
+        app,
+        wasm("d_quorum"),
+        encode_one(None::<d_quorum::state::Mode>).unwrap(),
+        None,
+    )
+    .unwrap();
+    pic.start_canister(app, None).unwrap();
+    for _ in 0..800 {
+        drive(&pic, 10);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        if matches!(j.phase, P::TerminalExecutionVerified(x) if x == id) {
+            assert_eq!(j.marker, original.marker);
+            assert_eq!(j.fingerprint, original.fingerprint);
+            assert_eq!(j.executed_at, Some(executed.executed_timestamp_seconds));
+            assert!(j.terminal_observed_at.is_some());
+            assert!(!j.saw_disbursement && j.earliest_finalization.is_none());
+            assert!(j.receipt.is_none());
+            let repeated: g::ManageResponse = update(
+                &pic,
+                GOVERNANCE,
+                Principal::anonymous(),
+                "manage_neuron",
+                g::request(
+                    TARGET,
+                    g::Command::ClaimOrRefresh(g::Claim {
+                        by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
+                    }),
+                ),
+            );
+            assert!(matches!(
+                repeated.command,
+                Some(g::ResponseCommand::Error(g::GovernanceError {
+                    error_type: 14,
+                    ..
+                }))
+            ));
+            let history: g::Proposals = update(
+                &pic,
+                GOVERNANCE,
+                app,
+                "list_proposals",
+                g::ListProposals {
+                    limit: 100,
+                    before_proposal: None,
+                    include_reward_status: vec![],
+                    exclude_topic: vec![],
+                    include_status: vec![],
+                    include_all_manage_neuron_proposals: Some(true),
+                    omit_large_fields: Some(false),
+                    return_self_describing_action: Some(false),
+                },
+            );
+            assert_eq!(
+                history
+                    .proposal_info
+                    .iter()
+                    .filter(|p| d_quorum::proposal::exact_matches(p, &original, app))
+                    .count(),
+                1
+            );
+            return;
+        }
+    }
+    panic!("actual typed InsufficientFunds barrier must terminate exact executed operation");
 }
 #[derive(Clone, Copy, Debug)]
 enum MaturityOutage {

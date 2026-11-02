@@ -414,22 +414,7 @@ pub async fn step(token: Token, now: u64) -> Result<(), String> {
                 // Finalization pops its record BEFORE awaiting the mint, while retaining
                 // this same neuron lock. Refresh must acquire that lock. Its typed
                 // insufficient-stake refusal also occurs only AFTER acquiring it.
-                let barrier = g::manage(g::request(
-                    TARGET,
-                    g::Command::ClaimOrRefresh(g::Claim {
-                        by: Some(g::By::NeuronIdOrSubaccount(g::Empty {})),
-                    }),
-                ))
-                .await?;
-                if !matches!(barrier,
-                    g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse { refreshed_neuron_id: Some(g::NeuronId { id }) }) if id == TARGET)
-                    && !matches!(
-                        barrier,
-                        g::ResponseCommand::Error(g::GovernanceError { error_type: 14, .. })
-                    )
-                {
-                    return Err("maturity finalization lock barrier unconfirmed".into());
-                }
+                g::maturity_finalization_barrier(TARGET).await?;
                 let after = selection::target().await?;
                 let finished = ic_cdk::api::time() / 1_000_000_000;
                 if !after

@@ -462,6 +462,48 @@
         "lifecycle_regressions::repeated_definite_refusals_cross_two_episodes_without_changing_obligations",
         "lifecycle_regressions::twelve_ambiguous_replies_never_gain_a_new_identity_after_cooldown"
       ]
+    },
+    {
+      "requirement": "barrier adapter preserves typed post-lock enum14 and exact success while ordinary manage remains strict",
+      "suite": "unit",
+      "status": "implemented",
+      "tests": [
+        "governance::tests::maturity_barrier_preserves_only_exact_success_or_typed_post_lock_insufficient_funds"
+      ]
+    },
+    {
+      "requirement": "actual adapter transport decodes only exact barrier success or typed14; malformed, missing, unrelated and rejected outcomes fail closed",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh"
+      ]
+    },
+    {
+      "requirement": "Executed empty-progress typed14 barrier terminates without receipt attribution; failed and uncertain barriers cannot authorize another proposal across upgrade",
+      "suite": "hardening",
+      "status": "implemented",
+      "tests": [
+        "executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not"
+      ]
+    },
+    {
+      "requirement": "pinned real Governance produces typed14 below minimum stake and production timers recover exact executed maturity after the full window and upgrade",
+      "suite": "protocol",
+      "status": "implemented",
+      "tests": [
+        "missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier"
+      ]
+    },
+    {
+      "requirement": "canonical artifact repeats typed14 transport, unresolved barrier, and real-protocol terminal recovery regressions",
+      "suite": "canonical_artifact",
+      "status": "implemented",
+      "tests": [
+        "maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh",
+        "executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not",
+        "missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier"
+      ]
     }
   ],
   "status_semantics": "Source rows identify implemented test coverage. Only dist/evidence/acceptance-matrix.json records executed full acceptance."

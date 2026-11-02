@@ -404,6 +404,36 @@ pub async fn manage(request: ManageRequest) -> Result<ResponseCommand, String> {
     let r: ManageResponse = call(GOVERNANCE, "manage_neuron", request).await?;
     validate_manage_response(expected, r)
 }
+/// A lock-ordering observation for maturity finalization, not a successful stake refresh.
+/// At the pinned Governance revision, this exact by-ID command acquires the same
+/// neuron lock as finalization before returning InsufficientFunds (enum code 14).
+/// Ordinary manage callers must continue treating every Governance error as failure.
+pub async fn maturity_finalization_barrier(neuron_id: u64) -> Result<(), String> {
+    let response = call(
+        GOVERNANCE,
+        "manage_neuron",
+        request(
+            neuron_id,
+            Command::ClaimOrRefresh(Claim {
+                by: Some(By::NeuronIdOrSubaccount(Empty {})),
+            }),
+        ),
+    )
+    .await;
+    validate_maturity_finalization_barrier(neuron_id, response)
+}
+fn validate_maturity_finalization_barrier(
+    neuron_id: u64,
+    response: Result<ManageResponse, String>,
+) -> Result<(), String> {
+    match response?.command {
+        Some(ResponseCommand::ClaimOrRefresh(ClaimResponse {
+            refreshed_neuron_id: Some(NeuronId { id }),
+        })) if id == neuron_id => Ok(()),
+        Some(ResponseCommand::Error(GovernanceError { error_type: 14, .. })) => Ok(()),
+        _ => Err("maturity finalization lock barrier unconfirmed".into()),
+    }
+}
 fn validate_manage_response(expected: u8, r: ManageResponse) -> Result<ResponseCommand, String> {
     match r.command {
         Some(ResponseCommand::Error(e)) => Err(crate::bounded(format!(
@@ -794,6 +824,54 @@ mod tests {
             )
             .is_ok()
         );
+    }
+    #[test]
+    fn maturity_barrier_preserves_only_exact_success_or_typed_post_lock_insufficient_funds() {
+        let check =
+            |command| validate_maturity_finalization_barrier(42, Ok(ManageResponse { command }));
+        assert!(
+            check(Some(ResponseCommand::ClaimOrRefresh(ClaimResponse {
+                refreshed_neuron_id: Some(NeuronId { id: 42 }),
+            })))
+            .is_ok()
+        );
+        for id in [None, Some(NeuronId { id: 43 })] {
+            assert!(
+                check(Some(ResponseCommand::ClaimOrRefresh(ClaimResponse {
+                    refreshed_neuron_id: id,
+                })))
+                .is_err()
+            );
+        }
+        for code in [0, 1, 5, 14, 15, 1000] {
+            let command = Some(ResponseCommand::Error(GovernanceError {
+                error_type: code,
+                // The decision must use the wire enum, never text.
+                error_message: "InsufficientFunds Governance 14".into(),
+            }));
+            assert_eq!(check(command.clone()).is_ok(), code == 14);
+            for expected in 0..4 {
+                assert!(
+                    validate_manage_response(
+                        expected,
+                        ManageResponse {
+                            command: command.clone(),
+                        }
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(check(None).is_err());
+        assert!(check(Some(ResponseCommand::RefreshVotingPower(Empty {}))).is_err());
+        for error in [
+            "rejected",
+            "execution unknown",
+            "malformed Candid",
+            "Governance 14",
+        ] {
+            assert!(validate_maturity_finalization_barrier(42, Err(error.into())).is_err());
+        }
     }
     #[test]
     fn unknown_stored_actions_cannot_be_interpreted_as_absence() {

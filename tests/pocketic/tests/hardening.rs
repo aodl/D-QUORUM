@@ -1381,6 +1381,256 @@ fn executed_maturity_without_transient_progress_requires_lock_barrier_and_never_
 }
 #[test]
 #[ignore = "xtask hardening prepares production Wasm"]
+fn maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh() {
+    let (pic, _, _) = setup(Mode::ObserveOnly, false, 100_000_000_000_000);
+    let probe = install_probe(&pic, wasm("quorum_mocks"));
+    let target = quorum_policy::TARGET;
+    let error = |code| {
+        g::ResponseCommand::Error(g::GovernanceError {
+            error_type: code,
+            error_message: "InsufficientFunds Governance 14".into(),
+        })
+    };
+    for (command, accepted) in [
+        (
+            Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+                refreshed_neuron_id: Some(g::NeuronId { id: target }),
+            })),
+            true,
+        ),
+        (
+            Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+                refreshed_neuron_id: Some(g::NeuronId { id: target + 1 }),
+            })),
+            false,
+        ),
+        (
+            Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+                refreshed_neuron_id: None,
+            })),
+            false,
+        ),
+        (Some(error(14)), true),
+        (Some(error(5)), false),
+        (None, false),
+        (Some(g::ResponseCommand::SetFollowing(g::Empty {})), false),
+    ] {
+        let _: () = update(
+            &pic,
+            GOVERNANCE,
+            Principal::anonymous(),
+            "enqueue",
+            quorum_mocks::Script {
+                method: "manage_neuron".into(),
+                reply: Some(encode_one(g::ManageResponse { command }).unwrap()),
+                reject: None,
+            },
+        );
+        let result: Result<(), String> = update(
+            &pic,
+            probe,
+            Principal::anonymous(),
+            "maturity_barrier_probe",
+            target,
+        );
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
+    }
+    for script in [
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: None,
+            reject: Some("execution unknown; Governance 14".into()),
+        },
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: Some(vec![0, 1, 2]),
+            reject: None,
+        },
+    ] {
+        let _: () = update(&pic, GOVERNANCE, Principal::anonymous(), "enqueue", script);
+        let result: Result<(), String> = update(
+            &pic,
+            probe,
+            Principal::anonymous(),
+            "maturity_barrier_probe",
+            target,
+        );
+        assert!(result.is_err(), "{result:?}");
+    }
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "enqueue",
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: Some(
+                encode_one(g::ManageResponse {
+                    command: Some(error(14)),
+                })
+                .unwrap(),
+            ),
+            reject: None,
+        },
+    );
+    let ordinary: Result<g::ResponseCommand, String> =
+        update(&pic, probe, Principal::anonymous(), "refresh_probe", target);
+    assert!(ordinary.unwrap_err().starts_with("Governance 14:"));
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
+fn executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not() {
+    use d_quorum::state::ProposalPhase as P;
+    let (pic, app, w) = owned_setup();
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_staking_fund",
+        1_000_000_000u64,
+    );
+    let original = (0..400)
+        .find_map(|_| {
+            drive(&pic, 10);
+            query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+                .filter(|j| matches!(j.phase, P::Open(1)))
+        })
+        .expect("exact operation not submitted");
+    pic.stop_canister(app, None).unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "proposal_status",
+        (1u64, 4i32),
+    );
+    // These unrelated credits must never become an attributed maturity receipt.
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_deposit",
+        12345u64,
+    );
+    let _: () = update(
+        &pic,
+        LEDGER,
+        Principal::anonymous(),
+        "ledger_mint",
+        (app, 45678u64),
+    );
+    drive(&pic, 30 * 86400);
+    let typed = |command| quorum_mocks::Script {
+        method: "manage_neuron".into(),
+        reply: Some(encode_one(g::ManageResponse { command }).unwrap()),
+        reject: None,
+    };
+    let error = |code| {
+        Some(g::ResponseCommand::Error(g::GovernanceError {
+            error_type: code,
+            error_message: "InsufficientFunds Governance 14".into(),
+        }))
+    };
+    let refreshes = || {
+        query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+            .iter()
+            .filter(|s| *s == &format!("refresh:{}", quorum_policy::TARGET))
+            .count()
+    };
+    for script in [
+        typed(error(5)),
+        typed(Some(g::ResponseCommand::ClaimOrRefresh(g::ClaimResponse {
+            refreshed_neuron_id: Some(g::NeuronId {
+                id: quorum_policy::TARGET + 1,
+            }),
+        }))),
+        typed(None),
+        typed(Some(g::ResponseCommand::RefreshVotingPower(g::Empty {}))),
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: None,
+            reject: Some("execution unknown".into()),
+        },
+        quorum_mocks::Script {
+            method: "manage_neuron".into(),
+            reply: Some(vec![0, 1, 2]),
+            reject: None,
+        },
+    ] {
+        let count = refreshes();
+        let _: () = update(
+            &pic,
+            GOVERNANCE,
+            Principal::anonymous(),
+            "refresh_reply_for",
+            (quorum_policy::TARGET, script),
+        );
+        pic.start_canister(app, None).unwrap();
+        for _ in 0..100 {
+            drive(&pic, 120);
+            if refreshes() > count {
+                break;
+            }
+        }
+        assert!(
+            refreshes() > count,
+            "must exercise the actual barrier await"
+        );
+        drive(&pic, 3601);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        assert!(matches!(
+            j.phase,
+            P::Executed(1) | P::AwaitingFinalization(1)
+        ));
+        assert!(j.executed_at.is_some());
+        assert!(j.terminal_observed_at.is_none() && j.receipt.is_none());
+        assert_eq!(j.marker, original.marker);
+        assert_eq!(
+            query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+                .iter()
+                .filter(|s| *s == "make_proposal")
+                .count(),
+            1
+        );
+        pic.stop_canister(app, None).unwrap();
+    }
+    pic.upgrade_canister(app, w, encode_one(None::<Mode>).unwrap(), None)
+        .unwrap();
+    let _: () = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "refresh_reply_for",
+        (quorum_policy::TARGET, typed(error(14))),
+    );
+    pic.start_canister(app, None).unwrap();
+    for _ in 0..100 {
+        drive(&pic, 120);
+        let j = query_empty::<Option<d_quorum::state::ProposalJob>>(&pic, app, "proposal_progress")
+            .unwrap();
+        if matches!(j.phase, P::TerminalExecutionVerified(1)) {
+            assert_eq!(j.marker, original.marker);
+            assert_eq!(j.fingerprint, original.fingerprint);
+            assert!(!j.saw_disbursement && j.earliest_finalization.is_none());
+            assert!(j.executed_at.is_some() && j.terminal_observed_at.is_some());
+            assert!(j.receipt.is_none());
+            assert_eq!(
+                query_empty::<Vec<String>>(&pic, GOVERNANCE, "recordings")
+                    .iter()
+                    .filter(|s| *s == "make_proposal")
+                    .count(),
+                1
+            );
+            return;
+        }
+    }
+    panic!("typed InsufficientFunds must reach the terminal barrier caller");
+}
+
+#[test]
+#[ignore = "xtask hardening prepares production Wasm"]
 fn bound_open_proposal_with_pruned_history_remains_unresolved_across_upgrade() {
     use d_quorum::state::ProposalPhase as P;
     let (pic, app, w) = owned_setup();
