@@ -21,7 +21,7 @@ esac
 [ "$DENDRITE_CONFIRM_MAINNET" = "$production_id" ] || { echo "wrong mainnet confirmation" >&2; exit 1; }
 [ "$DENDRITE_DERIVATION_ORIGIN" = "$production_origin" ] || { echo "wrong derivation origin" >&2; exit 1; }
 [ "$DENDRITE_ALTERNATIVE_ORIGINS_JSON" = "$production_alternatives" ] || { echo "wrong alternative-origin document" >&2; exit 1; }
-[ -f Cargo.lock ] && [ -f icp.yaml ] && [ -d .git ] || { echo "unexpected project root" >&2; exit 1; }
+[ -f Cargo.lock ] && [ -f icp.yaml ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "unexpected project root" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "dirty Git worktree" >&2; exit 1; }
 command -v icp >/dev/null
 required_icp_version=1.2.0
