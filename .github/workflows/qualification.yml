@@ -76,7 +76,7 @@ jobs:
           if-no-files-found: error
   canonical:
     name: Canonical reproducibility
-    needs: [behavioral, production, security, coverage]
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, integrated-readiness]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -84,8 +84,17 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: npm --prefix dendrite ci --ignore-scripts
+      - run: cargo install candid-extractor --version 0.1.4 --locked
+      - run: docker buildx create --name dendrite-canonical --driver docker-container --bootstrap
+      - run: cargo run --locked -p xtask -- component_dendrite_canonical
       - run: cargo run --locked -p xtask -- reproducible
       - run: cargo run --locked -p xtask -- canonical_artifact
+      - run: cargo run --locked -p xtask -- system_protocol_canonical
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -93,6 +102,7 @@ jobs:
           path: |
             dist/release/
             dist/evidence/
+            dist/dendrite-canonical/
           if-no-files-found: error
   coverage:
     name: Native coverage
@@ -111,3 +121,98 @@ jobs:
           name: native-coverage
           path: dist/evidence/
           if-no-files-found: error
+
+  shared-system-protocol:
+    name: Shared application real protocol
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
+      - run: cargo run --locked -p xtask -- integration_inventory
+      - run: cargo run --locked -p xtask -- system_protocol
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: shared-system-protocol-evidence
+          path: dist/evidence/
+          if-no-files-found: error
+
+  dendrite-component:
+    name: Dendrite preserved qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: rustup toolchain install 1.94.1 --profile minimal --component llvm-tools-preview --target wasm32-unknown-unknown
+      - run: npm --prefix dendrite ci --ignore-scripts
+      - run: rustup toolchain install nightly-2026-07-17 --profile minimal --component llvm-tools-preview
+      - run: |
+          cargo install cargo-llvm-cov --version 0.6.16 --locked
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+      - run: |
+          mkdir -p .cache/tools
+          curl --fail --location --silent --show-error https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64 --output .cache/tools/osv-scanner
+          echo 'bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc  .cache/tools/osv-scanner' | sha256sum -c -
+          chmod +x .cache/tools/osv-scanner
+      - run: cargo run --locked -p xtask -- component_dendrite
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: evidence-dendrite-component
+          path: |
+            dist/evidence/
+            dendrite/dist/
+          if-no-files-found: error
+
+  signed-browser-ii:
+    name: Signed browser II required
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: rustup toolchain install 1.94.1 --profile minimal --component llvm-tools-preview --target wasm32-unknown-unknown
+      - run: npm --prefix dendrite ci --ignore-scripts
+      - run: cargo run --locked -p xtask -- system_browser
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: evidence-signed-browser-ii
+          path: |
+            dist/evidence/
+            dendrite/dist/
+          if-no-files-found: error
+
+  integrated-readiness:
+    name: Complete integrated requirement selection
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Reject incomplete mandatory integration requirements
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          matrix=json.load(open('docs/integration-matrix.json'))
+          incomplete=[r['id'] for r in matrix['requirements'] if r.get('mandatory',True) and r['status']!='implemented']
+          assert not incomplete, 'Mandatory integration requirements remain incomplete: '+', '.join(incomplete)
+          PYTHON

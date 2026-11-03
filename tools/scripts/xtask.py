@@ -63,7 +63,7 @@ def run(args,kind='validator',name=None,show=True):
     class Result:pass
     p=Result();p.returncode=process.returncode;p.stdout=''.join(lines)
     if not show and p.returncode:print(p.stdout,flush=True)
-    record={'name':name or ' '.join(map(str,args)),'kind':kind,'exit_code':p.returncode}
+    record={'name':name or ' '.join(map(str,args)),'kind':kind,'exit_code':p.returncode,'command_exit_code':p.returncode}
     log_name=f"{sys.argv[1]}-{len(results)+1:03}-"+re.sub(r'[^a-zA-Z0-9_.-]+','-',record['name'])[:100]+'.log'
     (OUT/log_name).write_text(p.stdout)
     record['log']=log_name
@@ -260,7 +260,7 @@ def full():
         requirement['status']='executed' if requirement['suite'] in completed_suites else 'unrun'
     matrix['local_gates_passed']=True
     matrix['qualified']=True
-    matrix['qualification_scope']='local undeployed candidate only; no hosted CI or mainnet compatibility assertion'
+    matrix['qualification_scope']='D-QUORUM component only; excludes integrated Dendrite/browser qualification; local undeployed source, no hosted CI or mainnet compatibility assertion'
     matrix['source_commit']=SOURCE_COMMIT
     matrix['remote_ci']='awaits separately authorized push'
     (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')
@@ -353,7 +353,11 @@ def integrated_acceptance():
     # Independent required lanes continue after failures. No weaker lane can
     # substitute for an unavailable component, real protocol or signed browser.
     for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical)]:
-        try:gate()
+        try:
+            gate()
+            if name=='acceptance':
+                save()
+                shutil.copyfile(OUT/(sys.argv[1]+'-run.json'),OUT/'dquorum-component-acceptance-run.json')
         except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as error:report['failures'].append({'suite':name,'error':str(error)})
         report_path.write_text(json.dumps(report,indent=2)+'\n')
     matrix=json.loads((ROOT/'docs/integration-matrix.json').read_text())

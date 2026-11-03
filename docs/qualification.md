@@ -1,3 +1,15 @@
+# Integrated repository qualification — pending
+
+The full-history import starts at D-QUORUM `448bcd2129240be7cd4caee3984d74ae70ad9030` and Dendrite `b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291`. [Baseline](integration-baseline.json) records the exact paths, trees and pins. The unsquashed subtree merge is `2c06753d40c8f9bca35caecdf2eeb6f2d0778ab3`; the original sibling is unchanged. Each component keeps its own workspace, lockfile, production canister, interface, authority and release procedure. The imported evaluator matches D-QUORUM's pinned vendored source byte for byte.
+
+The current integrated source is **not qualified**. [The mandatory integration matrix](integration-matrix.json) distinguishes implemented cases from incomplete scenarios. Component results below belong to their stated historical source, not the imported repository. New preflight runs do not requalify a changed source. Hosted CI has not run; no push or mainnet write is authorized.
+
+The local real-II lane exposed a protocol compatibility blocker: the actual application refuses the returned unrestricted delegation, as required by its Governance-only authority check. The fixture disables dummy authentication in both pinned II modules, uses virtual WebAuthn through the actual II UI, and observes zero Governance requests after refusal. The positive signed-management test remains mandatory and fails. At II source `66bd7bcf6350f51811057f4c4dae1ff12aa67b8c`, `src/frontend/src/lib/stores/channelHandlers/delegation.ts` does not apply the requested `targets` when preparing the account delegation. No broad delegation is accepted to obtain a green test. Consequently the full signed-browser manager-metadata reproduction and connected browser/economic golden journey remain blocked. Real Governance independently confirms that all five known-manager batch records omit known metadata while scalar queries return it; the frontend helper remains unchanged until the required full reproduction is possible.
+
+The preserved Dendrite audit initially found 12 RustSec vulnerabilities. Seven native-only dependency versions were patched within their existing compatible dependency constraints; all seven are absent from the production dependency graph and prepared production Wasm bytes remain unchanged. RustSec then reports zero vulnerabilities. The full OSV scan still fails on npm development-tool advisories; production-only npm audit reports zero. No security exception suppresses these failures. Complete integrated qualification remains unavailable even if individual release builds reproduce.
+
+## Historical D-QUORUM maturity-barrier qualification
+
 # Maturity lock-barrier correction qualification
 
 **All mandatory local gates passed for this undeployed candidate.** The source-stable full acceptance command exited normally with status 0 on 2026-11-02. [The actual launcher receipt](../dist/evidence/launcher-exit.json) records the result. Hosted CI is unrun. No push or mainnet write occurred.
