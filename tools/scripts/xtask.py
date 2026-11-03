@@ -294,6 +294,8 @@ def component_dendrite_canonical():
     run(['sh','-c','cd dendrite && tools/scripts/verify-docker-reproducible.sh'],name='Dendrite two forced-clean canonical builds and export checks')
     directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT
     run(['python3','tools/scripts/verify_artifact.py',directory/'canonical-a/dendrite.wasm','dendrite'],name='canonical Dendrite complete production exports')
+    version=run(['candid-extractor','--version'],name='pinned runtime Candid extraction tool').strip()
+    if version!='candid-extractor 0.1.6':raise RuntimeError('runtime Candid extraction requires candid-extractor 0.1.6')
     output=run(['candid-extractor',directory/'canonical-a/dendrite.wasm'],name='actual canonical Dendrite runtime Candid extraction')
     (directory/'dendrite.did').write_text(output)
     run([ROOT/'.cache/tools/didc','check','--strict',directory/'dendrite.did',ROOT/'dendrite/canisters/dendrite/dendrite.did'],name='actual Dendrite Candid structural compatibility')

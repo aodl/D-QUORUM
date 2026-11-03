@@ -89,7 +89,7 @@ jobs:
           node-version: 24.15.0
       - run: npm install --global npm@11.12.1 --ignore-scripts
       - run: npm --prefix dendrite ci --ignore-scripts
-      - run: cargo install candid-extractor --version 0.1.4 --locked
+      - run: cargo install candid-extractor --version 0.1.6 --locked
       - run: docker buildx create --name dendrite-canonical --driver docker-container --bootstrap
       - run: cargo run --locked -p xtask -- component_dendrite_canonical
       - run: cargo run --locked -p xtask -- reproducible
