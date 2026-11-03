@@ -264,6 +264,7 @@ def full():
     matrix['source_commit']=SOURCE_COMMIT
     matrix['remote_ci']='awaits separately authorized push'
     (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')
+    completed_suites.add('acceptance')
 
 def evaluator_consistency():
     pairs=[('LICENSE','LICENSE'),('crates/dendrite-types/Cargo.toml','crates/dendrite-types/Cargo.toml'),('canisters/dendrite/web/test/fixtures/evaluator.json','canisters/dendrite/web/test/fixtures/evaluator.json')]
@@ -290,6 +291,7 @@ def component_dendrite():
 
 def component_dendrite_canonical():
     if SOURCE_DIRTY:raise RuntimeError('commit source before component canonical builds')
+    provision()
     os.environ.update(DENDRITE_CANISTER_ID="hp4av-oiaaa-aaaar-qcaha-cai",DENDRITE_DERIVATION_ORIGIN="https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io",DENDRITE_BUILD_MODE="production",DENDRITE_FETCH_ROOT_KEY="false",DENDRITE_ALTERNATIVE_ORIGINS_JSON='{"alternativeOrigins":[]}',DENDRITE_API_HOST="https://icp-api.io",DENDRITE_IDENTITY_PROVIDER="https://id.ai/authorize",SOURCE_DATE_EPOCH="0",DENDRITE_REPRO_EVIDENCE_DIR=str(ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT))
     run(['sh','-c','cd dendrite && tools/scripts/verify-docker-reproducible.sh'],name='Dendrite two forced-clean canonical builds and export checks')
     directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT
@@ -339,6 +341,7 @@ def integration_inventory():
     inventory['frontend_test_targets']=[str(p.relative_to(ROOT)) for p in (ROOT/'dendrite/canisters/dendrite/web/test').glob('*.test.js')]
     (OUT/'integration-inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
     evaluator_consistency()
+    completed_suites.add('integration_inventory')
 
 def system_browser():
     prepare()
