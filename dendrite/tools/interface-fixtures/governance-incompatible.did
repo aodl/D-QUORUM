@@ -1,0 +1,2 @@
+type ListKnownNeuronsResponse = record { known_neurons : nat64 };
+service : { list_known_neurons : () -> (ListKnownNeuronsResponse) query };

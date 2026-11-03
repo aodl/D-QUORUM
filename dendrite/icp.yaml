@@ -1,0 +1,9 @@
+canisters:
+  - name: dendrite
+    settings:
+      freezing_threshold: 7776000
+    recipe:
+      type: "@dfinity/prebuilt@v2.0.0"
+      configuration:
+        path: dist/release/dendrite.wasm
+        sha256: 74f6090a729fa467908985c8ef8adc415e237fdf2e6eda8fa7d6a68a0aade972

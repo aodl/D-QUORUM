@@ -1,0 +1,19 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2026-10-17
+reason = "Unmaintained compile-time-only paste macro is transitive through pinned Candid; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0012"
+ignoreUntil = 2026-10-17
+reason = "Unmaintained backoff is reachable only through dev/test PocketIC and excluded from the production tree; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+ignoreUntil = 2026-10-17
+reason = "Unmaintained instant is reachable only through dev/test PocketIC and excluded from the production tree; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0127"
+ignoreUntil = 2026-10-17
+reason = "serde_cbor is transitive through official HTTP certification libraries and dev/test PocketIC; see docs/security.md."

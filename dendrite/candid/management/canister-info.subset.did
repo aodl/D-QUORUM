@@ -1,0 +1,15 @@
+// Reviewed subset of dfinity/ic@d55a0f4d4edfabe49d8fd543aff473084cb741f2.
+// Source: rs/types/management_canister_types/src/lib.rs
+type CanisterInfoRequest = record {
+  canister_id : principal;
+  num_requested_changes : opt nat64;
+};
+type CanisterInfoResponse = record {
+  total_num_changes : nat64;
+  recent_changes : vec reserved;
+  module_hash : opt blob;
+  controllers : vec principal;
+};
+service : {
+  canister_info : (CanisterInfoRequest) -> (CanisterInfoResponse);
+};

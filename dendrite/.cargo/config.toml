@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
+[build]
+rustflags = ["-C", "link-arg=-s"]
+

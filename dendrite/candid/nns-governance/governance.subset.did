@@ -1,0 +1,60 @@
+// Reviewed structural subset of dfinity/ic@d55a0f4d4edfabe49d8fd543aff473084cb741f2.
+// Source: rs/nns/governance/canister/governance.did
+type NeuronId = record { id : nat64 };
+type Followees = record { followees : vec NeuronId };
+type KnownNeuronData = record {
+  name : text;
+  description : opt text;
+  links : opt vec text;
+  committed_topics : opt vec opt reserved;
+};
+type DissolveState = variant {
+  DissolveDelaySeconds : nat64;
+  WhenDissolvedTimestampSeconds : nat64
+};
+type Neuron = record {
+  id : opt NeuronId;
+  staked_maturity_e8s_equivalent : opt nat64;
+  controller : opt principal;
+  not_for_profit : bool;
+  maturity_e8s_equivalent : nat64;
+  cached_neuron_stake_e8s : nat64;
+  created_timestamp_seconds : nat64;
+  auto_stake_maturity : opt bool;
+  aging_since_timestamp_seconds : nat64;
+  hot_keys : vec principal;
+  dissolve_state : opt DissolveState;
+  followees : vec record { int32; Followees };
+  neuron_fees_e8s : nat64;
+  visibility : opt int32;
+  known_neuron_data : opt KnownNeuronData;
+  voting_power_refreshed_timestamp_seconds : opt nat64;
+  deciding_voting_power : opt nat64;
+  potential_voting_power : opt nat64;
+};
+type NeuronInfo = record {
+  id : opt NeuronId;
+  retrieved_at_timestamp_seconds : nat64;
+  known_neuron_data : opt KnownNeuronData;
+  visibility : opt int32;
+};
+type GovernanceError = record { error_message : text; error_type : int32 };
+type NeuronInfoResult = variant { Ok : NeuronInfo; Err : GovernanceError };
+type ListNeurons = record {
+  neuron_ids : vec nat64;
+  include_neurons_readable_by_caller : bool;
+  include_empty_neurons_readable_by_caller : opt bool;
+  include_public_neurons_in_full_neurons : opt bool;
+  page_number : opt nat64;
+  page_size : opt nat64;
+  neuron_subaccounts : opt vec record { subaccount : blob };
+};
+type ListNeuronsResponse = record {
+  neuron_infos : vec record { nat64; NeuronInfo };
+  full_neurons : vec Neuron;
+  total_pages_available : opt nat64;
+};
+service : {
+  list_neurons : (ListNeurons) -> (ListNeuronsResponse) query;
+  get_neuron_info : (nat64) -> (NeuronInfoResult) query;
+};

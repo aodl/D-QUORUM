@@ -1,0 +1,2 @@
+type NetworkEconomics = record { neuron_management_fee_per_proposal_e8s : text };
+service : { get_network_economics_parameters : () -> (NetworkEconomics) query };

@@ -1,0 +1,6 @@
+.git
+.dfx
+dist
+node_modules
+target
+CODEX_START_PROMPT.md
