@@ -71,9 +71,13 @@ def run(args,kind='validator',name=None,show=True):
     if kind=='behaviour':
         summaries=re.findall(r'test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored;',p.stdout)
         counts={k:sum(int(s[i]) for s in summaries) for i,k in [(1,'passed'),(2,'failed'),(3,'ignored')]}
+        node_passed=re.findall(r'(?m)^[ℹ#] (?:pass|passed) (\d+)\s*$',p.stdout)
+        node_failed=re.findall(r'(?m)^[ℹ#] (?:fail|failed) (\d+)\s*$',p.stdout)
+        node_skipped=re.findall(r'(?m)^[ℹ#] skipped (\d+)\s*$',p.stdout)
+        counts['passed']+=sum(map(int,node_passed));counts['failed']+=sum(map(int,node_failed));counts['ignored']+=sum(map(int,node_skipped))
         record.update(counts)
-        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)
-        if not summaries or counts['passed']==0 or counts['failed']!=0 or counts['ignored']!=0 or len(record['executed_tests'])!=counts['passed']:
+        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)+re.findall(r'(?m)^✔ (.+?) \([0-9.]+m?s\)$',p.stdout)
+        if (not summaries and not node_passed) or counts['passed']==0 or counts['failed']!=0 or counts['ignored']!=0 or len(record['executed_tests'])!=counts['passed']:
             record['exit_code']=1;record['error']='missing positive execution, failed tests, or invalid summaries'
     results.append(record);save()
     if record['exit_code']!=0: raise RuntimeError(f"required gate failed: {record['name']}")
@@ -94,6 +98,7 @@ def prepare():
     for name in ('d_quorum','quorum_mocks'):
         path=ROOT/f'target/wasm32-unknown-unknown/release/{name}.wasm'
         PREPARED_ARTIFACTS[name]=hashlib.sha256(path.read_bytes()).hexdigest()
+    run(['cargo','build','--locked','--release','--target','wasm32-unknown-unknown','--manifest-path','dendrite/Cargo.toml','-p','dendrite'],name='prepare independent Dendrite Wasm')
     provision()
 
 def provision():
@@ -194,11 +199,16 @@ def canonical_artifact():
     for path,digest in manifest['source_files'].items():
         if path.startswith(('canisters/','crates/','vendor/','candid/')) or path in ('Cargo.toml','Cargo.lock','rust-toolchain.toml','Dockerfile.repro'):
             if hashlib.sha256((ROOT/path).read_bytes()).hexdigest()!=digest:raise RuntimeError('canonical source changed: '+path)
+    previous_wasm=os.environ.get('D_QUORUM_TEST_WASM')
     os.environ['D_QUORUM_TEST_WASM']=str(artifact)
     PREPARED_ARTIFACTS['canonical']=hashlib.sha256(artifact.read_bytes()).hexdigest()
-    run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
-    for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('hardening','reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal'),('protocol','financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake'),('protocol','missed_entire_maturity_window_recovers_across_real_upgrade'),('protocol','lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window'),('hardening','maintenance_last_attempt_lost_during_upgrade_remains_bounded_and_never_resends_payment'),('protocol','repeated_real_ledger_refusals_recover_after_durable_cooldown'),('hardening','maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh'),('hardening','executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not'),('protocol','missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
-        run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
+    try:
+        run(['python3','tools/scripts/verify_artifact.py',artifact],name='canonical actual exports and embedded Candid')
+        for target,name in [('mocked','production_timers_ignore_private_support_and_recover_upgrade_configuration'),('protocol','production_bootstrap_roster_manager_maturity_payout_upgrade_natural_timers'),('hardening','reviewed_v1_snapshot_upgrades_to_v2_and_survives_a_second_upgrade'),('hardening','setter_during_paused_sent_intent_readback_never_retries_obsolete_revision'),('hardening','expired_a_is_confirmed_from_history_then_never_sent_b_c_get_fresh_attempts_and_fees'),('hardening','reviewed_v2_financial_snapshot_migrates_without_duplicate_payment_or_proposal'),('protocol','financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake'),('protocol','missed_entire_maturity_window_recovers_across_real_upgrade'),('protocol','lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window'),('hardening','maintenance_last_attempt_lost_during_upgrade_remains_bounded_and_never_resends_payment'),('protocol','repeated_real_ledger_refusals_recover_after_durable_cooldown'),('hardening','maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh'),('hardening','executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not'),('protocol','missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier'),('capacity','two_hundred_forty_recipients_fifteen_seats')]:
+            run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--exact',name,'--nocapture','--test-threads=1'],kind='behaviour',name='canonical:'+name)
+    finally:
+        if previous_wasm is None:os.environ.pop('D_QUORUM_TEST_WASM',None)
+        else:os.environ['D_QUORUM_TEST_WASM']=previous_wasm
     completed_suites.add('canonical_artifact')
 
 def coverage():
@@ -255,7 +265,105 @@ def full():
     matrix['remote_ci']='awaits separately authorized push'
     (OUT/'acceptance-matrix.json').write_text(json.dumps(matrix,indent=2)+'\n')
 
-COMMANDS={'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
+def evaluator_consistency():
+    pairs=[('LICENSE','LICENSE'),('crates/dendrite-types/Cargo.toml','crates/dendrite-types/Cargo.toml'),('canisters/dendrite/web/test/fixtures/evaluator.json','canisters/dendrite/web/test/fixtures/evaluator.json')]
+    pairs += [(str(p.relative_to(ROOT/'vendor/dendrite')),str(p.relative_to(ROOT/'vendor/dendrite'))) for p in (ROOT/'vendor/dendrite/crates/dendrite-types/src').glob('*.rs')]
+    for vendored, imported in pairs:
+        if (ROOT/'vendor/dendrite'/vendored).read_bytes() != (ROOT/'dendrite'/imported).read_bytes():raise RuntimeError('evaluator divergence: '+vendored)
+    print('Evaluator sources, manifest and fixtures byte-identical',flush=True)
+    completed_suites.add('evaluator_consistency')
+
+def component_dendrite():
+    evaluator_consistency();provision()
+    os.environ['PATH']=str(ROOT/'.cache/tools')+os.pathsep+os.environ['PATH']
+    os.environ.update(DENDRITE_CANISTER_ID="hp4av-oiaaa-aaaar-qcaha-cai",DENDRITE_DERIVATION_ORIGIN="https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io",DENDRITE_BUILD_MODE="production",DENDRITE_FETCH_ROOT_KEY="false")
+    # Keep the nested workspace, lockfile, runner and generated outputs independent.
+    run(['npm','--prefix','dendrite','ci','--ignore-scripts'],name='Dendrite locked frontend dependencies')
+    failures=[]
+    for command in ['check','test','coverage','security-scan','sbom']:
+        try:run(['sh','-c','cd dendrite && cargo xtask '+command],kind='behaviour' if command in ('check','test','coverage') else 'validator',name='Dendrite preserved gate:'+command)
+        except RuntimeError as error:failures.append(str(error))
+    try:run(['npm','--prefix','dendrite','run','test:coverage'],kind='behaviour',name='Dendrite frontend coverage')
+    except RuntimeError as error:failures.append(str(error))
+    if failures:raise RuntimeError('; '.join(failures))
+    completed_suites.add('component_dendrite')
+
+def component_dendrite_canonical():
+    if SOURCE_DIRTY:raise RuntimeError('commit source before component canonical builds')
+    os.environ.update(DENDRITE_CANISTER_ID="hp4av-oiaaa-aaaar-qcaha-cai",DENDRITE_DERIVATION_ORIGIN="https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io",DENDRITE_BUILD_MODE="production",DENDRITE_FETCH_ROOT_KEY="false",DENDRITE_ALTERNATIVE_ORIGINS_JSON='{"alternativeOrigins":[]}',DENDRITE_API_HOST="https://icp-api.io",DENDRITE_IDENTITY_PROVIDER="https://id.ai/authorize",SOURCE_DATE_EPOCH="0",DENDRITE_REPRO_EVIDENCE_DIR=str(ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT))
+    run(['sh','-c','cd dendrite && tools/scripts/verify-docker-reproducible.sh'],name='Dendrite two forced-clean canonical builds and export checks')
+    directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT
+    run(['python3','tools/scripts/verify_artifact.py',directory/'canonical-a/dendrite.wasm','dendrite'],name='canonical Dendrite complete production exports')
+    output=run(['candid-extractor',directory/'canonical-a/dendrite.wasm'],name='actual canonical Dendrite runtime Candid extraction')
+    (directory/'dendrite.did').write_text(output)
+    run([ROOT/'.cache/tools/didc','check','--strict',directory/'dendrite.did',ROOT/'dendrite/canisters/dendrite/dendrite.did'],name='actual Dendrite Candid structural compatibility')
+    completed_suites.add('component_dendrite_canonical')
+
+def system_protocol():
+    evaluator_consistency();prepare()
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','protocol','--','--ignored','--exact','connected_dendrite_and_automation_use_one_real_governance_and_ledger','--nocapture','--test-threads=1'],kind='behaviour',name='shared real protocol applications')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','protocol','--','--ignored','--exact','connected_real_maturity_rewards_and_later_harvest','--nocapture','--test-threads=1'],kind='behaviour',name='shared real economic lifecycle')
+    completed_suites.add('system_protocol')
+
+def system_protocol_canonical():
+    if SOURCE_DIRTY:raise RuntimeError('commit source before canonical pair qualification')
+    manifest=json.loads((ROOT/'dist/release/manifest.json').read_text())
+    if manifest['source_commit']!=SOURCE_COMMIT:raise RuntimeError('canonical D-QUORUM source mismatch')
+    dq=ROOT/'dist/release/d_quorum.wasm'
+    if hashlib.sha256(dq.read_bytes()).hexdigest()!=manifest['artifacts']['d_quorum.wasm']:raise RuntimeError('canonical D-QUORUM hash mismatch')
+    directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT/'canonical-a'
+    for line in (directory/'SHA256SUMS').read_text().splitlines():
+        digest,name=line.split('  ',1)
+        if hashlib.sha256((directory/name).read_bytes()).hexdigest()!=digest:raise RuntimeError('canonical Dendrite checksum mismatch: '+name)
+    previous={key:os.environ.get(key) for key in ('D_QUORUM_TEST_WASM','DENDRITE_TEST_WASM')}
+    for name in ('connected-applications.json','connected-economic-lifecycle.json'):
+        path=OUT/name
+        if path.exists():shutil.copyfile(path,OUT/('prepared-'+name))
+    os.environ['D_QUORUM_TEST_WASM']=str(dq);os.environ['DENDRITE_TEST_WASM']=str(directory/'dendrite.wasm')
+    try:system_protocol()
+    finally:
+        for key,value in previous.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+    pair={'root_source':SOURCE_COMMIT,'dendrite_import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','dquorum_manifest':'dist/release/manifest.json','dendrite_release':'dist/dendrite-canonical/'+SOURCE_COMMIT+'/canonical-a','dquorum_wasm_sha256':hashlib.sha256(dq.read_bytes()).hexdigest(),'dendrite_wasm_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'dquorum_candid_sha256':hashlib.sha256((ROOT/'candid/d_quorum.did').read_bytes()).hexdigest(),'dendrite_candid_sha256':hashlib.sha256((directory.parent/'dendrite.did').read_bytes()).hexdigest(),'protocol_pins_sha256':hashlib.sha256((ROOT/'protocol-pins.json').read_bytes()).hexdigest(),'evaluator':'nns-dendrite/1.1-draft; unchanged vendored source','tested_pair':'two shared real protocol cases; no signed-browser Governance success claim','full_integrated_qualified':False}
+    (ROOT/'dist/integration-manifest.json').write_text(json.dumps(pair,indent=2)+'\n')
+    completed_suites.add('system_protocol_canonical')
+
+def integration_inventory():
+    inventory={'classification':'discovery only; no execution claims','component_gates':{'dquorum':list(COMMANDS),'dendrite':['check','test','coverage','build','build-reproducible','verify-reproducible','security-scan','sbom','npm test','npm run test:coverage','tools/scripts/check-interface-drift.sh','tools/scripts/verify-docker-reproducible.sh','tools/scripts/browser-smoke.sh']},'workspaces':{}}
+    for component,directory in [('dquorum',ROOT),('dendrite',ROOT/'dendrite')]:
+        meta=json.loads(subprocess.check_output(['cargo','metadata','--locked','--no-deps','--format-version','1'],cwd=directory))
+        inventory['workspaces'][component]=[{'package':p['name'],'targets':p['targets']} for p in meta['packages'] if p['id'] in meta['workspace_members']]
+    inventory['frontend_test_targets']=[str(p.relative_to(ROOT)) for p in (ROOT/'dendrite/canisters/dendrite/web/test').glob('*.test.js')]
+    (OUT/'integration-inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
+    evaluator_consistency()
+
+def system_browser():
+    prepare()
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_capability','--','--ignored','--exact','actual_ii_page_and_virtual_webauthn_capability','--nocapture'],kind='behaviour',name='actual II browser capability')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_unrestricted_delegation_is_rejected_before_governance','--nocapture'],kind='behaviour',name='actual II scope refusal before Governance')
+    completed_suites.add('system_browser_safety')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_compiled_frontend_known_managers_and_signed_governance','--nocapture'],kind='behaviour',name='actual II and signed real Governance team management')
+    completed_suites.add('system_browser')
+
+def integrated_acceptance():
+    report={'qualified':False,'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'status':'running','failures':[]}
+    report_path=OUT/'integrated-acceptance.json'
+    report_path.write_text(json.dumps(report,indent=2)+'\n')
+    # Independent required lanes continue after failures. No weaker lane can
+    # substitute for an unavailable component, real protocol or signed browser.
+    for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical)]:
+        try:gate()
+        except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as error:report['failures'].append({'suite':name,'error':str(error)})
+        report_path.write_text(json.dumps(report,indent=2)+'\n')
+    matrix=json.loads((ROOT/'docs/integration-matrix.json').read_text())
+    for requirement in matrix['requirements']:
+        requirement['execution']='passed' if requirement['status']=='implemented' and requirement['suite'] in completed_suites else 'unqualified'
+    report['requirements']=matrix['requirements'];report['status']='incomplete'
+    report_path.write_text(json.dumps(report,indent=2)+'\n')
+    if report['failures'] or any(r['execution']!='passed' for r in report['requirements']):raise RuntimeError('Integrated qualification incomplete; inspect integrated-acceptance.json')
+
+COMMANDS={'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
 try:
     cmd=sys.argv[1] if len(sys.argv)>1 else 'help'
     if cmd not in COMMANDS:raise RuntimeError('commands: '+', '.join(COMMANDS))

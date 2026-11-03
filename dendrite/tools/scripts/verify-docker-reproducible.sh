@@ -22,3 +22,11 @@ cmp "$first/SHA256SUMS" "$second/SHA256SUMS"
 )
 echo "two clean canonical Docker builds are byte-identical"
 cat "$first/SHA256SUMS"
+
+# Optional retention of the already compared artifacts for independent review.
+if [ -n "${DENDRITE_REPRO_EVIDENCE_DIR:-}" ]; then
+  [ ! -e "$DENDRITE_REPRO_EVIDENCE_DIR/canonical-a" ] && [ ! -e "$DENDRITE_REPRO_EVIDENCE_DIR/canonical-b" ] || { echo "repro evidence already exists" >&2; exit 1; }
+  mkdir -p "$DENDRITE_REPRO_EVIDENCE_DIR"
+  cp -R "$first" "$DENDRITE_REPRO_EVIDENCE_DIR/canonical-a"
+  cp -R "$second" "$DENDRITE_REPRO_EVIDENCE_DIR/canonical-b"
+fi

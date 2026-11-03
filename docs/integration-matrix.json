@@ -1,0 +1,78 @@
+{
+  "scope": "Integrated repository qualification; component reports remain separately scoped",
+  "qualified": false,
+  "requirements": [
+    {
+      "id": "history-workspaces-evaluator",
+      "suite": "integration_inventory",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "dquorum-preserved-full-qualification",
+      "suite": "acceptance",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "dendrite-native-frontend-fixture-coverage-security",
+      "suite": "component_dendrite",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "dendrite-canonical-two-clean-builds",
+      "suite": "component_dendrite_canonical",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "shared-real-governance-ledger-compliance-selection-payments",
+      "suite": "system_protocol",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "real-voting-reward-accrual-missed-window-upgrade-later-harvest-new-roster",
+      "suite": "system_protocol",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "real-ii-webauthn-unrestricted-scope-refused-before-governance",
+      "suite": "system_browser_safety",
+      "status": "implemented",
+      "mandatory": true
+    },
+    {
+      "id": "actual-ii-compiled-browser-signed-management-known-metadata",
+      "suite": "system_browser",
+      "status": "blocked: pinned II returns unrestricted delegation; production refusal preserved",
+      "mandatory": true
+    },
+    {
+      "id": "real-ii-security-cancellation-expiry-identity-authority-adversarial",
+      "suite": "system_browser",
+      "status": "incomplete; component fakes do not substitute",
+      "mandatory": true
+    },
+    {
+      "id": "one-browser-to-economic-golden-world",
+      "suite": "system_protocol",
+      "status": "incomplete; two connected backend tests are separate from browser world",
+      "mandatory": true
+    },
+    {
+      "id": "dendrite-authenticated-upgrade-and-assets-version-mismatch",
+      "suite": "system_browser",
+      "status": "incomplete",
+      "mandatory": true
+    },
+    {
+      "id": "canonical-pair-and-review-bundle-verification",
+      "suite": "integrated_acceptance",
+      "status": "incomplete",
+      "mandatory": true
+    }
+  ]
+}

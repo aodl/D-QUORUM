@@ -6,3 +6,8 @@ dist
 coverage
 *.pem
 .env*
+
+**/node_modules
+**/target
+**/dist
+**/.icp
