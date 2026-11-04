@@ -82,7 +82,7 @@ export async function deriveGovernanceSession(bootstrap, bootstrapPublicKey) {
   if (!(bootstrapPublicKey instanceof Uint8Array) || leaf.length !== bootstrapPublicKey.length || !leaf.every((byte, index) => byte === bootstrapPublicKey[index])) {
     throw new Error("Internet Identity delegation does not bind the requested bootstrap key.");
   }
-  const transactionKey = await ECDSAKeyIdentity.generate();
+  const transactionKey = await ECDSAKeyIdentity.generate({ extractable: false });
   // SDK Date precision is milliseconds: round DOWN so no parent is outlived.
   const restricted = await DelegationChain.create(bootstrap, transactionKey.getPublicKey(), new Date(Number(expiration / 1_000_000n)), { previous: chain, targets: [NNS_GOVERNANCE_PRINCIPAL] });
   const identity = DelegationIdentity.fromDelegation(transactionKey, restricted);
@@ -101,7 +101,8 @@ export function createBrowserAuthSession(options = {}) {
   const signOut = async () => {
     generation++;
     current = undefined;
-    idle?.exit(); idle = undefined;
+    const previousIdle = idle; idle = undefined;
+    previousIdle?.exit();
     if (client) await client.signOut();
   };
   return {
@@ -119,7 +120,7 @@ export function createBrowserAuthSession(options = {}) {
       const token = ++generation;
       let authClient, session;
       try {
-        const bootstrapKey = await ECDSAKeyIdentity.generate();
+        const bootstrapKey = await ECDSAKeyIdentity.generate({ extractable: false });
         if (token !== generation) throw new Error("Authentication cancelled.");
         // Supplying the identity bypasses AuthClient's legacy localStorage migration.
         // Discard credential writes; AuthClient still writes a non-secret expiry
@@ -140,7 +141,12 @@ export function createBrowserAuthSession(options = {}) {
         if (token !== generation) throw new Error("Authentication session has been signed out.");
         return session.validate();
       } });
-      if (globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => { void signOut(); globalThis.location.reload(); } });
+      if (globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => {
+        // SDK exit() invokes callbacks even during manual teardown. Clear the
+        // reference first, and never recursively exit an already exiting manager.
+        if (!idle) return;
+        idle = undefined; void signOut(); globalThis.location.reload();
+      } });
       return current;
     },
     signOut,

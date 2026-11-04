@@ -40,7 +40,7 @@ test("one pipeline submits the identical reviewed object only after confirmation
   assert.equal(requests.length, 0);
   await assert.rejects(() => pipeline.submit(review), /confirmed/);
   const result = await pipeline.submit(review, { confirmed: true });
-  assert.equal(result.proposalId, 77n); assert.equal(requests[0], review.request); assert.equal(checks, 2); assert.equal(validations, 2); assert.equal(pipeline.pending, undefined);
+  assert.equal(result.proposalId, 77n); assert.equal(requests[0], review.request); assert.equal(checks, 2); assert.equal(validations, 3); assert.equal(pipeline.pending, undefined);
 });
 
 test("stale authority relationship and changed fees discard or block submission", async () => {
@@ -810,4 +810,33 @@ test("exact request reviews render every typed value and direct standard impact 
   assert.match(directImpact("Follow replacement"), /following/);
   assert.match(directImpact("following replacement"), /following/);
   assert.equal(directImpact("Split"), undefined);
+});
+
+test('manager scalar registration is revalidated at actual submission and unavailable evidence cannot become absence', async () => {
+  let mutations=0, available=true, registered=true, reads=0;
+  const actor={
+    get_network_economics_parameters:async()=>({neuron_management_fee_per_proposal_e8s:1n}),
+    list_neurons:async({neuron_ids})=>({full_neurons:neuron_ids.map(id=>({id:[{id}],visibility:[2],known_neuron_data:[]})),neuron_infos:neuron_ids.map(id=>[id,{retrieved_at_timestamp_seconds:100n}]),total_pages_available:[1n]}),
+    get_neuron_info:async id=>{reads++;if(!available)throw Error('metadata transport unavailable');return {Ok:{id:[{id}],visibility:[2],retrieved_at_timestamp_seconds:100n,known_neuron_data:registered?[{name:`Manager ${id}`,description:[],links:[]}]:[]}};},
+    manage_neuron:async()=>{mutations++;throw Error('unexpected mutation');},
+  };
+  const pipeline=createTransactionPipeline({getSession:async()=>targetedSession(),getNnsActor:async()=>actor,checkNeuron:async()=>report()});
+  for(const kind of ['absent','unavailable']){
+    available=true;registered=true;
+    const review=await pipeline.reviewProposal({targetId:20n,managerId:10n,prepare:preparePrimaryFollow(1,[10n,11n,12n,13n,14n])});
+    const beforeSubmission=reads;
+    if(kind==='absent')registered=false;else available=false;
+    await assert.rejects(pipeline.submit(review,{confirmed:true}),kind==='absent'?/known/:/metadata transport unavailable/);
+    assert.equal(mutations,0);assert.equal(pipeline.state,'none');assert.ok(reads>beforeSubmission);
+  }
+});
+
+test('session expiry during final economics await blocks the actual dispatch', async () => {
+  let valid=true, economicsReads=0, mutations=0;
+  const live={...targetedSession(),validate(){if(!valid)throw Error('effective delegation expired');return true;}};
+  const actor={get_network_economics_parameters:async()=>{economicsReads++;if(economicsReads===2)valid=false;return {neuron_management_fee_per_proposal_e8s:1n};},manage_neuron:async()=>{mutations++;return {command:[{MakeProposal:{proposal_id:[{id:7n}],message:[]}}]};}};
+  const pipeline=createTransactionPipeline({getSession:async()=>live,getNnsActor:async()=>actor,checkNeuron:async()=>report()});
+  const review=await pipeline.reviewProposal({targetId:20n,managerId:10n,innerCommand:{RefreshVotingPower:{}}});
+  await assert.rejects(pipeline.submit(review,{confirmed:true}),/effective delegation expired/);
+  assert.equal(mutations,0);assert.equal(pipeline.state,'none');
 });

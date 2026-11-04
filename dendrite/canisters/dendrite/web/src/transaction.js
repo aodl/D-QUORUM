@@ -738,6 +738,9 @@ export function createTransactionPipeline({ getSession, getNnsActor, checkNeuron
           } else if (prepared.securityFingerprint !== review.securityFingerprint) {
             throw new Error("Security-relevant direct-operation evidence changed; create a new review.");
           }
+          // Metadata/economics awaits may outlive the effective session. Recheck
+          // its generation and every delegation expiry at the dispatch boundary.
+          await context.session.validate();
         } catch (error) {
           clear();
           throw error;

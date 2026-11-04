@@ -111,6 +111,21 @@ test("concurrent sign-in sign-out cancellation and popup failure never publish s
   FakeAuthClient.operation = undefined;
 });
 
+test("actual SDK idle teardown never recursively signs out or reloads on manual sign-out", async () => {
+  const previous={window:globalThis.window,document:globalThis.document,location:globalThis.location};
+  let callback, reloads=0;
+  globalThis.window={addEventListener(){},removeEventListener(){},clearTimeout(){},setTimeout(fn){callback=fn;return 1;}};
+  globalThis.document={addEventListener(){},removeEventListener(){}};
+  globalThis.location={reload(){reloads++;}};
+  try {
+    const auth=session();const first=await auth.signIn();await auth.signOut();
+    assert.equal(reloads,0);assert.throws(first.validate,/signed out/);
+    const second=await auth.signIn();callback();
+    assert.equal(reloads,1);assert.throws(second.validate,/signed out/);
+    assert.equal(await auth.restore(),null);
+  } finally { for(const [key,value] of Object.entries(previous)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;} }
+});
+
 const manager = (status, controller = [], hotKeys = []) => ({
   neuron_id: 100n,
   evidence_status: { [status]: null },
