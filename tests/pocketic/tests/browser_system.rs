@@ -628,6 +628,7 @@ fn browser_world(scenario: &str) {
             .collect();
         let automation = pic.create_canister();
         pic.add_cycles(automation, 200_000_000_000_000);
+        let automation_cycles_before = pic.cycle_balance(automation);
         let mut neurons = vec![target];
         for (id, first) in [(106, 2010), (112, 2020), (118, 2030)] {
             let mut candidate = seed(id, blackhole, at);
@@ -1239,7 +1240,7 @@ fn browser_world(scenario: &str) {
         );
         let health: d_quorum::Health = query_empty(&pic, automation, "health");
         let status = pic.canister_status(automation, None).unwrap();
-        fs::write(directory.join("world-resources.json"),serde_json::to_vec_pretty(&serde_json::json!({"wall_seconds":wall.elapsed().as_secs_f64(),"network_time_seconds":now(&pic),"virtual_elapsed_seconds":now(&pic)-at,"automation_cycle_use":200_000_000_000_000u128-pic.cycle_balance(automation),"stable_snapshot_bytes":health.stable_snapshot_bytes,"stable_pages":health.stable_memory_pages,"memory_bytes":status.memory_size.to_string(),"checkpoints":health.checkpoints,"pending_maintenance":health.pending_refreshes,"abandoned_maintenance":health.abandoned_refreshes,"pending_financial_liabilities":plans.iter().map(|p|p.recipient_count-p.confirmed_count).sum::<u32>(),"protocol_call_counts":"real canister internal call totals not instrumented; public browser request paths and recording-fixture capacity counts are retained separately"})).unwrap()).unwrap();
+        fs::write(directory.join("world-resources.json"),serde_json::to_vec_pretty(&serde_json::json!({"wall_seconds":wall.elapsed().as_secs_f64(),"network_time_seconds":now(&pic),"virtual_elapsed_seconds":now(&pic)-at,"automation_cycles_before":automation_cycles_before,"automation_cycles_after":pic.cycle_balance(automation),"automation_cycle_use":automation_cycles_before-pic.cycle_balance(automation),"stable_snapshot_bytes":health.stable_snapshot_bytes,"stable_pages":health.stable_memory_pages,"memory_bytes":status.memory_size.to_string(),"checkpoints":health.checkpoints,"pending_maintenance":health.pending_refreshes,"abandoned_maintenance":health.abandoned_refreshes,"pending_financial_liabilities":plans.iter().map(|p|p.recipient_count-p.confirmed_count).sum::<u32>(),"protocol_call_counts":"real canister internal call totals not instrumented; public browser request paths and recording-fixture capacity counts are retained separately"})).unwrap()).unwrap();
         fs::write(directory.join("economic-evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"same_instance":true,"observed_finalization_seconds":finalization,"authoritative_mints":mints,"seeded_maturity_e8s":5_000_000_000u64,"browser_manager_proposal":proposal,"browser_approved_maturity_proposal":maturity_id,"maturity_marker":maturity_marker,"maturity_fingerprint":hex::encode(maturity_fingerprint),"maturity_ballots":maturity_ballots,"initial_roster":[106,100],"later_roster":[112,118],"first_payments":first,"later_payments":second,"genuine_reward_accrual":"separate preserved real-protocol test; this journey uses explicitly seeded maturity"})).unwrap()).unwrap();
     }));
     let _ = Command::new("docker")
