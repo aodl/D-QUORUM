@@ -1,4 +1,5 @@
-import { AuthClient } from "@icp-sdk/auth/client";
+import { AuthClient, IdleManager } from "@icp-sdk/auth/client";
+import { DelegationChain, DelegationIdentity, ECDSAKeyIdentity } from "@icp-sdk/core/identity";
 import { Principal } from "@icp-sdk/core/principal";
 
 export const AUTHENTICATION_DELEGATION_TTL_NS = 28_800_000_000_000n;
@@ -36,32 +37,57 @@ function exactPrincipal(identity) {
 
 const samePrincipal = (left, right) => left.compareTo(right) === "eq";
 
-export function validateGovernanceDelegation(identity, nowNanoseconds = BigInt(Date.now()) * 1_000_000n) {
+// Structural checks complement SDK signatures and replica verification; they do not
+// authenticate the signatures themselves. Unknown delegation restrictions fail closed.
+function inspectChain(identity, now, maximum = 20) {
   const chain = identity?.getDelegation?.();
-  if (!chain || !Array.isArray(chain.delegations) || chain.delegations.length === 0) {
+  const bytes = (value, bound) => value instanceof Uint8Array && value.length > 0 && value.length <= bound;
+  if (!chain || !Array.isArray(chain.delegations) || !chain.delegations.length || chain.delegations.length > maximum || !bytes(chain.publicKey, 4096)) {
     throw new Error("Internet Identity delegation chain cannot be inspected safely.");
   }
-  for (const signedDelegation of chain.delegations) {
-    const delegation = signedDelegation?.delegation;
-    if (typeof delegation?.expiration !== "bigint" || delegation.expiration <= nowNanoseconds) {
-      throw new Error("Internet Identity delegation is expired or malformed.");
-    }
-    if (!Array.isArray(delegation.targets) || delegation.targets.length === 0) {
-      throw new Error("Unrestricted Internet Identity sessions cannot authorize NNS transactions.");
-    }
-    if (delegation.targets.some((target) => !samePrincipal(target, NNS_GOVERNANCE_PRINCIPAL))) {
-      throw new Error("Internet Identity delegation is not restricted to NNS Governance.");
-    }
-  }
   const principal = exactPrincipal(identity);
-  return Object.freeze({
-    principal,
-    signingIdentity: identity,
-    validate() {
-      validateGovernanceDelegation(identity);
-      return true;
-    },
-  });
+  if (!samePrincipal(principal, Principal.selfAuthenticating(chain.publicKey))) throw new Error("Delegation root does not match the application principal.");
+  let expiration = now + AUTHENTICATION_DELEGATION_TTL_NS;
+  for (const signed of chain.delegations) {
+    const link = signed?.delegation;
+    if (!link || Object.keys(link).some((key) => !["pubkey", "expiration", "targets"].includes(key)) || !bytes(link.pubkey, 4096) || !bytes(signed.signature, 65536)) {
+      throw new Error("Internet Identity delegation contains malformed or unsupported restrictions.");
+    }
+    if (typeof link.expiration !== "bigint" || link.expiration <= now || link.expiration > (1n << 64n) - 1n) throw new Error("Internet Identity delegation is expired or malformed.");
+    if (link.targets !== undefined) {
+      if (!Array.isArray(link.targets) || !link.targets.length || link.targets.length > 1000 || !link.targets.every((target) => target instanceof Principal) || !link.targets.some((target) => samePrincipal(target, NNS_GOVERNANCE_PRINCIPAL))) {
+        throw new Error("Internet Identity ancestor delegation does not permit NNS Governance.");
+      }
+    }
+    if (link.expiration < expiration) expiration = link.expiration;
+  }
+  return { chain, principal, expiration };
+}
+
+export function validateGovernanceDelegation(identity, nowNanoseconds = BigInt(Date.now()) * 1_000_000n) {
+  const { chain, principal } = inspectChain(identity, nowNanoseconds);
+  const leaf = chain.delegations.at(-1).delegation;
+  if (chain.delegations.some(({ delegation }) => delegation.expiration < leaf.expiration)) throw new Error("Governance child outlives an ancestor delegation.");
+  const targets = leaf.targets;
+  if (!Array.isArray(targets) || targets.length !== 1 || !samePrincipal(targets[0], NNS_GOVERNANCE_PRINCIPAL)) {
+    throw new Error("Unrestricted Internet Identity sessions cannot authorize NNS transactions.");
+  }
+  return Object.freeze({ principal, signingIdentity: identity, validate() { validateGovernanceDelegation(identity); return true; } });
+}
+
+export async function deriveGovernanceSession(bootstrap, bootstrapPublicKey) {
+  const now = BigInt(Date.now()) * 1_000_000n;
+  const { chain, principal, expiration } = inspectChain(bootstrap, now, 19);
+  const leaf = chain.delegations.at(-1).delegation.pubkey;
+  if (!(bootstrapPublicKey instanceof Uint8Array) || leaf.length !== bootstrapPublicKey.length || !leaf.every((byte, index) => byte === bootstrapPublicKey[index])) {
+    throw new Error("Internet Identity delegation does not bind the requested bootstrap key.");
+  }
+  const transactionKey = await ECDSAKeyIdentity.generate();
+  // SDK Date precision is milliseconds: round DOWN so no parent is outlived.
+  const restricted = await DelegationChain.create(bootstrap, transactionKey.getPublicKey(), new Date(Number(expiration / 1_000_000n)), { previous: chain, targets: [NNS_GOVERNANCE_PRINCIPAL] });
+  const identity = DelegationIdentity.fromDelegation(transactionKey, restricted);
+  if (!samePrincipal(exactPrincipal(identity), principal)) throw new Error("Scoped identity changed the application principal.");
+  return validateGovernanceDelegation(identity);
 }
 
 export function createBrowserAuthSession(options = {}) {
@@ -71,42 +97,52 @@ export function createBrowserAuthSession(options = {}) {
   let derivationOrigin;
   try { derivationOrigin = authenticationOrigin(currentOrigin, configuration); } catch (error) { originError = error; }
   const AuthClientClass = options.AuthClientClass ?? AuthClient;
-  let client;
-  const getClient = () => {
-    if (originError) throw originError;
-    if (!client) client = new AuthClientClass({
-      identityProvider: configuration.identityProvider,
-      ...(derivationOrigin ? { derivationOrigin } : {}),
-    });
-    return client;
+  let client, current, busy = false, generation = 0, idle;
+  const signOut = async () => {
+    generation++;
+    current = undefined;
+    idle?.exit(); idle = undefined;
+    if (client) await client.signOut();
   };
   return {
-    configuration,
-    originError,
+    configuration, originError,
     async restore() {
-      const authClient = getClient();
-      if (!authClient.isAuthenticated()) return null;
-      try {
-        return validateGovernanceDelegation(await authClient.getIdentity());
-      } catch (error) {
-        await authClient.signOut();
-        throw error;
-      }
+      if (originError) throw originError;
+      // Reload intentionally requires II again: never restore broader credentials.
+      current?.validate();
+      return current ?? null;
     },
     async signIn() {
-      const authClient = getClient();
+      if (originError) throw originError;
+      if (busy) throw new Error("Authentication is already in progress.");
+      busy = true;
+      const token = ++generation;
+      let authClient, session;
       try {
-        return validateGovernanceDelegation(await authClient.signIn({
-          maxTimeToLive: AUTHENTICATION_DELEGATION_TTL_NS,
-          targets: [NNS_GOVERNANCE_PRINCIPAL],
-        }));
-      } catch (error) {
-        await authClient.signOut();
-        throw error;
+        const bootstrapKey = await ECDSAKeyIdentity.generate();
+        if (token !== generation) throw new Error("Authentication cancelled.");
+        // Supplying the identity bypasses AuthClient's legacy localStorage migration.
+        // Discard credential writes; AuthClient still writes a non-secret expiry
+        // marker, which its supported signOut API removes in finally below.
+        authClient = new AuthClientClass({ identity: bootstrapKey,
+          storage: { async get() { return null; }, async set() {}, async remove() {} },
+          idleOptions: { disableIdle: true }, identityProvider: configuration.identityProvider,
+          ...(derivationOrigin ? { derivationOrigin } : {}),
+        });
+        client = authClient;
+        const bootstrap = await authClient.signIn({ maxTimeToLive: AUTHENTICATION_DELEGATION_TTL_NS });
+        session = await deriveGovernanceSession(bootstrap, bootstrapKey.getPublicKey().toDer());
+      } finally {
+        try { if (authClient) await authClient.signOut(); } finally { client = undefined; busy = false; }
       }
+      if (token !== generation) throw new Error("Authentication cancelled.");
+      current = Object.freeze({ ...session, validate() {
+        if (token !== generation) throw new Error("Authentication session has been signed out.");
+        return session.validate();
+      } });
+      if (globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => { void signOut(); globalThis.location.reload(); } });
+      return current;
     },
-    async signOut() {
-      if (client) await client.signOut();
-    },
+    signOut,
   };
 }

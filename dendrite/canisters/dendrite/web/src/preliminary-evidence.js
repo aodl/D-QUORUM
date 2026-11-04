@@ -190,7 +190,7 @@ export function validateListNeuronsBatch(requestedIds, response, { target = fals
   return { neurons, infos, unknownCommittedTopics };
 }
 
-function validateKnownMetadata(id, result, listTimestamp) {
+export function validateKnownMetadata(id, result, listTimestamp) {
   if (!result || typeof result !== "object") {
     throw new PreliminaryEvidenceError("InvalidResponse", "get_neuron_info returned a malformed result", [id]);
   }

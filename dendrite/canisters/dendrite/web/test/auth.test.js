@@ -1,113 +1,114 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Principal } from "@icp-sdk/core/principal";
-import { AUTHENTICATION_DELEGATION_TTL_NS, NNS_GOVERNANCE_CANISTER_ID, authenticationOrigin, createBrowserAuthSession, identityConfiguration, validateGovernanceDelegation } from "../src/auth.js";
+import { DelegationChain, DelegationIdentity, Ed25519KeyIdentity } from "@icp-sdk/core/identity";
+import { AUTHENTICATION_DELEGATION_TTL_NS, NNS_GOVERNANCE_CANISTER_ID, authenticationOrigin, createBrowserAuthSession, deriveGovernanceSession, identityConfiguration, validateGovernanceDelegation } from "../src/auth.js";
 import { classifyManagerAuthority, renderManagerAuthority } from "../src/authority.js";
-
-const canonical = "https://dendrite.example";
-const alternative = "https://www.dendrite.example";
-const configuration = {
-  derivationOrigin: canonical,
-  alternativeOrigins: [alternative],
-  identityProvider: "https://id.ai/authorize",
-};
-const user = Principal.fromText("aaaaa-aa");
-const other = Principal.fromText("2vxsx-fae");
+const canonical = "https://dendrite.example", alternative = "https://www.dendrite.example";
+const configuration = { derivationOrigin: canonical, alternativeOrigins: [alternative], identityProvider: "https://id.ai/authorize" };
+const user = Principal.fromText("aaaaa-aa"), other = Principal.anonymous();
 const governance = Principal.fromText(NNS_GOVERNANCE_CANISTER_ID);
-const delegation = (targets = [governance], expiration = BigInt(Date.now() + 60_000) * 1_000_000n) => ({
-  delegations: [{ delegation: { expiration, targets } }],
-});
-const identity = (principal = user, chain = delegation()) => ({ getPrincipal: () => principal, getDelegation: () => chain });
-
+async function bootstrap({ targets, expires = Date.now() + 60000 } = {}) {
+  const root = Ed25519KeyIdentity.generate(), key = Ed25519KeyIdentity.generate();
+  const chain = await DelegationChain.create(root, key.getPublicKey(), new Date(expires), { targets });
+  return { identity: DelegationIdentity.fromDelegation(key, chain), key, chain };
+}
 class FakeAuthClient {
   static instances = [];
-  constructor(options) { this.options = options; this.authenticated = false; FakeAuthClient.instances.push(this); }
-  isAuthenticated() { return this.authenticated; }
-  async getIdentity() { if (this.restoreError) throw this.restoreError; return this.identity; }
-  async signIn(options) { this.signInOptions = options; if (this.signInError) throw this.signInError; return this.identity; }
+  static operation;
+  constructor(options) { this.options = options; FakeAuthClient.instances.push(this); }
+  async signIn(options) {
+    this.signInOptions = options;
+    if (FakeAuthClient.operation) await FakeAuthClient.operation();
+    const root = Ed25519KeyIdentity.generate();
+    const chain = await DelegationChain.create(root, this.options.identity.getPublicKey(), new Date(Date.now() + 60000));
+    return DelegationIdentity.fromDelegation(this.options.identity, chain);
+  }
   async signOut() { this.signedOut = true; }
 }
-
-const session = (origin = canonical) => createBrowserAuthSession({
-  ...configuration,
-  currentOrigin: origin,
-  AuthClientClass: FakeAuthClient,
-});
-
-test("canonical alternative and unapproved origins are explicit", () => {
+const session = (origin = canonical) => createBrowserAuthSession({ ...configuration, currentOrigin: origin, AuthClientClass: FakeAuthClient });
+test("canonical alternative and unapproved origins are explicit", async () => {
   assert.equal(authenticationOrigin(canonical, configuration), undefined);
   assert.equal(authenticationOrigin(alternative, configuration), canonical);
   assert.throws(() => authenticationOrigin("https://evil.example", configuration));
-  const canonicalSession = session();
-  canonicalSession.restore();
-  assert.equal(FakeAuthClient.instances.at(-1).options.derivationOrigin, undefined);
-  const alternativeSession = session(alternative);
-  alternativeSession.restore();
-  assert.equal(FakeAuthClient.instances.at(-1).options.derivationOrigin, canonical);
   assert.ok(session("https://evil.example").originError);
+  await assert.rejects(session("https://evil.example").signIn, /disabled/);
   assert.throws(() => identityConfiguration({ derivationOrigin: canonical, alternativeOrigins: [] }), /configuration/);
+  const auth = session(alternative); await auth.signIn();
+  assert.equal(FakeAuthClient.instances.at(-1).options.derivationOrigin, canonical);
+  await auth.signOut();
 });
-
-test("one client restores signs in for at most eight hours and signs out", async () => {
+test("genuine SDK child preserves root principal signatures scope and parent expiry", async () => {
+  const parent = await bootstrap();
+  const result = await deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer());
+  assert.equal(result.principal.toText(), parent.identity.getPrincipal().toText());
+  const chain = result.signingIdentity.getDelegation();
+  assert.deepEqual(chain.publicKey, parent.chain.publicKey);
+  assert.deepEqual(chain.delegations[0], parent.chain.delegations[0]);
+  assert.equal(chain.delegations.length, 2);
+  assert.equal(chain.delegations[0].delegation.targets, undefined);
+  assert.deepEqual(chain.delegations[1].delegation.targets.map(p => p.toText()), [NNS_GOVERNANCE_CANISTER_ID]);
+  assert.ok(chain.delegations[1].signature.length > 0);
+  assert.ok(chain.delegations[1].delegation.expiration <= chain.delegations[0].delegation.expiration);
+  assert.equal(result.validate(), true);
+  assert.throws(() => validateGovernanceDelegation(parent.identity), /Unrestricted/);
+});
+test("wrong-target empty expired ancestors and expired or broadened children fail closed", async () => {
+  for (const options of [{ targets: [] }, { targets: [other] }, { expires: Date.now() - 1000 }]) {
+    const parent = await bootstrap(options);
+    await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /permit|expired/);
+  }
+  const parent = await bootstrap({ targets: [governance] });
+  const child = await deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer());
+  assert.throws(() => validateGovernanceDelegation(child.signingIdentity, parent.chain.delegations[0].delegation.expiration), /expired/);
+  const extra = Ed25519KeyIdentity.generate();
+  const broadChain = await DelegationChain.create(parent.identity, extra.getPublicKey(), new Date(Date.now() + 50000), { previous: parent.chain, targets: [governance, other] });
+  assert.throws(() => validateGovernanceDelegation(DelegationIdentity.fromDelegation(extra, broadChain)), /Unrestricted/);
+});
+test("key principal malformed restrictions and chain bounds cannot be bypassed", async () => {
+  const parent = await bootstrap();
+  await assert.rejects(() => deriveGovernanceSession(parent.identity, Ed25519KeyIdentity.generate().getPublicKey().toDer()), /bootstrap key/);
+  const wrong = { getPrincipal: () => user, getDelegation: () => parent.chain };
+  assert.throws(() => validateGovernanceDelegation(wrong), /root/);
+  const leaf = parent.chain.delegations[0].delegation;
+  leaf.permissions = "queries";
+  await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /unsupported/);
+  delete leaf.permissions; leaf.targets = ["not a principal"];
+  await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /permit/);
+  delete leaf.targets;
+  parent.chain.delegations.push(...Array(20).fill(parent.chain.delegations[0]));
+  await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /inspected safely/);
+  assert.throws(() => validateGovernanceDelegation({}), /inspected safely/);
+});
+test("bootstrap never restores or persists credentials and SDK cleanup precedes publication", async () => {
   FakeAuthClient.instances.length = 0;
-  const auth = session();
-  assert.equal(await auth.restore(), null);
-  const client = FakeAuthClient.instances[0];
-  client.identity = identity();
-  client.authenticated = true;
-  assert.equal((await auth.restore()).principal.toText(), user.toText());
-  assert.equal((await auth.signIn()).principal.toText(), user.toText());
+  const auth = session(); assert.equal(await auth.restore(), null);
+  assert.equal(FakeAuthClient.instances.length, 0);
+  const scoped = await auth.signIn(), client = FakeAuthClient.instances[0];
+  assert.ok(client.options.identity);
   assert.equal(client.signInOptions.maxTimeToLive, AUTHENTICATION_DELEGATION_TTL_NS);
-  assert.deepEqual(client.signInOptions.targets.map((target) => target.toText()), [NNS_GOVERNANCE_CANISTER_ID]);
-  await auth.signOut();
   assert.equal(client.signedOut, true);
-  assert.equal(FakeAuthClient.instances.length, 1);
+  await client.options.storage.set("credential", "discarded");
+  assert.equal(await client.options.storage.get("credential"), null);
+  assert.equal(await auth.restore(), scoped);
+  await auth.signOut(); assert.equal(await auth.restore(), null);
+  assert.throws(scoped.validate, /signed out/);
+  assert.equal(await session().restore(), null);
 });
-
-test("delegations must be live and restricted only to NNS Governance", () => {
-  assert.equal(validateGovernanceDelegation(identity()).principal.toText(), user.toText());
-  assert.throws(() => validateGovernanceDelegation(identity(user, delegation(null))), /Unrestricted/);
-  assert.throws(() => validateGovernanceDelegation(identity(user, delegation([other]))), /not restricted/);
-  assert.throws(() => validateGovernanceDelegation(identity(user, delegation([governance], 1n))), /expired/);
-  assert.throws(() => validateGovernanceDelegation({ getPrincipal: () => user }), /inspected safely/);
-});
-
-test("invalid restored legacy sessions are cleared", async () => {
-  const auth = session();
-  await auth.restore();
-  const client = FakeAuthClient.instances.at(-1);
-  client.authenticated = true;
-  client.identity = identity(user, delegation(null));
-  await assert.rejects(() => auth.restore(), /Unrestricted/);
-  assert.equal(client.signedOut, true);
-});
-
-test("cancel failure expiry malformed identity and storage errors fail closed", async () => {
-  let auth = session();
-  await auth.restore();
-  let client = FakeAuthClient.instances.at(-1);
-  client.identity = identity();
-  client.signInError = new Error("popup closed");
-  await assert.rejects(() => auth.signIn(), /popup closed/);
-  client.signInError = new Error("authentication cancelled");
-  await assert.rejects(() => auth.signIn(), /cancelled/);
-
-  auth = session();
+test("concurrent sign-in sign-out cancellation and popup failure never publish stale signer", async () => {
+  let release;
+  FakeAuthClient.operation = () => new Promise(resolve => { release = resolve; });
+  const auth = session(), pending = auth.signIn();
+  while (!release) await new Promise(resolve => setTimeout(resolve, 1));
+  await assert.rejects(auth.signIn, /in progress/);
+  await auth.signOut(); release();
+  await assert.rejects(() => pending, /cancelled/);
   assert.equal(await auth.restore(), null);
-  client = FakeAuthClient.instances.at(-1);
-  client.authenticated = true;
-  client.identity = {};
-  await assert.rejects(() => auth.restore(), /inspected safely/);
-  client.restoreError = new Error("storage unavailable");
-  await assert.rejects(() => auth.restore(), /storage unavailable/);
-
-  auth = session();
-  await auth.signOut();
-  await auth.restore();
-  client = FakeAuthClient.instances.at(-1);
-  client.authenticated = true;
-  client.identity = identity(Principal.anonymous());
-  await assert.rejects(() => auth.restore(), /anonymous identity/);
+  assert.equal(FakeAuthClient.instances.at(-1).signedOut, true);
+  FakeAuthClient.operation = () => { throw new Error("popup closed"); };
+  await assert.rejects(session().signIn, /popup closed/);
+  assert.equal(FakeAuthClient.instances.at(-1).signedOut, true);
+  FakeAuthClient.operation = undefined;
 });
 
 const manager = (status, controller = [], hotKeys = []) => ({

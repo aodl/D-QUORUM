@@ -1,6 +1,6 @@
 // Reviewed transaction subset of dfinity/ic@d55a0f4d4edfabe49d8fd543aff473084cb741f2.
 // Source: rs/nns/governance/canister/governance.did. Browser IDL deliberately sends
-// the four security-sensitive query methods as replicated update calls.
+// the security-sensitive query methods as replicated update calls.
 type NeuronId = record { id : nat64 };
 type ProposalId = record { id : nat64 };
 type NeuronIdOrSubaccount = variant { NeuronId : NeuronId; Subaccount : blob };
@@ -113,10 +113,13 @@ type KnownNeuronData = record {
 type FullNeuron = record {
   id : opt NeuronId; controller : opt principal; hot_keys : vec principal;
   cached_neuron_stake_e8s : nat64; neuron_fees_e8s : nat64;
-  known_neuron_data : opt KnownNeuronData; followees : reserved
+  known_neuron_data : opt KnownNeuronData; visibility : opt int32; followees : reserved
 };
-type ListNeuronsResponse = record { neuron_infos : reserved; full_neurons : vec FullNeuron; total_pages_available : opt nat64 };
+type NeuronInfo = record { id : opt NeuronId; retrieved_at_timestamp_seconds : nat64; known_neuron_data : opt KnownNeuronData; visibility : opt int32 };
+type NeuronInfoResult = variant { Ok : NeuronInfo; Err : GovernanceError };
+type ListNeuronsResponse = record { neuron_infos : vec record { nat64; NeuronInfo }; full_neurons : vec FullNeuron; total_pages_available : opt nat64 };
 service : {
+  get_neuron_info : (nat64) -> (NeuronInfoResult) query;
   list_neurons : (ListNeurons) -> (ListNeuronsResponse) query;
   get_network_economics_parameters : () -> (NetworkEconomics) query;
   get_proposal_info : (nat64) -> (opt ProposalInfo) query;

@@ -6,9 +6,29 @@ export const idlFactory = ({ IDL }) => {
   const NetworkEconomics = IDL.Record({
     'neuron_management_fee_per_proposal_e8s' : IDL.Nat64,
   });
+  const NeuronId = IDL.Record({ 'id' : IDL.Nat64 });
+  const KnownNeuronData = IDL.Record({
+    'name' : IDL.Text,
+    'committed_topics' : IDL.Reserved,
+    'description' : IDL.Opt(IDL.Text),
+    'links' : IDL.Opt(IDL.Vec(IDL.Text)),
+  });
+  const NeuronInfo = IDL.Record({
+    'id' : IDL.Opt(NeuronId),
+    'retrieved_at_timestamp_seconds' : IDL.Nat64,
+    'visibility' : IDL.Opt(IDL.Int32),
+    'known_neuron_data' : IDL.Opt(KnownNeuronData),
+  });
+  const GovernanceError = IDL.Record({
+    'error_message' : IDL.Text,
+    'error_type' : IDL.Int32,
+  });
+  const NeuronInfoResult = IDL.Variant({
+    'Ok' : NeuronInfo,
+    'Err' : GovernanceError,
+  });
   const ProposalId = IDL.Record({ 'id' : IDL.Nat64 });
   const Ballot = IDL.Record({ 'vote' : IDL.Int32, 'voting_power' : IDL.Nat64 });
-  const NeuronId = IDL.Record({ 'id' : IDL.Nat64 });
   const Spawn = IDL.Record({
     'percentage_to_spawn' : IDL.Opt(IDL.Nat32),
     'new_controller' : IDL.Opt(IDL.Principal),
@@ -173,12 +193,6 @@ export const idlFactory = ({ IDL }) => {
     ),
     'include_neurons_readable_by_caller' : IDL.Bool,
   });
-  const KnownNeuronData = IDL.Record({
-    'name' : IDL.Text,
-    'committed_topics' : IDL.Reserved,
-    'description' : IDL.Opt(IDL.Text),
-    'links' : IDL.Opt(IDL.Vec(IDL.Text)),
-  });
   const FullNeuron = IDL.Record({
     'id' : IDL.Opt(NeuronId),
     'controller' : IDL.Opt(IDL.Principal),
@@ -186,10 +200,11 @@ export const idlFactory = ({ IDL }) => {
     'hot_keys' : IDL.Vec(IDL.Principal),
     'followees' : IDL.Reserved,
     'neuron_fees_e8s' : IDL.Nat64,
+    'visibility' : IDL.Opt(IDL.Int32),
     'known_neuron_data' : IDL.Opt(KnownNeuronData),
   });
   const ListNeuronsResponse = IDL.Record({
-    'neuron_infos' : IDL.Reserved,
+    'neuron_infos' : IDL.Vec(IDL.Tuple(IDL.Nat64, NeuronInfo)),
     'full_neurons' : IDL.Vec(FullNeuron),
     'total_pages_available' : IDL.Opt(IDL.Nat64),
   });
@@ -257,10 +272,6 @@ export const idlFactory = ({ IDL }) => {
       'neuron_id_or_subaccount' : IDL.Opt(NeuronIdOrSubaccount),
     })
   );
-  const GovernanceError = IDL.Record({
-    'error_message' : IDL.Text,
-    'error_type' : IDL.Int32,
-  });
   const MakeProposalResponse = IDL.Record({
     'message' : IDL.Opt(IDL.Text),
     'proposal_id' : IDL.Opt(ProposalId),
@@ -292,6 +303,7 @@ export const idlFactory = ({ IDL }) => {
         [NetworkEconomics],
         [],
       ),
+    'get_neuron_info' : IDL.Func([IDL.Nat64], [NeuronInfoResult], []),
     'get_proposal_info' : IDL.Func(
         [IDL.Nat64],
         [IDL.Opt(ProposalInfo)],

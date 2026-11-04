@@ -1,6 +1,7 @@
 import { Principal } from "@icp-sdk/core/principal";
 import { IDL } from "@icp-sdk/core/candid";
 import { idlFactory as nnsIdlFactory } from "../../../../src/declarations/nns-governance/nns-governance.did.js";
+import { validateKnownMetadata, listNeuronsRequest } from "./preliminary-evidence.js";
 import { classifyManagerAuthority } from "./authority.js";
 import { parseNeuronId } from "./ids.js";
 import { ALPHA_VOTE_NEURON_ID, OMEGA_REJECT_NEURON_ID, OMEGA_VOTE_NEURON_ID } from "./ids.js";
@@ -377,11 +378,35 @@ export function buildRewardReceiverCommand(receiverId) {
 }
 
 const listKnownCandidates = async (nnsActor, ids) => {
-  if (!ids.length) return [];
-  const response = await nnsActor.list_neurons({ neuron_ids: ids, include_neurons_readable_by_caller: false,
-    include_empty_neurons_readable_by_caller: [], include_public_neurons_in_full_neurons: [true],
-    page_number: [], page_size: [], neuron_subaccounts: [] });
-  return response.full_neurons.map((entry) => ({ id: entry.id?.[0]?.id, known: Boolean(entry.known_neuron_data?.length), name: entry.known_neuron_data?.[0]?.name ?? "unknown" }));
+  const requested = distinctNeuronIds(ids);
+  if (!requested.length) return [];
+  if (requested.length > 50) throw new Error("Manager lookup exceeds its bounded exact-ID request.");
+  const response = await nnsActor.list_neurons(listNeuronsRequest(requested));
+  if (!Array.isArray(response?.full_neurons) || !Array.isArray(response.neuron_infos) || response.full_neurons.length > requested.length || response.neuron_infos.length > requested.length || response.total_pages_available?.length !== 1 || response.total_pages_available[0] !== 1n) throw new Error("Malformed manager lookup response bounds.");
+  const expected = new Set(requested.map(String)), found = new Map(), timestamps = new Map();
+  for (const entry of response.full_neurons) {
+    const id = entry?.id?.length === 1 ? entry.id[0]?.id : undefined;
+    if (typeof id !== "bigint" || !expected.has(String(id)) || found.has(String(id))) throw new Error("Unexpected or duplicate manager configuration ID.");
+    if (entry.visibility?.length !== 1 || entry.visibility[0] !== 2) throw new Error("Manager configuration must be public.");
+    found.set(String(id), entry);
+  }
+  for (const entry of response.neuron_infos) {
+    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "bigint" || !expected.has(String(entry[0])) || timestamps.has(String(entry[0])) || typeof entry[1]?.retrieved_at_timestamp_seconds !== "bigint") throw new Error("Unexpected or duplicate manager metadata timestamp.");
+    timestamps.set(String(entry[0]), entry[1].retrieved_at_timestamp_seconds);
+  }
+  if (found.size !== requested.length || timestamps.size !== requested.length) throw new Error("Manager public configuration or timestamp is missing.");
+  // At most four replicated scalar calls in flight; no cross-preparation cache.
+  const candidates = [];
+  for (let start = 0; start < requested.length; start += 4) {
+    const batch = await Promise.all(requested.slice(start, start + 4).map(async (id) => {
+      const result = await nnsActor.get_neuron_info(id);
+      const metadata = validateKnownMetadata(id, result, timestamps.get(String(id)));
+      if (result.Ok?.visibility?.length !== 1 || result.Ok.visibility[0] !== 2) throw new Error("Manager scalar metadata must be public.");
+      return { id, known: metadata.kind === "Found", name: metadata.data?.name ?? "unregistered" };
+    }));
+    candidates.push(...batch);
+  }
+  return candidates;
 };
 
 export function preparePrimaryFollow(topic, selectedIds) {
