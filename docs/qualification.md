@@ -1,11 +1,24 @@
 # Scoped authentication integration qualification
 
-This candidate is **not yet qualified**. Implementation and targeted regressions are
-being completed; the required clean-source combined acceptance run and current release
-bindings remain outstanding. No historical result qualifies these changed frontend
+This candidate is **not yet qualified**. The strengthened two-topic journey and the
+required final clean-source combined acceptance run remain outstanding. The provisional
+undeployed binding comes from two matching clean builds and still requires final
+source-stable verification. No historical result qualifies these changed frontend
 bytes. The [initial integration qualification](releases/integration-initial-qualification.md)
 retains the failed genuine-II positive case, successful safety refusal and historical
 artifact identities. RC1, RC2, RC3 and the barrier qualification remain historical.
+
+The completed prebinding run at `29bbe69609b4fa5ecb63f36f0e61314ee43615a5`
+remained source-stable and returned 1 after 25,688.01 host seconds: 177 gate records,
+175 passing, two failing; 351 unique passing printed names, 912 passing executions
+and one failed test execution. All six actual-browser cases and both canonical-pair
+cases passed. This is **unqualified historical evidence**, retained in the
+[complete first-run record](../dist/history/scoped-prebinding-29bbe69/evidence/integrated-acceptance.json).
+The failures were a PocketIC SDK request timeout in the canonical missed-window
+upgrade case and the historical Dendrite deployment binding. The exact timed-out
+case then passed with the same canonical Wasm and unchanged request timeout in a
+fresh isolated instance; its [diagnostic receipt](../dist/history/scoped-prebinding-29bbe69/exact-canonical-timeout-diagnostic/receipt.json)
+does not replace the failed run. The original timeout's cause remains unproven.
 
 The corrected authority path is **II app-origin parent → SDK-signed Governance-only
 child → direct browser-to-NNS operations**. An unscoped II parent is private bootstrap
@@ -31,8 +44,10 @@ Separate users submit and reach management quorum through signed browser operati
 Independent Governance reads verify exact actions and ballots. The same world then
 runs production D-QUORUM scanning, direct proportional scores, roster application,
 browser-approved maturity harvesting, actual finalisation and two equal-share payout
-cycles. Initial maturity is explicitly seeded; the existing separate real reward-event
-test proves genuine accrual. HTTP response loss and incompatible verifier upgrades are
+cycles. The final fixture selects the same two recipients on topics 4 and 7 while
+requiring exactly two obligations per pot. Initial maturity is explicitly seeded;
+the existing separate real reward-event test proves genuine accrual. HTTP response
+loss and incompatible verifier upgrades are
 labelled scripted faults; they are not fabricated authentication or Governance outcomes.
 
 Current and final executed counts, capacity, coverage, audits, canonical hashes,

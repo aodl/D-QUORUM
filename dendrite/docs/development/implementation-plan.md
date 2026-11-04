@@ -532,3 +532,13 @@ auditable surface are explicit success criteria.
 - [x] Run every mandatory format, Clippy, interface, unit, PocketIC, frontend,
   coverage, dependency, scan, SBOM, build, and reproducibility check without adding
   identity, governance-control, storage, cache, timer, or service scope.
+
+## Scoped-authentication integration correction
+
+The earlier session-restoration checkboxes above describe historical tranches. The
+integrated implementation now obtains a private ephemeral II app-origin parent, uses
+the pinned SDK to append a Governance-only signed child and releases the bootstrap
+client before publishing it. Reload requires II again; an existing in-memory scoped
+session may be reused while live. This replaces the former assumption that II itself
+issues a Governance-targeted parent. The anonymous backend and direct browser-to-NNS
+transaction architecture remain unchanged. Final-origin operator gates remain UNRUN.

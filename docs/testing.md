@@ -66,13 +66,17 @@ II uses the production backend/frontend artifacts from `release-2026-06-20`, exa
 
 `system_protocol_canonical` repeats the two connected backend journeys against the exact canonical pair after both component builds. `dist/integration-manifest.json` binds that pair without replacing either component's individual manifests. Dendrite's original Wasm format exposes `get_candid_pointer` rather than a public Candid custom section. The canonical gate extracts its interface from the actual Wasm with pinned `candid-extractor 0.1.6`, checks structural equality using `didc`, and independently checks the complete production export set. It does not claim a missing custom section exists.
 
-The positive browser test uses four independent real II principals. Neurons 11, 12 and
-13 reach the original five-manager majority through browser-signed ballots. Neuron
+The positive browser test uses four independent real II principals. Neuron 11's signed
+proposal supplies its automatic Yes; explicit browser votes from 12 and 13 reach the
+original five-manager majority without a coordinator-supplied deciding vote. Neuron
 21 initially lacks authority and later acquires it through the actual management
 change. The final voter is a hotkey, separately tested against controller revocation.
 An exact proposal/ballot/following readback and authoritative Ledger blocks are the
 oracles. Scripted lost HTTP replies, held preflight requests and a deliberately
 incompatible verifier are labelled faults; they do not substitute for authentication.
+The same world selects each recipient on topics 4 and 7, yet requires exactly two
+financial obligations per pot. Both Governance rosters and hand-calculated scores are
+checked independently, followed by a changed roster and a second payout.
 
 `real_ii_scoped_child_is_enforced_by_replica` uses actual II and an SDK-signed child,
 then compares a working non-Governance control destination with the same request under

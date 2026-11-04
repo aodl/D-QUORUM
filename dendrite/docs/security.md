@@ -55,9 +55,10 @@ pass or fail only after signature, freshness, effective-ID, delegation/range, ex
 CBOR, controller bound, principal length, and module-hash status validation. Failure is
 indeterminate and yields no partially trusted result.
 
-Internet Identity introduces a browser-only boundary. Delegations target only fixed NNS
-Governance and are never logged, rendered, serialized to Dendrite, or sent to the
-canister. Every mutation requires fresh authority evidence, an immutable exact review,
+Internet Identity introduces a browser-only boundary. Its app-origin parent may be
+unscoped and remains private bootstrap authority. A signed child restricts the final
+transaction key to fixed NNS Governance. Credentials are never logged, rendered,
+serialized to Dendrite, or sent to the canister. Every mutation requires fresh authority evidence, an immutable exact review,
 explicit confirmation, strict response validation, and no automatic retry. Ambiguous
 outcomes block another mutation until acknowledged; this coordination and the single
 current receipt are bounded, heap-only, and lost on reload.

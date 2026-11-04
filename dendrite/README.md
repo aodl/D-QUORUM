@@ -33,8 +33,11 @@ Dendrite stores no application state, cache, report, transaction history, or pro
 history. The browser report loaders have only route-scoped in-memory promise
 caches. The anonymous Governance query agent verifies query signatures; the controller
 reader verifies fresh IC certificates for the exact controller principal returned by
-that query. Neither fetches the root key in production. Internet Identity sessions
-and Governance-only delegations remain in the browser and are never sent to Dendrite.
+that query. Neither fetches the root key in production. Internet Identity supplies a
+private app-origin bootstrap parent. The existing SDK
+appends a signed Governance-only child, preserving the app principal; only that
+restricted signer reaches transaction code. Bootstrap credentials are not persisted,
+and reload requires fresh II authentication. Neither identity reaches Dendrite.
 Privileged mutations go directly from the browser to fixed NNS Governance and still
 require a fresh authoritative Dendrite preflight. See [security](docs/security.md).
 Report-loading work is owned by route-generation operations, so navigation and

@@ -31,6 +31,41 @@ useful diagnostics, not the canonical public container artifact.
 The canonical comparison performs two clean no-cache Docker builds into separate temporary directories and
 fails on any missing, extra, or different file or manifest.
 
+## Scoped authentication integration candidate — 2026-11
+
+This is an undeployed integration candidate. Its completed source-stable acceptance
+record and independently checksummed review bundle are reported in the root
+[qualification report](../../../docs/qualification.md). Updating the local prebuilt
+binding does not authorise an installation, upgrade, activation or network write.
+
+Keep these identities separate:
+
+- The historical bound candidate `74f6090a729fa467908985c8ef8adc415e237fdf2e6eda8fa7d6a68a0aade972`
+  was labelled undeployed in the historical entry below. Its retained release uses
+  `app.b621ba522c99801f.js` and `styles.1ebbbb16b0d22189.css`.
+- The committed imported source `b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291`
+  uses `app.ddb8548b03894194.js` and `styles.008b98904943b9ca.css`.
+  The initial integration's two clean builds both produced
+  `a11efe497e802c6f93b54540043b73505c2271b46219785d2dd90657146933af`.
+  Those differing frontend inputs explain why equality with the older bound release
+  was not established; this was not a failed two-build reproducibility comparison.
+- The latest operator-supplied [production record](production-record.md) records
+  `5b20aa2aa7b3d3b6706698bbd75dfaf6775a96d27c744fd230e7fd709ba448eb`
+  at source `694e1c2a47f3a2fc238b9b3799748610ca22b274`, verified on
+  2026-07-29. This historical record is unchanged and is not a fresh observation.
+- The intended scoped-authentication candidate is
+  `5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d`.
+  It uses `app.eb36d22b3c1a1093.js` and the unchanged
+  `styles.008b98904943b9ca.css`. The final qualification record must bind this hash to
+  its exact source and both clean build sets. The production configuration remains
+  unchanged; the separate local-browser configuration and Wasm are labelled as such.
+
+The saved historical and current build configurations are byte-identical. No missing
+historical source/build evidence has been reconstructed, and no current live hash is
+inferred from any saved artifact. Only `verify-release-artifacts.sh` is used for local
+no-network binding verification. Mainnet-facing deployment/readiness commands and both
+production-origin operator gates remain separately authorised work.
+
 ## Direct Standard rules candidate — 2026-07-30
 
 This candidate is not deployed. It advances the catalogue to

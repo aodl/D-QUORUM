@@ -19,9 +19,13 @@ recognize that manager authority without exposing private material.
 
 1. Load the canonical URL; expect certified application success and no redirect.
 2. Open the canonical-origin popup and authenticate; expect successful II completion.
-3. Record the exact displayed Dendrite principal; reload and expect restoration.
-4. Inspect the session; expect delegation targets only the NNS Governance principal
-   recorded in [deployment](deployment.md).
+3. Record the exact displayed Dendrite principal; reload and expect sign-in to be
+   required. Authenticate again with the same II identity and expect the same principal.
+4. Inspect only public scope/expiry summaries, never keys or complete delegation
+   credentials. Expect the final child to target exactly the NNS Governance principal
+   recorded in [deployment](deployment.md). Ancestor targets may be omitted; any
+   present restriction must permit Governance. Every link must be live and the child
+   must outlive neither its parents nor the application session cap.
 5. Confirm no approved alternatives, and an unapproved origin cannot sign in.
 6. Run a fresh report; expect the correct controller/hotkey manager recognition.
 7. Sign out; expect identity removal and a successful fresh anonymous verification.
@@ -29,8 +33,10 @@ recognize that manager authority without exposing private material.
 **Evidence:** origin, headers, alternative-origin bytes, principal, target label,
 screenshots/log references without credentials, commit and installed module hash.
 
-**Abort:** wrong origin/principal/target, unrestricted delegation, Dendrite
-authentication, popup/certification failure, or unexpected alternative acceptance.
+**Abort:** wrong origin/principal/target, unrestricted final transaction signer,
+excluding or expired ancestor, Dendrite authentication, popup/certification failure,
+or unexpected alternative acceptance. A normal unscoped II parent is not itself an
+abort condition when the genuinely signed child restricts the effective chain.
 
 - Pass/fail: **UNRUN**
 - Operator: **UNRUN**
