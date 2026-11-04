@@ -1,134 +1,120 @@
-# Integrated repository qualification — pending
+# D-QUORUM + Dendrite integration handover
 
-The full-history import starts at D-QUORUM `448bcd2129240be7cd4caee3984d74ae70ad9030` and Dendrite `b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291`. [Baseline](integration-baseline.json) records the exact paths, trees and pins. The unsquashed subtree merge is `2c06753d40c8f9bca35caecdf2eeb6f2d0778ab3`; the original sibling is unchanged. Each component keeps its own workspace, lockfile, production canister, interface, authority and release procedure. The imported evaluator matches D-QUORUM's pinned vendored source byte for byte.
+**Integrated release qualification is incomplete.** Repository consolidation, shared real-protocol economic tests and component reproducibility are demonstrated. Actual II authentication returns an unrestricted delegation, which Dendrite correctly refuses. The mandatory signed-management journey fails, and the full security scan has unresolved findings. No publication, deployment or activation is authorized by this report.
 
-The current integrated source is **not qualified**. [The mandatory integration matrix](integration-matrix.json) distinguishes implemented cases from incomplete scenarios. Component results below belong to their stated historical source, not the imported repository. New preflight runs do not requalify a changed source. Hosted CI has not run; no push or mainnet write is authorized.
+## A. Git and import
 
-The local real-II lane exposed a protocol compatibility blocker: the actual application refuses the returned unrestricted delegation, as required by its Governance-only authority check. The fixture disables dummy authentication in both pinned II modules, uses virtual WebAuthn through the actual II UI, and observes zero Governance requests after refusal. The positive signed-management test remains mandatory and fails. At II source `66bd7bcf6350f51811057f4c4dae1ff12aa67b8c`, `src/frontend/src/lib/stores/channelHandlers/delegation.ts` does not apply the requested `targets` when preparing the account delegation. No broad delegation is accepted to obtain a green test. Consequently the full signed-browser manager-metadata reproduction and connected browser/economic golden journey remain blocked. Real Governance independently confirms that all five known-manager batch records omit known metadata while scalar queries return it; the frontend helper remains unchanged until the required full reproduction is possible.
+Initial repositories were `/home/codexdev/src/D-QUORUM` (main, `448bcd2129240be7cd4caee3984d74ae70ad9030`, tree `b56bd066e69f71e1b47d170e86d4df89ee3a4d6b`) and `/home/codexdev/src/Dendrite` (main, `b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291`, tree `7556ae7a34d0faead9e8451413721239254a0e37`). Both were clean and equal to their local origin/main tracking references at inspection. Neither had tags. The ignored operator `results.txt` was preserved. [Baseline](integration-baseline.json) records pins and initial state.
 
-The preserved Dendrite audit initially found 12 RustSec vulnerabilities. Seven native-only dependency versions were patched within their existing compatible dependency constraints; all seven are absent from the production dependency graph and prepared production Wasm bytes remain unchanged. RustSec then reports zero vulnerabilities. The full OSV scan still fails on npm development-tool advisories; production-only npm audit reports zero. No security exception suppresses these failures. Complete integrated qualification remains unavailable even if individual release builds reproduce.
+The unsquashed subtree merge `2c06753d40c8f9bca35caecdf2eeb6f2d0778ab3` imports the exact Dendrite tree under `dendrite/`; its original commit is an ancestor. No submodule, copied `.git`, history rewrite or sibling modification occurred. Local branch: `integration/dendrite-system`.
 
-## Historical D-QUORUM maturity-barrier qualification
+Other local commits are `e489740` (nested Git worktree deployment guard), `3c2f56b` (seven native security patches), `d07c70e` (runner/shared protocol/II tests), `f60f191` (CI and scope documentation), `ac61d2b` (compatible runtime Candid extractor), and `867f7a0` (suite bookkeeping/provisioning). The exact tested implementation source is **`867f7a0e84fb498ea973b491b09c8970a929c3ed`**. D-QUORUM component acceptance passed at this source; there is **no fully qualified integrated source**. The following documentation handover commit is identified in the external bundle receipt and uncommitted results file.
 
-# Maturity lock-barrier correction qualification
+The full attempt took 10,912.85 host seconds, ended at the same commit with a clean worktree, and returned **1**. All recorded source bytes and gate-log hashes were verified after completion. One earlier interrupted diagnostic attempt was retained under `dist/history/integration-ac61-diagnostic`; it does not qualify this candidate.
 
-**All mandatory local gates passed for this undeployed candidate.** The source-stable full acceptance command exited normally with status 0 on 2026-11-02. [The actual launcher receipt](../dist/evidence/launcher-exit.json) records the result. Hosted CI is unrun. No push or mainnet write occurred.
+## B. Preserved functionality and provenance
 
-## A. Commits and source
+Root and nested Cargo workspaces/lockfiles remain independent. D-QUORUM still uses its vendored evaluator; manifest, pure Rust source, licence and differential fixture match the imported evaluator byte for byte. Standard `nns-dendrite/1.1-draft` and evaluator source `d55a0f4d4edfabe49d8fd543aff473084cb741f2` are unchanged. Runtime Governance/Ledger/archive pin remains `83f29e0803496ba6aaea3d6b43f6c6bebea12dd9`; PocketIC is 15.0.0. Rust 1.94.1, Node 24.15.0 and npm 11.12.1 remain pinned.
 
-Actual starting HEAD was `b54d3cdbc7eb87c068c054924ce69e353de81a38`, descending from reported implementation `55152c59bb2524f4304d2cd3c5c5d8d0c4cc0e04`. The worktree was clean. No reset or discarded work occurred.
+D-QUORUM production Rust, vendored policy and public Candid have no changes from the starting tree. Direct public voting-eligible VP, exact proportional division, no transitive scoring, feedback exclusions, deterministic manager-disjoint ranking, five initial seats, Governance-only setter, equal distinct-neuron net rewards, verified Governance staking destinations, transfer identities, reserves, daily cadence and maturity authority are preserved. Stable schema remains **V3**, with unchanged V1/V2 migrations. No financial liability is reclassified by this import.
 
-- `2180db49928d7535c744937eedf16b8c2ed8ffc8`: restricted typed maturity barrier, regressions, pinned-source proof and qualification selection. This is the exact qualified implementation source.
-- The following documentation-only handover commit records the completed report; its exact ID is in the bundle's external validation receipt and final handover. Runtime, tests, pins, stable layout and Candid do not change in that commit.
+The original sibling remains at the same HEAD/tree and clean. Jupiter reference `/home/codexdev/src/Jupiter_Faucet_Suite`, `7af493a3ee46640c92e3d1021129a32c26fc09f7`, supplied testing-discipline documentation only. No Jupiter runtime was imported. [RC1](releases/rc1-qualification.md), [RC2](releases/rc2-qualification.md), [RC3](releases/rc3-qualification.md) and [barrier qualification](releases/barrier-qualification.md) remain historical.
 
-Historical [RC1](releases/rc1-qualification.md), [RC2](releases/rc2-qualification.md) and [RC3](releases/rc3-qualification.md) reports and hashes remain historical. Exact RC3 release/evidence/build outputs are preserved under `dist/history/rc3-qualified`; the original RC3 review archive is untouched.
+## C. Integration infrastructure
 
-## B. Correction and regressions
+The existing root `xtask` orchestrates preserved component commands, evaluator consistency, inventory, shared real protocol, real II browser, canonical pair repeats and combined acceptance. Independent lanes continue after failure. Missing prerequisites and zero behavioural matches fail. [Executed inventory](../dist/evidence/integration-inventory.json), [counts](../dist/evidence/integration-counts.json) and [full run](../dist/evidence/integrated_acceptance-run.json) distinguish discovery, execution, repeats and validators.
 
-The ordinary [Governance adapter](../crates/ic_clients/src/governance.rs) converts every typed Governance Error into `Err(String)`. RC3's subsequent error-14 match in [proposal.rs](../canisters/d_quorum/src/proposal.rs) was therefore unreachable: `await?` had already returned. The correction adds `maturity_finalization_barrier(id)` with the private `validate_maturity_finalization_barrier` validator, restricted to by-ID ClaimOrRefresh and replaces that single production call site. Ordinary `manage` and its error conversion remain unchanged.
+Shared backend scenarios extend the existing PocketIC fixture: both production-feature applications, real pinned Governance/Ledger/archives, Registry/CMC features, actual empty controllerless canisters and synthetic neurons/assets share one instance. Cases use independent instances. Both canonical applications repeat the connected tests.
 
-At pinned executable revision `83f29e0803496ba6aaea3d6b43f6c6bebea12dd9`, [the protobuf enum](https://github.com/dfinity/ic/blob/83f29e0803496ba6aaea3d6b43f6c6bebea12dd9/rs/nns/governance/proto/ic_nns_governance/pb/v1/governance.proto) defines InsufficientFunds as 14. [Refresh](https://github.com/dfinity/ic/blob/83f29e0803496ba6aaea3d6b43f6c6bebea12dd9/rs/nns/governance/src/governance.rs) acquires the neuron lock before the Ledger balance await and minimum-stake refusal. [Both lock implementations](https://github.com/dfinity/ic/blob/83f29e0803496ba6aaea3d6b43f6c6bebea12dd9/rs/nns/governance/src/neuron_lock.rs) use the same in-flight-command map. [Finalization](https://github.com/dfinity/ic/blob/83f29e0803496ba6aaea3d6b43f6c6bebea12dd9/rs/nns/governance/src/governance/disburse_maturity.rs) holds that lock while popping progress and awaiting the mint, restoring progress or retaining the lock on failure. The [consolidated audit](hardening-design.md#final-financial-lifecycle-contracts-v3) records source checksums; reviewed source bytes and checksums are included under `dist/history/barrier-preflight/pinned-source`. Error-message text supplies no proof.
+Browser infrastructure uses the existing Puppeteer 24.36.0 image, Chrome 144.0.7559.96 and virtual WebAuthn. The II production backend/frontend artifacts from `release-2026-06-20` match the PocketIC source pins. Both default dummy-auth configurations are explicitly cleared before registration; the backend configuration is queried to prove this. `id.ai.localhost` maps to frontend `uqzsh-gqaaa-aaaaq-qaada-cai`, with backend `rdmx6-jaaaa-aaaaa-aaadq-cai`. Gateway certificate verification remains enabled. Local frontend assets are built in an isolated tracked-source copy, with recorded local host/origin/root-key configuration and a separate Wasm hash. Production assets are untouched.
 
-Only exact expected-neuron-ID success or that typed post-lock error 14 establishes the barrier. Other codes/variants, wrong or absent IDs, empty/malformed replies and rejected/unknown transport results remain unresolved. Existing exact Executed proof, empty progress before and after, protected configuration and the 300-second bound remain required. No historical mint is attributed by this recovery.
+The passing browser safety scenario installs II and the compiled local Dendrite application. Authentication is refused before the fixture proceeds to Governance/Ledger provisioning. It therefore proves no positive browser-to-Governance transaction. The exploratory CLI local network was stopped. Its default dummy-auth behaviour is not real-authentication evidence.
 
-The four new exact regression names are:
+## D. Scenarios and independent oracles
 
-1. Native: `governance::tests::maturity_barrier_preserves_only_exact_success_or_typed_post_lock_insufficient_funds`.
-2. Recording adapter: `maturity_barrier_adapter_decodes_typed_results_without_relaxing_ordinary_refresh`.
-3. Production state machine with recorded faults: `executed_maturity_typed_insufficient_funds_barrier_recovers_but_uncertain_barriers_do_not`.
-4. Actual pinned Governance/Ledger with production timers: `missed_real_maturity_window_accepts_only_typed_post_lock_insufficient_funds_barrier`.
+- `connected_dendrite_and_automation_use_one_real_governance_and_ledger`: replicated Dendrite compliance and D-QUORUM eligibility agree for the real fixture; real Governance following and exact Ledger blocks verify selection/payments. Recipients: 100 and 106. Prepared and canonical pair pass.
+- `connected_real_maturity_rewards_and_later_harvest`: exact proposal 1, manager approval, missed progress window, upgrade, actual 8,000,000,000-e8s credit and confirmed payments at blocks 37/38. Initial maturity was seeded; a later real NNS voting reward event produces maturity, distinct proposal 5 executes, and payout 2 pays new recipients 112/118. Old confirmations remain unchanged. Historical mint attribution remains unresolved. Prepared and canonical pair pass. This is a backend economic journey, separate from the browser world.
+- `actual_ii_page_and_virtual_webauthn_capability`: actual certified II page and virtual authenticator setup pass; this alone is not authentication proof.
+- `real_ii_unrestricted_delegation_is_rejected_before_governance`: actual Create → Create with passkey → Create identity UI, dummy auth disabled, followed by the production scope refusal and **zero Governance requests**. Pass.
+- `real_ii_compiled_frontend_known_managers_and_signed_governance`: mandatory positive journey **fails** at the same scope check. No proposal, ballot or management change is claimed.
 
-[Hardening regressions](../tests/pocketic/tests/hardening.rs) exercise wrong/missing IDs, unrelated error codes, missing/unexpected responses, malformed Candid and rejected calls before typed 14. They preserve one exact proposal through a thirty-day outage and upgrade, block another proposal on failed/uncertain barriers, then terminate without receipt attribution. Native tests additionally classify generic unknown-transport errors; recording rejections are not represented as real IC SysUnknown events. Ordinary refresh still fails on error 14.
+Existing financial lifecycle, authority, archive, ordinary-ballot eligibility, 19,000-VP/direct-versus-transitive, ambiguity, cooldown, maintenance fairness, setter race, stale observation, natural-timer and genuine V1/RC2 checkpoint upgrades all remain selected. The current test source was also run against actual historical RC3 Wasm `27f8ad3c…`; it failed at the intended typed-barrier terminal assertion. This one intentional recording-fixture counterfactual is separate from qualifying passes and real-Governance error-14 evidence.
 
-The [real-protocol regression](../tests/pocketic/tests/protocol.rs) seeds the target's actual staking balance at 50,000 e8s, obtains actual typed error 14 from pinned Governance, and verifies ordinary refresh remains an error. Another manager approves the exact maturity proposal. Automation misses the complete progress window, Governance executes/finalizes, and the upgraded production canister recovers with no duplicated original proposal or invented receipt. Actual error 14 is verified before and after recovery. A separate unrelated deposit remains funds rather than receipt evidence. All three integration regressions repeat in the canonical suite. The direct adapter table uses the test-only recording probe; the state-machine and real-protocol cases execute the helper inside the actual canonical production canister.
+## E. Defects and unresolved findings
 
-The state-machine recording-fixture test was also run against the actual historical RC3 production Wasm, SHA-256 `27f8ad3ce2beceb0cb0def098e96ce982686e6822481ecf126b3b6b5bc3fafbb`. It failed at the intended terminal-barrier assertion with exit 101; the corrected Wasm passes. [Negative-control and preflight records](../dist/history/barrier-preflight/results.json) are separate from passing qualification gates. This negative control uses recorded Governance responses; it is not claimed as a real-protocol negative control.
+1. Nested deployment guard incorrectly required a physical `.git` directory. Existing frontend regression failed before the one-line worktree check correction, then all 162 frontend tests passed. No deployment authority changed.
+2. The inherited native lockfile had 12 RustSec vulnerabilities. Seven native-only dependency versions were updated; all seven are absent from the production dependency graph. RustSec now reports zero vulnerabilities. Prepared application Wasm hashes remain unchanged.
+3. Real II does not honour the requested Governance-only target scope in the pinned delegation handler (`66bd7bcf6350f51811057f4c4dae1ff12aa67b8c`). The application refuses the resulting unrestricted chain. No authentication policy was relaxed. This blocks signed management and its dependent browser journeys.
+4. Real Governance confirms that all five known managers 2010–2014 omit `known_neuron_data` in full list records while scalar metadata calls return it. The transaction helper still relies on the omitted field. It is **not fixed**: the required real-II signed-browser reproduction cannot reach it. Fixtures were not made conveniently different from Governance.
+5. The newly reproduced Dendrite artifact differs from the historical deployment binding. The original release verifier fails with `icp.yaml Wasm hash mismatch` in an isolated copy. Historical release assets use an older frontend manifest; current committed/prepared frontend assets match the newly reproduced build. Prepared bytes are unchanged by relocation. No historical hash or deployment binding was relabelled or updated.
 
-## C. Preserved safety and compatibility
+OSV still reports **36 findings affecting 14 packages** across npm development tooling and four existing unmaintained Rust notices. Production-only npm audit reports zero; RustSec reports zero vulnerabilities. No new exceptions suppress failures. Consumer Candid checks pass with optional-variant warnings retained; these do not prove every transaction variant. Complete signed-browser cancellation/expiry/authority faults, authenticated Dendrite upgrades, full browser/economic golden journey and integrated browser capacity remain unqualified. The old anonymous mainnet-query browser smoke was not run under the local-only boundary; legacy host-only reproducibility commands remain available but were not separately rerun. Docker reproducibility gates did run.
 
-No scoring, eligibility, proportional division, Dendrite evaluation, manager-disjoint ordering, seat/count authority, payout allocation, staking destination, Ledger identity, refusal cooldown, financial settlement/maintenance, cadence, controller or hotkey logic changed. No Ledger/proposal ambiguity is cleared by an uncertain barrier. Payment entitlements, confirmations, reservations and fees are untouched. Terminal maturity proof creates no spendable funds; payout admission still uses authoritative Ledger funds and its existing roster/cadence checks.
+## F. Security, authority and scope audit
 
-Stable schema remains **V3**, with byte-identical state and V1/V2 conversion source. Existing frozen-wire native migrations and actual V1/RC2-Wasm checkpoint upgrades run against prepared and canonical candidates. Public Candid remains byte-identical to RC3 (6,314 bytes); no production method or response type changed. Governance/Ledger runtime pins, Dendrite pin `b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291`, evaluator checksums and policy `selection-2-eligible-ballots/reward-roster-equal-1` are unchanged.
+New production dependencies, public methods, persistent state, production canisters, policy changes and economic changes: **None**. Existing Dendrite was imported, not replaced. Its browser-to-NNS signing architecture and anonymous backend remain intact. No signing proxy, administrator override, roster control, reward redirection, frontend redesign or creation wizard was added.
 
-Receipt attribution can remain genuinely unprovable because a Ledger mint lacks the proposal fingerprint. Unknown creation, unavailable proof/history and failed/uncertain lock barriers retain their fail-closed treatment. Termination and receipt attribution remain distinct.
+New test-only modules are two Rust browser test targets and two Node drivers, plus helpers in existing protocol support. They provide the required gateway, real II configuration, isolated local build and bounded public coordination. Existing runner/export validators, CI and artifact retention were extended. Seven existing native dependency versions changed for demonstrated security findings; no production dependency graph changed. A supplemental observational screenshot hook captures only the application's refusal page and substitutes no identity/session/actor. No private keys, WebAuthn credential material, cookies or delegation chains are retained.
 
-## D. Qualification evidence
+## G. Qualification evidence
 
-The complete qualifying run has **126 unique named tests, 211 passing executions, 37 behavioural commands and 105 passing gate records**. All **78 behavioural/release requirements** in the [executed matrix](../dist/evidence/acceptance-matrix.json) are executed. Repeated tests and validators do not become additional unique tests.
+The main stable-source attempt has **172 gate records: 170 pass, two fail; 50 behavioural commands; 332 unique passing names, 885 passing executions and one failed positive-browser execution**. The 25 unchanged evaluator names compiled in both workspaces are deduplicated in that global name count. Validators never count as tests. Supplemental validators and intentional counterfactuals are separate.
 
-| Suite | New distinct names in this run | Passing executions |
+| Suite | Unique names | Passing executions |
 |---|---:|---:|
-| Native unit/property/upstream parity | 69 | 69 |
-| Recording/mock integration | 13 | 13 |
-| Adversarial hardening | 26 | 26 |
-| Actual pinned Governance/Ledger/archive | 13 | 13 |
-| Production natural-timer/upgrade repeat | 0 | 1 |
+| D-QUORUM native/property | 69 | 138 including coverage |
+| D-QUORUM recording mocks | 13 | 15 including production/canonical repeats |
+| D-QUORUM hardening/migrations | 26 | 33 including canonical repeats |
+| D-QUORUM real protocol | 15 | 21 including canonical repeats |
 | Large-index scale | 2 | 2 |
-| Prepared 20/80/240 capacity | 3 | 3 |
-| Instrumented native repeat | 0 | 69 |
-| Canonical artifact repeats | 0 | 15 |
-| **Total** | **126** | **211** |
+| 20/80/240 capacity | 3 | 4 including canonical 240 |
+| **D-QUORUM component total** | **128** | **213** |
+| Dendrite native | 62 | 174 |
+| Dendrite mock-Governance PocketIC | 3 | 6 |
+| Dendrite frontend | 162 | 486 |
+| Additional shared backend repeats | 0 | 4 |
+| II capability/refusal | 2 | 2 |
 
-The 69 native names include 25 unchanged evaluator tests. Four names are new relative to RC3. All existing ranking, voting eligibility, configuration-race, migration, financial lifecycle, natural-timer and real archive cases remain selected. No mandatory suite was skipped. Formatting, warnings-denied Clippy, Candid generation/subtyping, production no-debug exports, dependency isolation, RustSec, SBOM, coverage, both clean builds, canonical behaviour and final source guards pass. Workflow configuration is not remote CI execution.
+D-QUORUM's **114 component gates and all 78 existing requirements pass**. Formatting, warnings-denied Clippy, unit/property, mocks, hardening, real Governance/Ledger/archive, natural timers, upgrades, coverage, security/SBOM, production exports/Candid, two clean builds and canonical repeats pass. Dendrite native/frontend/fixture/coverage/SBOM and canonical builds pass; its security gate fails. Six additional source-stable interface/export/runtime-Candid validators pass, retaining warnings. The supplemental historical deployment-binding validator fails. One additional repeat of the existing II-refusal case passed to capture a public application screenshot; this adds one passing execution and no unique test, outside the 885 main-run passes. The generated [integration matrix](../dist/evidence/integrated-acceptance.json) remains unqualified.
 
-Additional preflight executions are excluded from these qualification counts: 12 native client passes observed in the terminal (rerun with retained logs in the complete run), three targeted PocketIC passes with [retained records](../dist/history/barrier-preflight/results.json), and one expected failing actual-RC3 negative control. Thus this tranche observed 226 passing executions of the same 126 names, plus that one intentional baseline failure. Historical RC1/RC2/RC3 runs are not added to these counts.
+Capacity uses recording fixtures with production Wasm, natural timers and unchanged freshness constants, not a claim of 240-recipient real-Governance/browser capacity. All rows finish with zero unpaid liabilities, pending refreshes and abandoned maintenance.
 
-The full command ran 2026-11-02T15:37:26Z–19:11:30Z (12,844.67 host seconds), with test-profile debug disabled, Rust 1.94.1 and the unchanged pinned PocketIC 15.0.0/didc 0.6.2. The source-map SHA-256 is `68b464b74beda375ac70e523c2f8b950a52fb488c352eab10cf4423fb8d971c4`. Every source/artifact/log checksum was checked after successful completion.
+| Recipients/artifact | Contenders/scores | Virtual selection/total s | Validation→intent/readback s | Host s | Cycles used | Heap/state bytes | Max checkpoint instructions |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 20 prepared | 40/640 | 454/1074 | 59/69 | 64.10 | 97,337,472,397 | 3,932,160/178,541 | 48,397,563 |
+| 80 prepared | 160/2560 | 1374/3814 | 189/199 | 489.40 | 728,205,681,231 | 11,534,336/655,722 | 124,417,534 |
+| 240 prepared | 480/7680 | 5595/12865 | 819/829 | 2313.60 | 6,236,683,553,912 | 34,275,328/1,962,913 | 327,128,002 |
+| 240 canonical | 480/7680 | 5595/12865 | 819/829 | 2449.10 | 6,236,683,208,885 | 34,275,328/1,962,913 | 327,128,002 |
 
-All capacity cases use production constants and natural timers, dense scores, shared/unshared managers, discovery retry, latency, upgrade and the thirty-plus-dependency invalid contender. The 20/80 cases use five seats; 240 uses fifteen seats across sixteen topics. Every obligation is paid once and refreshed; each finishes with zero pending financial liabilities, pending refreshes and abandoned maintenance.
+Governance endpoint/neuron-read counts are 194/148, 702/563 and 2173/1789. Ledger balance/fee/history/transfer calls are 47/21/21/20, 169/81/81/80 and 494/241/241/240. Stable allocation is 129 pages. The 240 case records 22,172 checkpoints and 5,625,455,364,590 sampled checkpoint instructions. Management calls and whole-replica instruction costs are not instrumented. Host timings are provisioning observations, not mainnet bounds.
 
-| Fixture | Contenders / score entries | Selection / total virtual s | Validation→intent / readback s | Oldest destination / plan after roster s | Host s |
-|---|---:|---:|---:|---:|---:|
-| [20 prepared](../dist/evidence/prepared-capacity-20.json) | 40 / 640 | 454 / 1074 | 59 / 69 | 10 / 20 | 99.30 |
-| [80 prepared](../dist/evidence/prepared-capacity-80.json) | 160 / 2560 | 1374 / 3814 | 189 / 199 | 30 / 40 | 501.79 |
-| [240 prepared](../dist/evidence/prepared-capacity-240.json) | 480 / 7680 | 5595 / 12865 | 819 / 829 | 60 / 70 | 3720.94 |
-| [240 canonical](../dist/evidence/capacity-240.json) | 480 / 7680 | 5595 / 12865 | 819 / 829 | 60 / 70 | 2542.88 |
+Native line coverage: policy 88.02%, accounting 96.56%, clients 41.14%, stable migration 95.24%, maturity 7.23%, payout 0.00%; unchanged evaluator 98.79%. Wasm timer/await execution receives integration evidence, **no native coverage credit**. Dendrite native workspace lines 89.97%, pure-engine lines 98.79%/branches 95.51%; frontend lines 95.53%, branches 86.60%, functions 93.36%. No new aggregate threshold was invented. Root CycloneDX SBOM has 291 components, SHA-256 `c5e18037671fcd6b56701d79f1ceccf750e2a5fa2512a45ae712495883dc94ce`; nested Rust/npm SBOMs retain their own checksums.
 
-| Fixture | Cycle delta | Governance completions / neuron reads | Ledger balance / fee / history / transfer calls | Heap bytes / snapshot bytes / stable pages | Checkpoint writes / max sampled instructions |
-|---|---:|---:|---:|---:|---:|
-| 20 prepared | 97,337,472,397 | 194 / 148 | 47 / 21 / 21 / 20 | 3,932,160 / 178,541 / 129 | 1,687 / 48,397,563 |
-| 80 prepared | 728,205,681,231 | 702 / 563 | 169 / 81 / 81 / 80 | 11,534,336 / 655,722 / 129 | 6,282 / 124,417,534 |
-| 240 prepared | 6,236,683,553,912 | 2173 / 1789 | 494 / 241 / 241 / 240 | 34,275,328 / 1,962,913 / 129 | 22,172 / 327,128,002 |
-| 240 canonical | 6,236,683,208,885 | 2173 / 1789 | 494 / 241 / 241 / 240 | 34,275,328 / 1,962,913 / 129 | 22,172 / 327,128,002 |
+## H. Scope audit, artifacts and independent review
 
-The 240-recipient run records 22,172 checkpoints and 5,625,455,364,590 total sampled checkpoint instructions in each artifact case. Stable pages are physical 64-KiB pages; snapshot size and heap size are different measurements. Governance neuron reads are a subset of recorded endpoint completions; Ledger counters include Governance refresh reads, while management-canister calls are not instrumented. Cycle deltas cover all jobs. Instruction samples do not claim whole-replica/callee costs. All original freshness limits remain unchanged. Virtual timing/call/checkpoint results are consistent; host wall-time differences are provisioning observations, not performance guarantees.
+Production additions: dependencies **None**; public methods **None**; persistent state **None**; canisters **None**; policy changes **None**; economic changes **None**. Test-only additions are the shared protocol scenarios, II/browser targets and drivers, existing-runner extensions, artifact checks and observational screenshot capture described above. Seven existing native dependency versions changed solely for demonstrated security findings.
 
-Native coverage ([scopes](../dist/evidence/coverage-scopes.json), [complete counters](../dist/evidence/coverage.json)):
+Each component has two forced-clean no-cache Docker builds with identical output file sets and bytes. Canonical pair backend tests pass. The [pair manifest](../dist/integration-manifest.json) supplements individual manifests and records protocol/II/browser pins, local configuration delta and tested-suite source hashes.
 
-| Scope | Covered / total lines | Native line coverage |
-|---|---:|---:|
-| Policy (unchanged) | 191 / 217 | 88.02% |
-| Accounting (unchanged) | 533 / 552 | 96.56% |
-| Clients | 483 / 1174 | 41.14% |
-| Maturity state machine | 35 / 484 | 7.23% |
-| Payout state machine (unchanged) | 0 / 493 | 0.00% |
-| Stable migration (unchanged) | 1081 / 1135 | 95.24% |
-| Vendored evaluator (unchanged, separate) | 1879 / 1902 | 98.79% |
+| Artifact | SHA-256 |
+|---|---|
+| D-QUORUM Wasm | `07b1b54ba965303a00e072d3d9f4cc717dc27b10250b0e51cf37d6109919c3a8` |
+| D-QUORUM Candid | `ce15b307ce8b19b09df0d9abb723828099c87b52fdc2aa012d67c9f327940ad0` |
+| D-QUORUM source/artifact manifest | `f940f251ba9985dc5e08c92ff832bce9c596966878d853ed00e4f534fea2d354` |
+| Dendrite Wasm | `a11efe497e802c6f93b54540043b73505c2271b46219785d2dd90657146933af` |
+| Dendrite extracted canonical Candid | `905c2919fe5fb18d0cc1ee09719b739a803fabbe8d7dc45cf349fa60ebb9b55f` |
+| Dendrite canonical SHA256SUMS | `719f5a36a5825a0a6481ff2b1affad9ee3fa1eb65cffdb72cf046c31ad5dfd14` |
 
-The changed Governance adapter file has 317/639 covered lines (49.61%). The exercised native instantiation of its private barrier validator records 15 calls and all 10 regions covered; an unused library instantiation also appears with zero counts. LLVM reports no branch-count metric here, so this is not a branch-coverage percentage. Native file totals include in-file test bodies and generated implementations. Asynchronous dispatch and terminal-state await paths receive real/recording PocketIC and canonical integration evidence, **not** native coverage credit. No aggregate coverage threshold is invented.
+Dendrite's committed interface is byte-unchanged; extracted Candid differs in formatting/type aliases and passes strict structural comparison. Its Wasm exposes `get_candid_pointer`, not an embedded Candid custom section. The exact production export set is checked. Local-browser Wasm is separately labelled and must not be confused with canonical production bytes.
 
-[Whole-workspace RustSec](../dist/evidence/security.json) reports zero vulnerabilities, no ignored advisories and four existing unmaintained notices: backoff 0.4.0 (RUSTSEC-2025-0012), instant 0.1.13 (RUSTSEC-2024-0384), paste 1.0.15 (RUSTSEC-2024-0436), serde_cbor 0.11.2 (RUSTSEC-2021-0127). Existing [security review](security.md) and the [production dependency tree](../dist/evidence/production-tree.txt) retain their scope; no dependency was added or replaced. Database commit `263a4d951a0867d4bddc29dddd6d59427c78f9a7` was updated 2026-11-02T12:45:44+01:00. The [CycloneDX SBOM](../dist/evidence/sbom.cdx.json) contains 291 locked components, SHA-256 `c5e18037671fcd6b56701d79f1ceccf750e2a5fa2512a45ae712495883dc94ce`. Production dependency isolation passes; tests/mocks/PocketIC remain outside the production graph.
+The review archive is `dist/review-integrated/d-quorum-dendrite-review.tar.gz`, with adjacent `SHA256SUMS` and `review-bundle-validation.json`. Its size/hash and final handover commit are external to avoid self-reference. It contains exact tested source, current handover, both components' canonical outputs and clean repeats, manifests, full execution/requirement records, logs, coverage, security/SBOM, capacity, public browser evidence and historical records. The existing assembler's sorted epoch-zero tar/gzip procedure is reused, generated twice and compared; every member checksum is verified. This is an **incomplete-qualification review bundle**, not a release approval.
 
-## E. Canonical artifacts and review bundle
+## I. Operator handover
 
-| Artifact | Bytes | SHA-256 |
-|---|---:|---|
-| [d_quorum.wasm](../dist/release/d_quorum.wasm) | 2306339 | `07b1b54ba965303a00e072d3d9f4cc717dc27b10250b0e51cf37d6109919c3a8` |
-| [d_quorum.did](../dist/release/d_quorum.did) | 6314 | `ce15b307ce8b19b09df0d9abb723828099c87b52fdc2aa012d67c9f327940ad0` |
-| [manifest.json](../dist/release/manifest.json) | 9066 | `dd651e0d60fb1c30042b3cf87d6f31cd32f9c68a1306563de9b0bd91a8fd711f` |
+This merged repository is ready for review, **not publication as a fully qualified release**. Resolve actual II target-scope compatibility without silently broadening authority; then reproduce/fix known-manager metadata through the real browser and complete the missing golden, security, cancellation and upgrade scenarios. Address development-tool findings and requalify; only then bind the appropriate Dendrite deployment checksum. Preserve ambiguity where protocol evidence cannot attribute a mint or execution remains unknown.
 
-The manifest binds source/configuration files to `2180db49928d7535c744937eedf16b8c2ed8ffc8`. Both forced-clean Docker builds use `--no-cache`, the pinned Rust 1.94.1 image, Linux amd64 and `SOURCE_DATE_EPOCH=0`; their exact Wasm/Candid file sets and bytes match. Production no-debug export and embedded Candid checks run on prepared and canonical artifacts. [Release checksums](../dist/release/SHA256SUMS), [full execution record](../dist/evidence/acceptance-run.json), [full log](../dist/evidence/full-acceptance.log), [actual launcher receipt](../dist/evidence/launcher-exit.json) and [executed requirement matrix](../dist/evidence/acceptance-matrix.json) retain separate provenance.
+Remote CI is **unrun** because no commits were pushed. Root workflows retain existing jobs, add component/shared/browser coverage and block canonical readiness on incomplete mandatory requirements. Permissions are read-only, with no deployment secrets or automatic deployment. The owner must observe actual hosted runs and separately enforce the documented checks through branch protection; no repository settings were changed.
 
-The refreshed deterministic archive is `dist/review-barrier/d-quorum-barrier-review.tar.gz`, with adjacent SHA-256 and `review-bundle-validation.json` receipts. Its exact size/checksum and final handover commit are external to the archive and supplied in the final handover/results file, avoiding a self-referential hash. Root source files are the exact qualified Git archive, including the source-time pending report; completed consolidated documentation is under `handover/qualification.md`. The reused generator verifies source/artifact/log hashes, requirement/gate outcomes, referenced report files and every bundled file, generates the archive twice and requires identical archive bytes. Generated binaries and evidence remain ignored and uncommitted.
+Before any production operation, independently verify current Governance/Ledger/economics compatibility, final-origin II behaviour, a controlled real management transaction, artifact/configuration bindings, controllers/hotkeys, proposer binding/funding, cycles and upgrade plan. Local tests do not complete these operator-only gates. Funding, staking, management/following changes, proposals, transfers, deployment and activation need separate explicit approval. Never reinstall an active or funded production canister.
 
-Hosted CI is **unrun** for this local, unpushed candidate. The existing workflow retains all mandatory suites, 360-minute production/canonical limits, read-only credentials, artifact retention, dependency ordering and no automatic deployment. The existing xtask canonical list adds the three new integration cases without removing any prior case. No missing-tool or zero-test gate is accepted.
-
-## F. Scope audit
-
-Production changes are one restricted Rust adapter helper/private validator and one existing call-site replacement. There is no new module, dependency, persistent type/field, production canister, public Candid method, administrator control or manual recovery path. Existing test infrastructure gains three test-only methods: `maturity_barrier_probe`, `refresh_probe` and `refresh_reply_for`. The existing refresh-refusal collection becomes a neuron-keyed map of the existing Script type so another job cannot consume the injected barrier response. The fixture helper `lifecycle_real_with_target_stake` changes only test seeding; the original helper retains its original default stake. These establish adapter transport, adversarial state transitions and actual protocol error-14 evidence. Four tests and five behavioural requirements are added; three integration tests join canonical repeats. The historical RC3 report is retained separately. The existing local review-bundle generator is reused; no production reporting or scheduling subsystem is introduced.
-
-## G. Operator handover
-
-Retain the qualified source and handover commits, review archive/checksum/validation receipt, both clean build outputs, canonical Wasm/Candid/manifest/checksums, complete executed matrix/logs, coverage, audit, SBOM, capacity measurements and negative-control evidence. Independently review current real-network Governance/Ledger module/API/economics compatibility before any deployment, especially the exact lock-ordering proof. Local pinned-protocol tests do not establish future live-network compatibility. Observe actual hosted CI after a separately authorized push and verify the deployment checksum/configuration, authority, mode, proposer binding/funding, cycles and upgrade procedure.
-
-Push, deployment/live activation, funding/staking, NNS proposals, transfers, following/hotkey/controller changes and all other mainnet writes require separate explicit authorization. Never reinstall a funded or active production canister. No push, deployment, funding, staking, real proposal, real transfer, hotkey/controller change or other mainnet write occurred. All financial effects described here used local PocketIC canisters, test identities and test funds.
+Retain source/handover commits, archive/checksums/validation receipt, both clean output sets, all manifests, execution logs, coverage, security/SBOM, capacity and negative-control evidence. **No push, mainnet deployment, funding, staking, real proposal, real transfer, hotkey/controller change or other mainnet write occurred.** All financial effects used isolated test canisters and synthetic assets.

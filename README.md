@@ -2,7 +2,7 @@
 
 One stateful Rust Internet Computer canister for deterministic, topic-specific Dendrite delegation and equal ICP rewards to selected neuron staking accounts.
 
-**Integration status: local development in progress; the combined repository is not qualified for release.** Dendrite is imported with its full history under [`dendrite/`](dendrite/README.md), retaining its own workspace, frontend, authority and release process. The earlier D-QUORUM maturity-barrier candidate remains historical evidence; see [qualification](docs/qualification.md) and [integration baseline](docs/integration-baseline.json). Installation defaults to `ObserveOnly`. Publication, deployment and activation require separate authorization.
+**Integration status: local integration and qualification attempt completed with blockers; the combined repository is not qualified for release.** Dendrite is imported with its full history under [`dendrite/`](dendrite/README.md), retaining its own workspace, frontend, authority and release process. The earlier D-QUORUM maturity-barrier candidate remains historical evidence; see [qualification](docs/qualification.md) and [integration baseline](docs/integration-baseline.json). Installation defaults to `ObserveOnly`. Publication, deployment and activation require separate authorization.
 
 The provisional reward policy gives **one equal net share to each distinct neuron in the latest fully applied, sufficiently fresh roster**, regardless of how many topics select it. VP ranks delegates; it does not weight payment. Managers get no additional share. Reward-receiver declarations do not redirect ICP. Review this policy before any deployment.
 
