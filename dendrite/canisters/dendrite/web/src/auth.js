@@ -48,11 +48,15 @@ function inspectChain(identity, now, maximum = 20) {
   const principal = exactPrincipal(identity);
   if (!samePrincipal(principal, Principal.selfAuthenticating(chain.publicKey))) throw new Error("Delegation root does not match the application principal.");
   let expiration = now + AUTHENTICATION_DELEGATION_TTL_NS;
+  const seenKeys = new Set([Array.from(chain.publicKey).join(",")]);
   for (const signed of chain.delegations) {
     const link = signed?.delegation;
     if (!link || Object.keys(link).some((key) => !["pubkey", "expiration", "targets"].includes(key)) || !bytes(link.pubkey, 4096) || !bytes(signed.signature, 65536)) {
       throw new Error("Internet Identity delegation contains malformed or unsupported restrictions.");
     }
+    const publicKey = Array.from(link.pubkey).join(",");
+    if (seenKeys.has(publicKey)) throw new Error("Internet Identity delegation has a cyclic or self-signed key.");
+    seenKeys.add(publicKey);
     if (typeof link.expiration !== "bigint" || link.expiration <= now || link.expiration > (1n << 64n) - 1n) throw new Error("Internet Identity delegation is expired or malformed.");
     if (link.targets !== undefined) {
       if (!Array.isArray(link.targets) || !link.targets.length || link.targets.length > 1000 || !link.targets.every((target) => target instanceof Principal) || !link.targets.some((target) => samePrincipal(target, NNS_GOVERNANCE_PRINCIPAL))) {

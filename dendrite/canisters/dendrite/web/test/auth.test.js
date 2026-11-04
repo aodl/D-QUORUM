@@ -80,6 +80,13 @@ test("key principal malformed restrictions and chain bounds cannot be bypassed",
   await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /inspected safely/);
   assert.throws(() => validateGovernanceDelegation({}), /inspected safely/);
 });
+test("complete chain scope is an intersection and SDK-signed self delegations are rejected", async () => {
+  const parent=await bootstrap({targets:[governance,user]});
+  assert.equal((await deriveGovernanceSession(parent.identity,parent.key.getPublicKey().toDer())).validate(),true);
+  const root=Ed25519KeyIdentity.generate();
+  const self=await DelegationChain.create(root,root.getPublicKey(),new Date(Date.now()+60000),{targets:[governance]});
+  assert.throws(()=>validateGovernanceDelegation(DelegationIdentity.fromDelegation(root,self)),/self-signed/);
+});
 test("bootstrap never restores or persists credentials and SDK cleanup precedes publication", async () => {
   FakeAuthClient.instances.length = 0;
   const auth = session(); assert.equal(await auth.restore(), null);
