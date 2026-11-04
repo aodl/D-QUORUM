@@ -102,7 +102,7 @@ controller/hotkey set invalidates the review.
 
 | Package/version | Reachability | Exception and removal condition |
 | --- | --- | --- |
-| `paste 1.0.15` | Transitive Candid compile-time macro | RUSTSEC-2024-0436 abandonment; review on Candid update or 2026-10-17 |
+| `paste 1.0.15` | Transitive Candid compile-time macro | RUSTSEC-2024-0436 abandonment; review on Candid update or 2026-12-04 |
 | `pocket-ic 15.0.0` | Workspace development only | Required local consensus scenarios; remove on compatible replacement |
 | `backoff 0.4.0` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
 | `instant 0.1.13` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
@@ -112,3 +112,45 @@ Automated dependency reachability fails if `pocket-ic`, `backoff`, or `instant` 
 the production Wasm normal/build tree. Lockfiles, advisory scans, reproducible
 comparison, and SBOMs are compensating controls. The existing Apache-2.0 LLVM
 toolchain expression remains the narrow license-policy exception.
+
+## Scoped browser credentials and reviewed tooling findings
+
+The final transaction key is restricted by a signed Governance-only child delegation.
+An unscoped II parent is accepted only as private bootstrap authority. It is not an
+acceptable transaction identity. All ancestor restrictions still apply, the original
+app principal is preserved, and every link must be live. Real replica tests exercise
+allowed Governance requests, denied non-Governance requests against a working control
+destination, and invalid signing keys/expired or excluding ancestors. Client structural
+checks alone do not verify all cryptographic signatures.
+
+Narrowing limits the final transaction key. Hostile same-origin JavaScript while the
+bootstrap signer is accessible can still misuse bootstrap authority. Local sign-out
+removes local authority; it does not revoke already accepted requests or promise
+network-wide revocation of an issued delegation. No browser credentials, private keys,
+WebAuthn material, cookies, or complete delegation chains belong in retained evidence.
+The pinned signer SDK can take its 120-second establishment timeout to report a popup
+closed before the handshake; the browser cancellation regression uses that actual bound.
+
+The November 2026 tooling review upgrades Puppeteer 24.36.0 to the supported 25.16.0
+release and pins its matching Chrome 156.0.8078.47 container digest. The old 24.x
+candidate remains affected by the reviewed chromium-bidi range. CycloneDX npm 6.0.1
+fixes its Windows workspace shell-injection advisory; the trial of 6.0.1 and retained
+5.0.0 established that staying on 5 leaves that high-severity finding. Compatible
+lockfile fixes and brace-expansion 5.0.12 remove the other high findings. Runtime auth
+7.1.0/core 5.4.0 are unchanged. Raw before/after full-development scans remain evidence;
+zero production-only findings do not stand in for this review.
+
+Two moderate advisories remain present in the development lockfile:
+GHSA-3g3m-2fjr-6pw4 (glob 10.5.0 cancellation traversal) and
+GHSA-g3hv-75wg-m249 (minimatch 9.0.9 pattern amplification). Their only logical path is
+CycloneDX npm → optional libxmljs2 → node-gyp → make-fetch-happen → cacache → glob →
+minimatch. They are native XML binding build dependencies, not the JSON SBOM serializer
+or JSON validator. Installation and execution use --ignore-scripts; SBOM output is
+explicitly JSON and retains schema validation. check-tooling-audit.py rejects any new
+advisory or changed path/version and requires JSON generation to succeed while loading
+these exact modules throws. A positive control must also demonstrate the trap rejects
+an actual glob load. This is a specific non-executable-path applicability exclusion,
+not a severity change, a general ignore, or a claim the packages are fixed. Raw npm and
+OSV findings are retained. The two OSV exclusions expire 2026-12-04 and require renewed
+review if the tool/path/configuration changes. The four previously reviewed Rust
+maintenance notices retain their individual reasons and the same next-review date.
