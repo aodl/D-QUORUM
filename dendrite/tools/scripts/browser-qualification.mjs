@@ -8,11 +8,13 @@ const frontend = process.env.DENDRITE_BROWSER_FRONTEND;
 const evidenceDirectory = process.env.DENDRITE_BROWSER_EVIDENCE;
 const baseUrl = process.env.DENDRITE_BROWSER_BASE_URL ?? "http://127.0.0.1:4173";
 const governanceCanister = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-const productionMapping = JSON.parse(readFileSync(".icp/data/mappings/ic.ids.json", "utf8"));
-const dendriteCanister = productionMapping.dendrite;
-assert.equal(dendriteCanister, "hp4av-oiaaa-aaaar-qcaha-cai",
-  "reviewed production mapping drifted");
-const neuronId = "2947465672511369";
+const localWorld=process.env.DENDRITE_BROWSER_LOCAL_WORLD==='true';
+const productionMapping=localWorld?null:JSON.parse(readFileSync(".icp/data/mappings/ic.ids.json","utf8"));
+const dendriteCanister=localWorld?process.env.DENDRITE_BROWSER_CANISTER_ID:productionMapping.dendrite;
+if(localWorld)assert.equal(new URL(baseUrl).hostname,`${dendriteCanister}.localhost`);
+else assert.equal(dendriteCanister,"hp4av-oiaaa-aaaar-qcaha-cai","reviewed production mapping drifted");
+const neuronId=localWorld?"100":"2947465672511369";
+const failureUrl=localWorld?'http://127.0.0.1:4173/test-failure.html':`${baseUrl}/test-failure.html`;
 assert(frontend && evidenceDirectory, "browser frontend and evidence directories are required");
 mkdirSync(evidenceDirectory, { recursive: true });
 
@@ -26,13 +28,24 @@ for (const logical of ["app.js", "styles.css"]) {
 }
 
 const browser = await puppeteer.launch({
-  executablePath: process.env.DENDRITE_CHROMIUM_BIN ?? "/home/pptruser/.cache/puppeteer/chrome/linux-144.0.7559.96/chrome-linux64/chrome",
+  executablePath: process.env.DENDRITE_CHROMIUM_BIN ?? "/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome",
   headless: true,
-  args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking"],
+  args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking", "--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
 });
+const deniedOrigins=[];
+if(localWorld){const {containBrowserNetwork}=await import('/integration/tests/browser/local-network-guard.mjs');await containBrowserNetwork(browser,deniedOrigins);}
 const browserVersion = await browser.version();
 const bounded = (values, maximum = 40) => values.slice(0, maximum).map((value) => String(value).slice(0, 500));
 const results = [];
+// Pinch-scaled CDP pointer coordinates are not the page's CSS layout coordinates.
+// Use genuine keyboard activation in that scenario; retain pointer row activation
+// in desktop, reflow and both mobile viewports. Record the distinction explicitly.
+async function activateControl(page,selector){
+  if(await page.evaluate(()=>Math.abs((visualViewport?.scale??1)-1)<0.01))return page.click(selector);
+  const focus=selector.endsWith(" .rule-name-cell")?selector.replace(/ \.rule-name-cell$/," .rule-toggle"):selector;
+  await page.focus(focus);
+  await page.keyboard.press("Enter");
+}
 try {
   for (const scenario of [
     { name: "desktop", width: 1440, height: 1000 },
@@ -48,9 +61,13 @@ try {
       height: scenario.height,
       deviceScaleFactor: scenario.deviceScaleFactor ?? 1,
     });
-    const consoleErrors = [], pageErrors = [], requests = [];
+    const consoleErrors = [], pageErrors = [], requests = [], automaticFavicon404 = [];
     page.on("console", (message) => {
-      if (message.type() === "error") consoleErrors.push(message.text());
+      if(message.type()==="error"){
+        const location=message.location().url??"";
+        if(localWorld&&location===`${baseUrl}/favicon.ico`&&message.text().includes("404"))automaticFavicon404.push({url:location,error:message.text()});
+        else consoleErrors.push(`${message.text()} [${location}]`);
+      }
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("request", (request) => {
@@ -58,13 +75,13 @@ try {
       if (request.method() === "POST" || /\/api\/v[23]\/canister\//.test(url)) requests.push({
         url,
         method: request.method(),
-        authorization: request.headers().authorization ?? null,
-        cookie: request.headers().cookie ?? null,
+        authorization: request.headers().authorization ? "REDACTED_PRESENT" : null,
+        cookie: request.headers().cookie ? "REDACTED_PRESENT" : null,
         bodyBytes: request.postData()?.length ?? 0,
       });
     });
     await page.goto(`${baseUrl}/#/neuron/${neuronId}`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForSelector("#overview .status-icon", { timeout: 45_000 });
+    await page.waitForSelector(".report-header:not(.loading-report-header) .header-verdict", { timeout: 45_000 });
     if (scenario.pageScaleFactor) {
       const session = await page.createCDPSession();
       await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: scenario.pageScaleFactor });
@@ -72,31 +89,33 @@ try {
         { timeout: 5_000 }, scenario.pageScaleFactor);
     }
     const text = await page.$eval("main", (node) => node.innerText);
-    assert.match(text, /NNS Dendrite Standard/);
+    assert.match(text, /NNS Dendrite Standard/i);
     assert.doesNotMatch(text, /Live analysis|Verify on-chain|Refresh live analysis|Consensus verified|Attention only|Technical evidence|on live evidence/);
-    const controllerPrincipal = await page.$eval(".raw-report-json", (node) =>
-      JSON.parse(node.textContent).target?.[0]?.controller?.[0]);
+    await context.overridePermissions(baseUrl,["clipboard-read","clipboard-sanitized-write"]);
+    await page.bringToFront();
+    await activateControl(page,'[aria-label="Copy raw report"]');
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Copy raw report"]')?.classList.contains('copy-complete'));
+    const publicReport=JSON.parse(await page.evaluate(()=>navigator.clipboard.readText()));
+    const controllerPrincipal=publicReport.target?.[0]?.controller?.[0];
     assert.match(controllerPrincipal, /^[a-z0-9-]+$/,
       `${scenario.name} omitted the target controller principal`);
     const hierarchy = await page.evaluate(() => ({
+      header:document.querySelector('.report-header')?.getBoundingClientRect().top,
       managers: document.querySelector("#managers")?.getBoundingClientRect().top,
       delegation: document.querySelector("#delegation")?.getBoundingClientRect().top,
       rules: document.querySelector("#rules")?.getBoundingClientRect().top,
-      characteristics: document.querySelector("#characteristics")?.getBoundingClientRect().top,
-      rawReport: document.querySelector("#raw-report")?.getBoundingClientRect().top,
-      management: document.querySelector("#management")?.getBoundingClientRect().top,
+      headerMetrics:document.querySelectorAll('.header-metrics .metric').length,
+      removedSections:document.querySelectorAll('#characteristics,#raw-report,#management').length,
       ruleCount: document.querySelectorAll(".rule-summary-row").length,
       distinctRuleCount: new Set([...document.querySelectorAll(".rule-summary-row")]
         .map((node) => node.getAttribute("data-rule-id"))).size,
     }));
     assert.equal(hierarchy.ruleCount, hierarchy.distinctRuleCount, "primary rows are not distinct by rule ID");
     assert(hierarchy.ruleCount > 0, "complete rules view is missing");
-    assert(hierarchy.managers < hierarchy.delegation
-      && hierarchy.delegation < hierarchy.rules
-      && hierarchy.rules < hierarchy.characteristics
-      && hierarchy.characteristics < hierarchy.rawReport
-      && hierarchy.rawReport < hierarchy.management,
-      `unexpected section hierarchy: ${JSON.stringify(hierarchy)}`);
+    assert(hierarchy.header < hierarchy.rules && hierarchy.rules < hierarchy.managers && hierarchy.managers < hierarchy.delegation,`unexpected current section hierarchy: ${JSON.stringify(hierarchy)}`);
+    assert.equal(hierarchy.removedSections,0,"obsolete anonymous sections returned");
+    assert.equal(publicReport.neuron_id,neuronId,"Raw Report copy is not the displayed neuron");
+    assert.equal(await page.$$eval('.header-metrics dt',nodes=>nodes.length),5,"all five characteristics remain in the header");
     const initialRequestCount = requests.length;
     const routeBeforeNavigation = page.url();
     const presentation = await page.evaluate(() => {
@@ -108,7 +127,7 @@ try {
       const failFilter = document.querySelector(".rule-filter-fail");
       const groupPass = document.querySelector(".rule-group-counts .status-pass");
       const groupFail = document.querySelector(".rule-group-counts .status-fail");
-      const verdict = document.querySelector("#overview h2");
+      const verdict = document.querySelector(".report-header h2");
       const passProbe = document.createElement("span");
       passProbe.className = "status-pass";
       const failProbe = document.createElement("span");
@@ -134,9 +153,9 @@ try {
         passFilterColor: getComputedStyle(passFilter).color,
         failFilterColor: getComputedStyle(failFilter).color,
         groupPassColor: getComputedStyle(groupPass).color,
-        groupFailColor: getComputedStyle(groupFail).color,
+        groupFailColor: groupFail ? getComputedStyle(groupFail).color : null,
         verdictColor: getComputedStyle(verdict).color,
-        verdictKind: [...document.querySelector("#overview").classList]
+        verdictKind: [...verdict.classList]
           .find((name) => name.startsWith("status-")),
         passTokenColor: getComputedStyle(passProbe).color,
         failTokenColor: getComputedStyle(failProbe).color,
@@ -166,7 +185,8 @@ try {
     assert.equal(presentation.passFilterColor, presentation.passTokenColor);
     assert.equal(presentation.failFilterColor, presentation.failTokenColor);
     assert.equal(presentation.groupPassColor, presentation.passTokenColor);
-    assert.equal(presentation.groupFailColor, presentation.failTokenColor);
+    if(presentation.groupFailColor===null)assert.equal(publicReport.rules.some(rule=>"Fail" in rule.status),false,"missing fail count despite actual failing rules");
+    else assert.equal(presentation.groupFailColor, presentation.failTokenColor);
     const expectedVerdictColor = {
       "status-pass": presentation.passTokenColor,
       "status-fail": presentation.failTokenColor,
@@ -202,11 +222,11 @@ try {
       const toggle = node.closest(".rule-group")?.querySelector(".rule-group-toggle");
       if (toggle?.getAttribute("aria-expanded") === "false") toggle.click();
     });
-    await page.click(`${simpleSelector} .rule-name-cell`);
+    await activateControl(page,`${simpleSelector} .rule-name-cell`);
     assert.equal(await page.$eval(`${simpleSelector} .rule-toggle`, (node) => ({
       expanded: node.getAttribute("aria-expanded"),
       focused: document.activeElement === node,
-    })).then(({ expanded, focused }) => `${expanded}:${focused}`), "true:true");
+    })).then(({ expanded, focused }) => `${expanded}:${focused}`), "true:true",`${scenario.name}: row activation/focus`);
     const nestedLink = await page.$(`${simpleSelector} + .rule-detail-row a`);
     if (nestedLink) {
       const beforeNested = await page.$eval(`${simpleSelector} .rule-toggle`, (node) => node.getAttribute("aria-expanded"));
@@ -241,31 +261,22 @@ try {
     await page.$eval(".rule-filter-all", (node) => node.click());
     assert.equal(await page.$eval(".rule-filter-all", (node) => node.getAttribute("aria-pressed")), "true");
     assert.equal(await page.$$eval(".rule-group:not([hidden])", (nodes) => nodes.length), initialGroupCount);
-    const preliminaryControllers = await page.$$eval(".rule-summary-row", (nodes) => nodes
-      .filter((node) => /Controller canister/.test(node.textContent))
-      .map((node) => node.textContent));
-    assert(preliminaryControllers.length >= 3);
+    const preliminaryControllers = await page.$$eval('.rule-summary-row[data-rule-id="DENDRITE-CONTROL-001"],.rule-summary-row[data-rule-id="DENDRITE-CONTROL-002"],.rule-summary-row[data-rule-id="DENDRITE-CONTROL-003"]',nodes=>nodes.map(node=>node.textContent));
+    assert.equal(preliminaryControllers.length,3,"all three pinned controller rules are rendered");
     for (const controllerText of preliminaryControllers) {
       assert.match(controllerText, /\b(?:Pass|Fail|Indeterminate)\b/);
     }
     const preliminaryControllerPasses = preliminaryControllers
       .filter((controllerText) => /\bPass\b/.test(controllerText)).length;
-    for (const id of ["managers", "delegation", "characteristics"]) {
+    for (const id of ["managers", "delegation"]) {
       const selector = `#${id} .section-toggle`;
       await page.focus(selector);
       await page.keyboard.press("Enter");
       const changed = await page.$eval(selector, (node) => node.getAttribute("aria-expanded"));
       assert.match(changed, /^(?:true|false)$/);
     }
-    assert.equal(await page.$eval("#raw-report .section-toggle", (node) => node.getAttribute("aria-expanded")), "false");
-    await page.focus("#raw-report .section-toggle");
-    await page.keyboard.press("Enter");
-    assert.equal(await page.$eval("#raw-report .section-toggle", (node) => node.getAttribute("aria-expanded")), "true");
-    await page.click('[aria-label="Copy raw report JSON"]');
-    assert.equal(await page.$eval("#management .section-toggle", (node) => node.getAttribute("aria-expanded")), "false");
-    await page.$eval("#management .section-toggle", (node) => node.click());
-    assert.equal(await page.$eval("#management .section-toggle", (node) => node.getAttribute("aria-expanded")), "true");
-    await page.$eval("#management .section-toggle", (node) => node.click());
+    await activateControl(page,'[aria-label="Copy raw report"]');
+    assert.equal(await page.$('#management'),null,"signed-out report exposed a management workspace");
     assert.equal(page.url(), routeBeforeNavigation, "presentation interactions changed the neuron route");
     if (scenario.name === "desktop") {
       await page.evaluate(() => {
@@ -280,11 +291,13 @@ try {
           await page.evaluate(() => document.querySelector("#rules").scrollIntoView());
         }],
         ["simple-rule-expanded", async () => {
-          await page.click(`${simpleSelector} .rule-toggle`);
+          await page.$eval(simpleSelector,node=>{const toggle=node.closest(".rule-group")?.querySelector(".rule-group-toggle");if(toggle?.getAttribute("aria-expanded")==="false")toggle.click();});
+          await activateControl(page,`${simpleSelector} .rule-toggle`);
           await page.evaluate(() => document.querySelector(".rule-summary-row").scrollIntoView());
         }],
         ["multi-topic-rule-expanded", async () => {
-          await page.click(`${defaultSelector} .rule-toggle`);
+          await page.$eval(defaultSelector,node=>{const toggle=node.closest(".rule-group")?.querySelector(".rule-group-toggle");if(toggle?.getAttribute("aria-expanded")==="false")toggle.click();});
+          await activateControl(page,`${defaultSelector} .rule-toggle`);
           await page.evaluate((selector) => document.querySelector(selector).scrollIntoView(), defaultSelector);
         }],
         ["pass-filter", async () => page.$eval(".rule-filter-pass", (node) => node.click())],
@@ -302,24 +315,9 @@ try {
           });
           await page.evaluate(() => document.querySelector("#delegation").scrollIntoView());
         }],
-        ["characteristics-expanded", async () => {
-          await page.$eval("#characteristics .section-toggle", (node) => {
-            if (node.getAttribute("aria-expanded") === "false") node.click();
-          });
-          await page.evaluate(() => document.querySelector("#characteristics").scrollIntoView());
-        }],
-        ["raw-report-expanded", async () => {
-          await page.$eval("#raw-report .section-toggle", (node) => {
-            if (node.getAttribute("aria-expanded") === "false") node.click();
-          });
-          await page.evaluate(() => document.querySelector("#raw-report").scrollIntoView());
-        }],
-        ["management-collapsed", async () => {
-          await page.$eval("#management .section-toggle", (node) => {
-            if (node.getAttribute("aria-expanded") === "true") node.click();
-          });
-          await page.evaluate(() => document.querySelector("#management").scrollIntoView());
-        }],
+        ["header-characteristics",async()=>page.evaluate(()=>scrollTo(0,0))],
+        ["raw-report-copied",async()=>activateControl(page,'[aria-label="Copy raw report"]')],
+        ["signed-out-management-absent",async()=>assert.equal(await page.$('.control-panel'),null)],
       ]) {
         await setup();
         await page.screenshot({ path: join(evidenceDirectory, `desktop-${name}.png`) });
@@ -416,7 +414,9 @@ try {
     assert.equal(await page.$("#evidence"), null);
     results.push({
       ...scenario,
+      activationMethod:scenario.pageScaleFactor?"native keyboard at actual pinch scale":"pointer activation",
       consoleErrors: bounded(consoleErrors),
+      automaticFavicon404,
       pageErrors: bounded(pageErrors),
       overflow,
       measurements,
@@ -461,10 +461,10 @@ try {
     }
   });
   page.on("pageerror", (error) => failureErrors.push(error.message));
-  await page.goto(`${baseUrl}/test-failure.html`, { waitUntil: "networkidle0" });
+  await page.goto(failureUrl, { waitUntil: "networkidle0" });
   assert.equal(failureErrors.length, 0, failureErrors.join("\n"));
-  assert.match(await page.$eval("#overview", (node) => node.textContent),
-    /Neuron 42 is not compliant with the NNS Dendrite Standard/);
+  assert.match(await page.$eval(".report-header", (node) => node.textContent),
+    /Neuron 42.*Not Compliant/s);
   assert.match(await page.$eval(".rule-filter-pass", (node) => node.textContent), /2 pass/);
   assert.match(await page.$eval(".rule-filter-fail", (node) => node.textContent), /2 fail/);
   assert.equal(await page.$eval(".rule-filter-all", (node) => node.getAttribute("aria-pressed")), "true");
@@ -478,7 +478,7 @@ try {
     const selector = `.rule-summary-row[data-rule-id="${id}"]`;
     assert.match(await page.$eval(`${selector} .rule-reason`, (node) => node.textContent),
       id.endsWith("002") ? /installed Wasm module/ : /retains 1 controller/);
-    await page.click(`${selector} .rule-toggle`);
+    await activateControl(page,`${selector} .rule-toggle`);
   }
   const controllerLink = await page.$eval(
     '.rule-summary-row[data-rule-id="DENDRITE-CONTROL-002"] + .rule-detail-row a',
@@ -491,28 +491,38 @@ try {
   assert.match(failureText, /Why it failed/);
   assert.match(failureText, /requirement/i);
   assert.match(failureText, /2vxsx-fae/);
-  await page.click('.rule-group-toggle[aria-label^="Control and immutability"]');
+  await activateControl(page,'.rule-group-toggle[aria-label^="Control and immutability"]');
   assert.equal(await page.$eval('.rule-summary-row[data-rule-id="DENDRITE-CONTROL-002"] .rule-toggle',
     (node) => node.getAttribute("aria-expanded")), "false");
   assert.equal(failureRequests.length, 0, "failure-fixture disclosures triggered a network request");
   await page.$eval(".rule-filter-fail", (node) => node.click());
   assert.equal(await page.$$eval(".rule-summary-row:not([hidden])", (nodes) => nodes.length), 2);
   await page.$eval(".rule-filter-all", (node) => node.click());
-  await page.$eval("#raw-report .section-toggle", (node) => node.click());
-  await page.click('[aria-label="Copy raw report JSON"]');
+  await activateControl(page,'[aria-label="Copy raw report"]');
   assert.equal(failureRequests.length, 0, "failure-fixture filters or Raw report triggered a request");
   await page.screenshot({ path: join(evidenceDirectory, "deterministic-controller-failures.png"), fullPage: true });
-  await page.goto(`${baseUrl}/test-failure.html?status=compliant`, { waitUntil: "networkidle0" });
-  assert.match(await page.$eval("#overview", (node) => node.textContent),
-    /Neuron 42 is compliant with the NNS Dendrite Standard/);
-  assert.equal(await page.$eval("#overview", (node) => getComputedStyle(node.querySelector("h2")).color),
+  await page.goto(`${failureUrl}?status=compliant`, { waitUntil: "networkidle0" });
+  assert.match(await page.$eval(".report-header", (node) => node.textContent),
+    /Neuron 42.*Compliant/s);
+  assert.equal(await page.$eval(".report-header", (node) => getComputedStyle(node.querySelector("h2")).color),
     await page.$eval(".rule-filter-pass", (node) => getComputedStyle(node).color));
   await page.screenshot({ path: join(evidenceDirectory, "deterministic-compliant-verdict.png"), fullPage: true });
   await context.close();
+  if(localWorld){
+    const wrong=await browser.createBrowserContext(), page=await wrong.newPage(), requests=[];
+    page.on('request',request=>{if(request.method()==='POST')requests.push(request.url());});
+    await page.goto('http://127.0.0.1:4173/',{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>document.body.innerText.includes('Login is disabled'));
+    assert.equal(await page.$$eval('button',nodes=>nodes.filter(node=>node.textContent==='Sign in with Internet Identity').length),0);
+    assert.equal(requests.length,0);
+    writeFileSync(join(evidenceDirectory,'wrong-origin.json'),JSON.stringify({actualOrigin:'http://127.0.0.1:4173',configuredOrigin:baseUrl,rejected:true,noAuthenticationOrGovernanceRequest:true})+'\n');
+    await wrong.close();
+  }
 } finally {
   await browser.close();
 }
 
+assert.deepEqual(deniedOrigins,[],"nonlocal browser request attempted");
 const capturedRequests = results.flatMap((result) => result.canisterRequests);
 const requests = capturedRequests.filter((request) => request.method === "POST" && /\/query$/.test(request.url));
 if (requests.length < 2) process.stderr.write(`${JSON.stringify(results, null, 2)}\n`);
@@ -536,6 +546,8 @@ assert(!requests.some((request) => request.url.includes(dendriteCanister)), "ord
 
 const evidence = {
   result: "PASS",
+  classification:localWorld?"actual compiled local frontend, real local Governance queries/certificates; separate deterministic rendering fixture":"historical public-network anonymous qualification",
+  deniedOrigins,
   engine: browserVersion,
   containerImage: process.env.DENDRITE_BROWSER_IMAGE,
   frontend,
@@ -549,9 +561,10 @@ const evidence = {
     unexpectedCanisterDestinations: 0,
     publicReportActionsPresent: false,
     assetManifestContentAddressesVerified: true,
-    managersAndDelegationBeforeRules: true,
-    characteristicsAndRawReportNearBottom: true,
-    managementCollapsedAndIsolated: true,
+    currentHeaderThenRulesThenManagersAndDelegation: true,
+    fiveHeaderCharacteristics: true,
+    rawReportHeaderCopy: true,
+    signedOutManagementAbsent: true,
     keyboardRuleExpansion: true,
     onePrimaryRowPerDistinctRuleId: true,
     multiTopicRuleSummaryAndInstances: true,

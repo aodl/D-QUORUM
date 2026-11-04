@@ -48,7 +48,7 @@ fn actual_ii_page_and_virtual_webauthn_capability() {
     )
     .unwrap();
     let user = format!("{}:{}", uid.trim(), gid.trim());
-    let output = std::process::Command::new("docker").args(["run","--rm","--network","host","--user",&user,"-v",&format!("{}:/workspace:ro",root().display()),"-w","/workspace","ghcr.io/puppeteer/puppeteer:24.36.0@sha256:60273620ab047d273d77f8535cd3adaffa9c138e3b38ba7934d8934a7b5d3c92","node","tests/browser/ii-capability.mjs"]).output().unwrap();
+    let output = std::process::Command::new("docker").args(["run","--rm","--network","host","--user",&user,"-v",&format!("{}:/workspace:ro",root().display()),"-w","/workspace","ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/ii-capability.mjs"]).output().unwrap();
     println!("{}", String::from_utf8_lossy(&output.stdout));
     eprintln!("{}", String::from_utf8_lossy(&output.stderr));
     let text = String::from_utf8(output.stdout).unwrap();

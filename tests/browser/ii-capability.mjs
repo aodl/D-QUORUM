@@ -1,9 +1,11 @@
+import {containBrowserNetwork} from './local-network-guard.mjs';
 // Capability probe only: real II page, no injected session and no authentication claim.
-import puppeteer from '../../dendrite/node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js';
-const browser=await puppeteer.launch({executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-144.0.7559.96/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/ii-browser-config',XDG_CACHE_HOME:'/tmp/ii-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1']});
+import puppeteer from '../../dendrite/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
+const browser=await puppeteer.launch({executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/ii-browser-config',XDG_CACHE_HOME:'/tmp/ii-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']});
 const deadline=setTimeout(()=>{console.error('II capability exceeded 180 seconds');process.exit(1);},180000);
+const denied=[];await containBrowserNetwork(browser,denied);
 try {
- const page=await browser.newPage();page.on('dialog',async d=>{console.error('II JavaScript dialog: '+d.type());if(d.type()==='confirm')await d.accept();else await d.dismiss();});const denied=[];
+ const page=await browser.newPage();page.on('dialog',async d=>{console.error('II JavaScript dialog: '+d.type());if(d.type()==='confirm')await d.accept();else await d.dismiss();});
  const provider=process.env.II_CAPABILITY_URL??'http://id.ai.localhost:4943/';
  if(!new URL(provider).hostname.endsWith('.localhost'))throw Error('loopback identity provider required');
  await page.setRequestInterception(true);

@@ -54,5 +54,11 @@
     "url": "https://github.com/dfinity/candid/releases/download/didc-v0.6.2/didc-x86_64-unknown-linux-musl.tar.xz",
     "archive_sha256": "ced232a08d12190f7124110b6a39d8023732160838c062285e015d2c03bcc930",
     "uncompressed_sha256": "f2b11f55960fd1662b4635d9f63def383ef192854c6a50d86d3de5b6785d5421"
+  },
+  "browser": {
+    "puppeteer_core": "25.16.0",
+    "image": "ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b",
+    "chrome": "156.0.8078.47",
+    "scope": "test-only; supported upstream upgrade to fix development tooling advisories; no SDK/auth-stack replacement"
   }
 }

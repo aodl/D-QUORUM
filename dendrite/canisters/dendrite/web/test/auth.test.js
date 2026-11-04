@@ -76,6 +76,15 @@ test("key principal malformed restrictions and chain bounds cannot be bypassed",
   delete leaf.permissions; leaf.targets = ["not a principal"];
   await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /permit/);
   delete leaf.targets;
+  const originalKey=leaf.pubkey,originalExpiry=leaf.expiration;
+  leaf.pubkey=new Uint8Array();
+  await assert.rejects(()=>deriveGovernanceSession(parent.identity,parent.key.getPublicKey().toDer()),/malformed/);
+  leaf.pubkey=originalKey;
+  for(const expiry of [0n,1n<<64n,42,undefined]){
+    leaf.expiration=expiry;
+    await assert.rejects(()=>deriveGovernanceSession(parent.identity,parent.key.getPublicKey().toDer()),/expired|malformed/);
+  }
+  leaf.expiration=originalExpiry;
   parent.chain.delegations.push(...Array(20).fill(parent.chain.delegations[0]));
   await assert.rejects(() => deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer()), /inspected safely/);
   assert.throws(() => validateGovernanceDelegation({}), /inspected safely/);

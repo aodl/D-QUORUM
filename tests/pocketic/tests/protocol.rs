@@ -7,27 +7,6 @@ use support::*;
 
 // The legacy get_full_neuron endpoint is authority-gated even for public neurons.
 // Use the same supported public list endpoint as the production client.
-fn public_neuron(pic: &pocket_ic::PocketIc, id: u64) -> g::Neuron {
-    let mut r: g::ListNeuronsResponse = update(
-        pic,
-        GOVERNANCE,
-        Principal::anonymous(),
-        "list_neurons",
-        g::ListNeurons {
-            neuron_ids: vec![id],
-            include_neurons_readable_by_caller: false,
-            include_empty_neurons_readable_by_caller: Some(false),
-            include_public_neurons_in_full_neurons: Some(true),
-            page_number: Some(0),
-            page_size: Some(50),
-            neuron_subaccounts: None,
-        },
-    );
-    g::validate_batch(&[id], &r).unwrap();
-    let n = r.full_neurons.pop().expect("public neuron unavailable");
-    assert_eq!(n.visibility, Some(2));
-    n
-}
 
 #[test]
 #[ignore = "xtask protocol prepares pinned real Wasm first"]
@@ -986,16 +965,7 @@ fn wait_real_reward_roster(pic: &pocket_ic::PocketIc, app: Principal) {
         query_empty::<d_quorum::Health>(pic, app, "health")
     );
 }
-fn real_plans(pic: &pocket_ic::PocketIc, app: Principal) -> Vec<d_quorum::PayoutSummary> {
-    query2(pic, app, "payout_page", (None::<u64>, 100u16))
-}
-fn real_transfers(
-    pic: &pocket_ic::PocketIc,
-    app: Principal,
-    id: u64,
-) -> Vec<quorum_accounting::Transfer> {
-    query2(pic, app, "transfer_page", (id, 0u32, 100u16))
-}
+
 fn real_vote(pic: &pocket_ic::PocketIc, manager: u64, controller: Principal, id: u64) {
     let _: RawResponse = update(
         pic,
@@ -1031,59 +1001,7 @@ fn real_fund(pic: &pocket_ic::PocketIc, to: Principal, amount: u64) {
     );
     r.unwrap();
 }
-fn real_set_support(pic: &pocket_ic::PocketIc, ids: &[u64]) {
-    let r: g::ManageResponse = update(
-        pic,
-        GOVERNANCE,
-        user(2),
-        "manage_neuron",
-        g::request(
-            200,
-            g::Command::SetFollowing(g::SetFollowing {
-                topic_following: Some(vec![g::Following {
-                    topic: Some(4),
-                    followees: Some(ids.iter().map(|id| g::NeuronId { id: *id }).collect()),
-                }]),
-            }),
-        ),
-    );
-    assert!(matches!(
-        r.command,
-        Some(g::ResponseCommand::SetFollowing(_))
-    ));
-}
-fn real_confirmed_evidence(
-    pic: &pocket_ic::PocketIc,
-    app: Principal,
-    ts: &[quorum_accounting::Transfer],
-) {
-    for t in ts {
-        let quorum_accounting::TransferStatus::Confirmed { block } = t.status else {
-            panic!("unconfirmed {t:?}")
-        };
-        let h: l::History = query(
-            pic,
-            LEDGER,
-            "query_blocks",
-            l::BlocksArgs {
-                start: block,
-                length: 1,
-            },
-        );
-        // Small lifecycle fixtures retain their settlement blocks in the main Ledger.
-        assert_eq!(h.first_block_index, block);
-        let a = t.attempt.as_ref().unwrap();
-        assert!(l::matches(
-            &h.blocks[0],
-            app,
-            &t.destination.subaccount,
-            t.amount,
-            a.fee,
-            &a.memo,
-            a.created_at_time
-        ));
-    }
-}
+
 #[test]
 #[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
 fn financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake() {

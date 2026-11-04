@@ -6,7 +6,7 @@ frontend=${1:-dist/release/frontend}
   echo "usage: tools/scripts/browser-smoke.sh [built-frontend-directory]" >&2
   exit 1
 }
-image='ghcr.io/puppeteer/puppeteer:24.36.0@sha256:60273620ab047d273d77f8535cd3adaffa9c138e3b38ba7934d8934a7b5d3c92'
+image='ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b'
 evidence=${DENDRITE_BROWSER_EVIDENCE_DIR:-dist/browser-qualification}
 repository=$(pwd)
 case "$frontend" in /*) frontend_absolute=$frontend;; *) frontend_absolute=$repository/$frontend;; esac
@@ -38,11 +38,17 @@ mkdir -p "$evidence_absolute"
 chmod 0777 "$evidence_absolute"
 docker run --rm --network host \
   --user "$(id -u):$(id -g)" \
-  -e HOME=/tmp \
+  --name "${DENDRITE_BROWSER_CONTAINER_NAME:-dendrite-anonymous-$$}" \
+  -e XDG_CONFIG_HOME=/tmp/dendrite-anonymous-config \
+  -e XDG_CACHE_HOME=/tmp/dendrite-anonymous-cache \
   -e DENDRITE_BROWSER_FRONTEND=/frontend \
+  -e DENDRITE_BROWSER_BASE_URL="${DENDRITE_BROWSER_BASE_URL:-http://127.0.0.1:4173}" \
+  -e DENDRITE_BROWSER_LOCAL_WORLD="${DENDRITE_BROWSER_LOCAL_WORLD:-false}" \
+  -e DENDRITE_BROWSER_CANISTER_ID="${DENDRITE_BROWSER_CANISTER_ID:-}" \
   -e DENDRITE_BROWSER_EVIDENCE=/evidence \
   -e DENDRITE_BROWSER_IMAGE="$image" \
   -v "$repository:/workspace:ro" \
+  -v "$(git rev-parse --show-toplevel):/integration:ro" \
   -v "$qualification_frontend:/frontend:ro" \
   -v "$evidence_absolute:/evidence" \
   -w /workspace \
