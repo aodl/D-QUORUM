@@ -31,3 +31,12 @@ The twelve-entry exact refusal history is audit detail for attempts already prov
 ## Repository integration boundary
 
 Dendrite is a nested independent product, not an authenticated backend for D-QUORUM. Its browser signs directly to Governance; its verifier remains anonymous. Importing source does not merge controllers, hotkeys, accounts, stable state, policy or reward authority. Test-only II, browser coordination, synthetic fixture provisioning and local-root trust configuration never enter production exports. Production frontend configuration continues to reject local root-key fetching and arbitrary API destinations. Local browser artifacts have distinct configuration and hashes and must never be deployed as canonical production assets. Component mocks do not prove II authentication or signed Governance authority.
+
+The scoped browser integration uses non-extractable ephemeral bootstrap and transaction
+keys. Only the SDK-signed Governance-only final identity reaches the fixed Governance
+actor; private bootstrap SDK state is signed out before session publication. Every
+ancestor remains effective and every expiry is checked again at dispatch. Same-origin
+script compromise during bootstrap is still a threat. Local sign-out invalidates local
+session ownership, not already accepted requests or network-wide delegation validity.
+See Dendrite's security document for the narrowly validated, expiring optional native
+build-tool applicability exclusions and retained raw full-development findings.

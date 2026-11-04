@@ -22,8 +22,10 @@ Dendrite does exactly seven things:
 
 Typed proposal construction, review, submission, manager voting, and readiness
 assistance run only in the browser through one fixed NNS Governance actor. Internet
-Identity is targeted exactly to Governance; Dendrite never receives or reconstructs a
-delegation or authenticated principal. Proposal history, reward calculation or
+Identity supplies an app-origin parent. The pinned SDK appends a genuinely signed
+Governance-only child before exposing the transaction signer; all ancestor restrictions
+remain effective. Dendrite never receives or reconstructs a delegation or authenticated
+principal. Proposal history, reward calculation or
 distribution, timers, indexers, analytics, and background work remain out of scope.
 
 ## 2. Fixed standard constants
@@ -318,8 +320,13 @@ to `https://id.ai/authorize`; only exact `localhost`, `127.0.0.1`, or `.localhos
 providers are accepted in local mode. These are immutable build inputs, not canister
 state or upgrade arguments.
 
-One browser `AuthClient` restores or creates an at-most-eight-hour session. It never
-requests identity attributes and never sends identity material to Dendrite. Canonical
+An ephemeral browser `AuthClient` obtains the private bootstrap identity. Its fresh
+non-extractable key and credential-discarding storage prevent durable bootstrap restore;
+SDK sign-out clears its temporary expiry marker before publishing the Governance-only
+child session. Every ancestor must permit Governance and remain unexpired. The child
+preserves the II app principal and expires no later than any parent or the eight-hour
+session cap. A reload requires fresh authentication. Identity attributes are not
+requested and identity material is never sent to Dendrite. Canonical
 pages authenticate normally; approved alternatives supply the canonical derivation
 origin; unexpected origins cannot sign in. The exact principal is displayed and
 copyable. Local comparison against every raw manager entry reports controller, hotkey,
@@ -328,7 +335,8 @@ uses the single reviewed direct-operation pipeline and is confirmed by a later l
 report. The authenticated NNS actor exists only in the browser and targets Governance.
 
 The selected SDK wrapper exposes no PIN-policy option, so Dendrite makes no separate
-PIN-authentication claim. Restoration completes before the initial route is rendered.
+PIN-authentication claim. The in-memory restoration check completes before the initial route is rendered; it
+does not read older durable credentials.
 Popup, session, and storage errors are bounded and retryable; permanent origin failure
 remains closed. Failed sign-out retains the displayed principal.
 

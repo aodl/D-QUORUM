@@ -52,11 +52,11 @@ The focused typed-barrier regressions distinguish native response validation, ac
 
 ## Integrated application testing
 
-The root `xtask` remains the orchestrator. `integration_inventory` discovers both independent Cargo workspaces and frontend test targets and verifies evaluator source/fixture equality. Discovery is not execution. `component_dendrite` invokes Dendrite's original runner and frontend coverage; missing tools, failed gates and zero behavioural matches fail. `component_dendrite_canonical` invokes the original two-clean-Docker-build procedure and retains both compared output sets. The old anonymous browser smoke sends live public queries and cannot establish local II authentication; it must not be substituted for the required signed-browser lane.
+The root `xtask` remains the orchestrator. `integration_inventory` discovers both independent Cargo workspaces and frontend test targets and verifies evaluator source/fixture equality. Discovery is not execution. `component_dendrite` invokes Dendrite's original runner and frontend coverage; missing tools, failed gates and zero behavioural matches fail. `component_dendrite_canonical` invokes the original two-clean-Docker-build procedure and retains both compared output sets. The original anonymous browser assertions now run in an explicitly local mode against the shared pinned fixture, including all five viewports, keyboard/filter/copy checks, signature-verifying queries and certified controller reads. Its legacy public-network mode is not run in the local-only lane.
 
 `system_protocol` installs Dendrite and production-feature D-QUORUM in one existing real Governance/Ledger PocketIC fixture. Independent Governance following, replicated verifier reports and exact Ledger records are the oracles. A second case adds Dendrite to the existing missed-window/upgrade/reward-accrual lifecycle, then executes another actual maturity operation and pays a changed roster. Seeded initial maturity and later genuinely accrued voting rewards are identified separately. These backend journeys are not browser-to-economic golden-journey proof.
 
-`system_browser` first probes actual II HTTP/certificate delivery with the pinned Chromium/WebAuthn stack, then requires the compiled local application to obtain real II sessions and send signed management operations to the same real Governance fixture. Its local frontend is built in an isolated tracked-source copy before network creation; production assets are untouched. Only public principals, request paths and bounded control labels are retained. No session, delegation, passkey credential material or private key is exported. Browser time advances with host-aligned real-time progress during the bounded interactive phase. Long deterministic economic tests remain separate; no certificate or delegation validity window is enlarged.
+`system_browser` first probes actual II HTTP/certificate delivery with the pinned Chromium/WebAuthn stack, then requires the compiled local application to obtain real II sessions and send signed management operations to the same real Governance fixture. Its local frontend is built in an isolated tracked-source copy before network creation; production assets are untouched. Only public principals, request paths and bounded control labels are retained. No session, delegation, passkey credential material or private key is exported. Browser time advances with host-aligned real-time progress during the bounded interactive phase. After real browser majority and maturity approval, the same coordinator closes the browser and switches that same instance to long deterministic advancement for actual maturity minting and two payout cycles. No certificate or delegation validity window is enlarged.
 
 `integrated_acceptance` continues independent lanes after a failure and exits nonzero unless the entire documented integration matrix is implemented and passes. The existing `acceptance` retains its original D-QUORUM scope and source-stability checks; it cannot certify the full integrated product. Root workflows are read-only, retain all existing capacity and canonical repeats, and make canonical qualification depend on the added component, shared-protocol and signed-browser jobs. Hosted runs and branch-protection enforcement are operator steps.
 
@@ -65,3 +65,34 @@ The `Complete integrated requirement selection` CI validator prevents component 
 II uses the production backend/frontend artifacts from `release-2026-06-20`, exactly matching PocketIC's pinned source references, with separately verified compressed and uncompressed digests. `id.ai.localhost` maps to the **frontend** canister `uqzsh-gqaaa-aaaaq-qaada-cai`; the backend is `rdmx6-jaaaa-aaaaa-aaadq-cai`. The default built-in configuration enables dummy authentication. The real lane explicitly clears it in both modules before any browser identity exists and queries the backend configuration to prove it is disabled. Captcha remains disabled in this isolated fixture, while actual WebAuthn credential proof remains required. The test never accepts dummy index prompts.
 
 `system_protocol_canonical` repeats the two connected backend journeys against the exact canonical pair after both component builds. `dist/integration-manifest.json` binds that pair without replacing either component's individual manifests. Dendrite's original Wasm format exposes `get_candid_pointer` rather than a public Candid custom section. The canonical gate extracts its interface from the actual Wasm with pinned `candid-extractor 0.1.6`, checks structural equality using `didc`, and independently checks the complete production export set. It does not claim a missing custom section exists.
+
+The positive browser test uses four independent real II principals. Neurons 11, 12 and
+13 reach the original five-manager majority through browser-signed ballots. Neuron
+21 initially lacks authority and later acquires it through the actual management
+change. The final voter is a hotkey, separately tested against controller revocation.
+An exact proposal/ballot/following readback and authoritative Ledger blocks are the
+oracles. Scripted lost HTTP replies, held preflight requests and a deliberately
+incompatible verifier are labelled faults; they do not substitute for authentication.
+
+`real_ii_scoped_child_is_enforced_by_replica` uses actual II and an SDK-signed child,
+then compares a working non-Governance control destination with the same request under
+the scoped signer. An unsuccessful replica HTTP response and delegation-target diagnostics establish replica scope
+enforcement. Expired parent/child, wrong key, cyclic chain and excluding ancestor
+probes retain only public outcomes. The raw bootstrap also fails the production actor
+boundary. The genuine II popup cancellation uses the SDK's actual timeout.
+
+The anonymous lane upgrades a healthy local verifier with a test-only response-body
+mutation after certification. The direct canister returns 200 while the real gateway
+rejects it with a verification error; restoring the original module restores 200.
+This negative control and the isolated historical auth/metadata helper failures are
+counted separately from passing behavioural executions. Probes never enter canonical
+production assets.
+
+The integrated verdict requires exact named executions, hashed log files, all mandatory
+component gates, a clean unchanged commit/tree and the positive browser case. Seven
+small runner regressions cover all-pass, failure, absent logs, changed source, missing
+positive browser, matrix-only edits and an acyclic CI dependency graph. Hosted readiness
+aggregates all existing lane receipts after canonical jobs; workflow source is not a
+hosted run. The owner must require every root job, including Signed browser II required,
+Shared application real protocol, Dendrite preserved qualification, Canonical
+reproducibility and Complete integrated requirement selection.

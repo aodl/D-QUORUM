@@ -13,7 +13,7 @@ Browser -> anonymous signed Governance list_neurons and get_neuron_info queries
         -> certified controller read_state -> browser evaluator
 
 Privileged:
-Browser -> Internet Identity -> Governance-only browser delegation
+Browser -> II app-origin parent -> SDK-signed Governance-only child -> Governance
         -> fresh Dendrite check_neuron review and final preflights
         -> fixed NNS Governance mutation -> receipt -> unverified resulting state
 ```
@@ -50,8 +50,8 @@ aggregation model groups entries by exact `rule_id`, retains every entry, orders
 topic instances canonically, and chooses the aggregate status using `Fail`, standard
 update required, indeterminate, warning, then pass precedence. The page order is branded
 authentication navbar, identity and direct-verdict header with key characteristics and a
-copy-only Raw Report control, optional authenticated account workspace, Team Members,
-Standard Rules, Team Members, and Topic Delegation. All six rule groups, Team Members, Topic Delegation,
+copy-only Raw Report control, optional authenticated account workspace, Standard Rules,
+Team Members, and Topic Delegation. All six rule groups, Team Members, Topic Delegation,
 and every rule row start collapsed. The rule result remains visible in the right-aligned group counts while its
 supporting rows are collapsed.
 Multi-entry detail rows show the reviewed explanation and aggregate result followed by
@@ -86,10 +86,34 @@ replacement loads and potentially executed mutations revoke
 older owners and release their loading state. Only the current owner may publish a
 report, error, route transition, or loading completion.
 
-Internet Identity and privileged operations run only in the browser. The at-most
-eight-hour delegation targets NNS Governance, never Dendrite. The browser compares its
-principal with live manager evidence locally and sends reviewed typed mutations
-directly to Governance. It never constructs an authenticated Dendrite actor.
+Internet Identity and privileged operations run only in the browser. II supplies its
+normal app-origin parent delegation, which may be unscoped. A fresh ephemeral bootstrap
+key receives that parent privately. The pinned core SDK signs and appends a child
+restricted to exactly NNS Governance, preserving the II root and application principal.
+Only the child signing identity reaches the Governance actor and transaction pipeline.
+The child expires no later than any ancestor or the existing eight-hour application cap.
+Every ancestor must permit Governance; omitted targets and an empty target vector have
+different meanings. Unsupported restrictions, malformed chains, and expired links fail
+closed. Structural client checks complement SDK signing and real replica verification;
+they do not authenticate a canister signature themselves.
+
+The bootstrap client uses an explicitly supplied fresh identity and a credential-discarding
+storage adapter. This bypasses the pinned AuthClient's legacy restore/migration path.
+AuthClient still writes its non-secret localStorage expiry marker; its supported signOut
+API removes that marker before the scoped session is published. Bootstrap keys/chains
+are not persisted. Reload requires fresh II authentication. Sign-out and idle expiry
+invalidate the local session generation; a cancelled generation cannot publish a late
+signer. The browser compares the original II principal with live manager evidence locally
+and sends reviewed typed mutations directly to Governance. It never constructs an
+authenticated Dendrite actor.
+
+Manager replacement obtains public full configuration and timestamps from replicated
+list_neurons, and registered known-neuron metadata from replicated exact-ID
+get_neuron_info. Batch known_neuron_data is deliberately omitted by Governance and is
+never registration evidence. Each preparation uses fresh bounded reads, up to four
+scalar calls in flight, exact IDs, public visibility, complete response bounds, and the
+existing 300-second timestamp-skew limit. Both single-topic and SetFollowing preparation
+use this path; the anonymous public-analysis cache cannot authorise a transaction.
 Once the update boundary may have been crossed, an unknown transaction outcome
 immediately removes mutation controls while retaining the public report, request digest,
 and the explicit no-retry acknowledgement lock.

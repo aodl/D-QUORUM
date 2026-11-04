@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed suite execution. Validators never receive behavioural test counts."""
-import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io,atexit,shutil
+import sys,os,pathlib,subprocess,json,re,time,hashlib,gzip,urllib.request,tarfile,io,atexit,shutil,tempfile
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 os.chdir(ROOT)
 (ROOT/'.cache/tmp').mkdir(parents=True,exist_ok=True)
@@ -11,6 +11,7 @@ os.environ['CARGO_INCREMENTAL']='0'
 OUT=ROOT/'dist/evidence';OUT.mkdir(parents=True,exist_ok=True)
 results=[]
 completed_suites=set()
+RUN_STATUS="running"
 SOURCE_COMMIT=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
 SOURCE_DIRTY=bool(subprocess.check_output(['git','status','--porcelain']).strip())
 FILES=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).decode().split('\0')
@@ -77,14 +78,17 @@ def run(args,kind='validator',name=None,show=True):
         counts['passed']+=sum(map(int,node_passed));counts['failed']+=sum(map(int,node_failed));counts['ignored']+=sum(map(int,node_skipped))
         record.update(counts)
         record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)+re.findall(r'(?m)^✔ (.+?) \([0-9.]+m?s\)$',p.stdout)
-        if (not summaries and not node_passed) or counts['passed']==0 or counts['failed']!=0 or counts['ignored']!=0 or len(record['executed_tests'])!=counts['passed']:
+        python_tests=re.findall(r'(?m)^(test_\w+) \([^\n]+\) \.\.\. ok$',p.stdout)
+        if python_tests:
+            counts['passed']+=len(python_tests);record.update(counts);record['executed_tests']+=python_tests
+        if (not summaries and not node_passed and not python_tests) or counts['passed']==0 or counts['failed']!=0 or counts['ignored']!=0 or len(record['executed_tests'])!=counts['passed']:
             record['exit_code']=1;record['error']='missing positive execution, failed tests, or invalid summaries'
     results.append(record);save()
     if record['exit_code']!=0: raise RuntimeError(f"required gate failed: {record['name']}")
     return p.stdout
 
 def save():
-    (OUT/(sys.argv[1]+'-run.json')).write_text(json.dumps({'utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'source_tree_sha256':SOURCE_TREE_HASH,'source_files':SOURCE_FILES,'prepared_artifacts':PREPARED_ARTIFACTS,'gates':results},indent=2)+'\n')
+    (OUT/(sys.argv[1]+'-run.json')).write_text(json.dumps({'status':RUN_STATUS,'completed_suites':sorted(completed_suites),'utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'source_tree_sha256':SOURCE_TREE_HASH,'source_files':SOURCE_FILES,'prepared_artifacts':PREPARED_ARTIFACTS,'gates':results},indent=2)+'\n')
 
 def prepare():
     run(['cargo','run','--locked','-p','d-quorum','--example','export'],name='Candid generation check',show=False)
@@ -146,7 +150,9 @@ def public_compatibility():
             'old_response_decoders_require_update':True,'subtyping_diagnostic':p.stdout+p.stderr,
             'historical_interface_sha256':hashlib.sha256(old.read_bytes()).hexdigest()}
     (OUT/'interface-compatibility.json').write_text(json.dumps(report,indent=2)+'\n')
-    results.append({'name':'public request compatibility and explicit response extension boundary','kind':'validator','exit_code':0,'evidence':'interface-compatibility.json'})
+    log_name=sys.argv[1]+'-interface-compatibility.log'
+    log=json.dumps(report,indent=2)+'\n';(OUT/log_name).write_text(log)
+    results.append({'name':'public request compatibility and explicit response extension boundary','kind':'validator','exit_code':0,'evidence':'interface-compatibility.json','log':log_name,'log_sha256':hashlib.sha256(log.encode()).hexdigest()})
     save()
 
 def download(url,path,digest):
@@ -274,6 +280,31 @@ def evaluator_consistency():
     print('Evaluator sources, manifest and fixtures byte-identical',flush=True)
     completed_suites.add('evaluator_consistency')
 
+def integration_negative_controls():
+    directory=OUT/'negative-controls';directory.mkdir(exist_ok=True)
+    historical='52b546f93734f51d5719a7527b7e4aa4da5e1024'
+    cases=[('manager-metadata','transaction.js','const listKnownCandidates =','export function preparePrimaryFollow','export function preparePrimaryFollow','manager-metadata.test.js','replicated manager preparation uses scalar registration'),('ii-parent-scope','auth.js','export function validateGovernanceDelegation','export function createBrowserAuthSession','export async function deriveGovernanceSession','auth.test.js','genuine SDK child preserves root principal signatures scope and parent expiry')]
+    receipts=[]
+    for name,module,start,old_end,new_end,test,pattern in cases:
+        with tempfile.TemporaryDirectory(dir=ROOT/'.cache/tmp') as temporary:
+            isolated=pathlib.Path(temporary)/'dendrite'
+            paths=list((ROOT/'dendrite/canisters/dendrite/web/src').glob('*.js'))+list((ROOT/'dendrite/src/declarations').rglob('*.js'))+[ROOT/'dendrite/package.json',ROOT/'dendrite/canisters/dendrite/web/test'/test]
+            for source in paths:
+                destination=isolated/source.relative_to(ROOT/'dendrite');destination.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,destination)
+            (isolated/'node_modules').symlink_to(ROOT/'dendrite/node_modules',target_is_directory=True)
+            target=isolated/'canisters/dendrite/web/src'/module
+            current=target.read_text();old=subprocess.check_output(['git','show',historical+':dendrite/canisters/dendrite/web/src/'+module],text=True)
+            replacement=old[old.index(start):old.index(old_end,old.index(start))]
+            target.write_text(current[:current.index(start)]+replacement+current[current.index(new_end,current.index(start)):])
+            command=['node','--test','--test-name-pattern',pattern,str(isolated/'canisters/dendrite/web/test'/test)]
+            process=subprocess.run(command,capture_output=True,text=True)
+            log=process.stdout+process.stderr;(directory/(name+'.log')).write_text(log)
+            if process.returncode!=1 or not re.search(r'(?m)^[ℹ#] fail 1$',log):raise RuntimeError('historical mutation was not detected: '+name)
+            receipts.append({'name':name,'classification':'isolated historical helper; one expected failing test, excluded from passing test counts','historical_source':historical,'historical_helper_sha256':hashlib.sha256(replacement.encode()).hexdigest(),'current_test_sha256':hashlib.sha256((ROOT/'dendrite/canisters/dendrite/web/test'/test).read_bytes()).hexdigest(),'expected_failed_test':pattern,'log':name+'.log','log_sha256':hashlib.sha256(log.encode()).hexdigest(),'expected_failure_observed':True})
+    (directory/'receipts.json').write_text(json.dumps({'source':SOURCE_COMMIT,'controls':receipts},indent=2)+'\n')
+    print('Both isolated historical authentication and metadata helpers fail their positive regressions as required.')
+    completed_suites.add('integration_negative_controls')
+
 def component_dendrite():
     evaluator_consistency();provision()
     os.environ['PATH']=str(ROOT/'.cache/tools')+os.pathsep+os.environ['PATH']
@@ -301,6 +332,9 @@ def component_dendrite_canonical():
     output=run(['candid-extractor',directory/'canonical-a/dendrite.wasm'],name='actual canonical Dendrite runtime Candid extraction')
     (directory/'dendrite.did').write_text(output)
     run([ROOT/'.cache/tools/didc','check','--strict',directory/'dendrite.did',ROOT/'dendrite/canisters/dendrite/dendrite.did'],name='actual Dendrite Candid structural compatibility')
+    release=ROOT/'dendrite/dist/release'
+    shutil.copytree(directory/'canonical-a',release,dirs_exist_ok=True)
+    run(['sh','-c','cd dendrite && tools/scripts/verify-release-artifacts.sh'],name='current candidate deployment binding verified locally without network writes')
     completed_suites.add('component_dendrite_canonical')
 
 def system_protocol():
@@ -329,53 +363,150 @@ def system_protocol_canonical():
         for key,value in previous.items():
             if value is None:os.environ.pop(key,None)
             else:os.environ[key]=value
-    pair={'root_source':SOURCE_COMMIT,'dendrite_import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','dquorum_manifest':'dist/release/manifest.json','dendrite_release':'dist/dendrite-canonical/'+SOURCE_COMMIT+'/canonical-a','dquorum_wasm_sha256':hashlib.sha256(dq.read_bytes()).hexdigest(),'dendrite_wasm_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'dquorum_candid_sha256':hashlib.sha256((ROOT/'candid/d_quorum.did').read_bytes()).hexdigest(),'dendrite_candid_sha256':hashlib.sha256((directory.parent/'dendrite.did').read_bytes()).hexdigest(),'protocol_pins_sha256':hashlib.sha256((ROOT/'protocol-pins.json').read_bytes()).hexdigest(),'evaluator':'nns-dendrite/1.1-draft; unchanged vendored source','tested_pair':'two shared real protocol cases; no signed-browser Governance success claim','full_integrated_qualified':False}
+    pair={'root_source':SOURCE_COMMIT,'dendrite_import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','dquorum_manifest':'dist/release/manifest.json','dendrite_release':'dist/dendrite-canonical/'+SOURCE_COMMIT+'/canonical-a','dquorum_wasm_sha256':hashlib.sha256(dq.read_bytes()).hexdigest(),'dendrite_wasm_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'dquorum_candid_sha256':hashlib.sha256((ROOT/'candid/d_quorum.did').read_bytes()).hexdigest(),'dendrite_candid_sha256':hashlib.sha256((directory.parent/'dendrite.did').read_bytes()).hexdigest(),'protocol_pins_sha256':hashlib.sha256((ROOT/'protocol-pins.json').read_bytes()).hexdigest(),'evaluator':'nns-dendrite/1.1-draft; unchanged vendored source','tested_pair':'two canonical shared real-protocol cases; signed-browser evidence is a separate mandatory lane on this same source','qualification_scope':'canonical backend pair; complete qualification requires integrated-acceptance.json','browser_configuration':'dist/evidence/browser-system/team-management/local-build.json'}
+    browser_directory=OUT/'browser-system/team-management'
+    local=json.loads((browser_directory/'local-build.json').read_text())
+    if local['root_source']!=SOURCE_COMMIT or local['source_dirty']:raise RuntimeError('local-browser artifact source differs from canonical pair')
+    if hashlib.sha256((browser_directory/'dendrite-local.wasm').read_bytes()).hexdigest()!=local['wasm_sha256']:raise RuntimeError('local-browser retained artifact checksum mismatch')
+    pair.update(source_tree_sha256=SOURCE_TREE_HASH,dendrite_tree=subprocess.check_output(['git','rev-parse','HEAD:dendrite'],text=True).strip(),protocol_pins=json.loads((ROOT/'protocol-pins.json').read_text()),local_browser=local,local_browser_artifact='dist/evidence/browser-system/team-management/dendrite-local.wasm',scenario_source_sha256={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [ROOT/'tests/pocketic/tests/browser_system.rs',ROOT/'tests/pocketic/tests/protocol.rs',ROOT/'tests/browser/team-management.mjs']})
     (ROOT/'dist/integration-manifest.json').write_text(json.dumps(pair,indent=2)+'\n')
+    run(['python3','-c',"import json,hashlib,pathlib; p=pathlib.Path('dist/integration-manifest.json'); d=json.loads(p.read_text()); assert hashlib.sha256(pathlib.Path(d['local_browser_artifact']).read_bytes()).hexdigest()==d['local_browser']['wasm_sha256']; print(p.read_text())"],name='canonical pair and local-browser artifact source binding')
     completed_suites.add('system_protocol_canonical')
 
+def reproducible():
+    run(['python3','tools/scripts/canonical.py'],name='two clean canonical builds')
+    completed_suites.add('reproducible')
+
 def integration_inventory():
+    run(["python3","tests/system/test_qualification.py"],kind="behaviour",name="integrated acceptance verdict regressions")
     inventory={'classification':'discovery only; no execution claims','component_gates':{'dquorum':list(COMMANDS),'dendrite':['check','test','coverage','build','build-reproducible','verify-reproducible','security-scan','sbom','npm test','npm run test:coverage','tools/scripts/check-interface-drift.sh','tools/scripts/verify-docker-reproducible.sh','tools/scripts/browser-smoke.sh']},'workspaces':{}}
     for component,directory in [('dquorum',ROOT),('dendrite',ROOT/'dendrite')]:
         meta=json.loads(subprocess.check_output(['cargo','metadata','--locked','--no-deps','--format-version','1'],cwd=directory))
         inventory['workspaces'][component]=[{'package':p['name'],'targets':p['targets']} for p in meta['packages'] if p['id'] in meta['workspace_members']]
+        def discover(ignored):
+            command=['cargo','test','--locked','--manifest-path',str(directory/'Cargo.toml'),'--workspace','--all-targets','--']+(['--ignored'] if ignored else [])+['--list']
+            listing=run(command,name=component+(' ignored' if ignored else '')+' actual test-case discovery',show=False)
+            target='';cases=[]
+            for line in listing.splitlines():
+                header=re.search(r'Running (.+)',line)
+                if header:target=header[1].strip()
+                case=re.fullmatch(r'(.+): test',line)
+                if case:cases.append({'target':target,'name':case[1]})
+            if not cases and not ignored:raise RuntimeError('no discovered native cases: '+component)
+            return cases
+        cases=discover(False);ignored=discover(True)
+        # Some components intentionally contain no ignored cases; discovery is
+        # a validator, never counted as a behavioural execution.
+        ignored_keys={(case['target'],case['name']) for case in ignored}
+        inventory.setdefault('native_cases',{})[component]=[dict(case,intentionally_ignored=(case['target'],case['name']) in ignored_keys) for case in cases]
     inventory['frontend_test_targets']=[str(p.relative_to(ROOT)) for p in (ROOT/'dendrite/canisters/dendrite/web/test').glob('*.test.js')]
     (OUT/'integration-inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
-    evaluator_consistency()
+    run(['python3','tools/scripts/xtask.py','evaluator_consistency'],name='imported evaluator exact consistency')
+    completed_suites.add('evaluator_consistency')
+    run(['python3','tools/scripts/xtask.py','integration_negative_controls'],name='historical authentication and metadata negative controls')
+    completed_suites.add('integration_negative_controls')
     completed_suites.add('integration_inventory')
 
 def system_browser():
     prepare()
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_capability','--','--ignored','--exact','actual_ii_page_and_virtual_webauthn_capability','--nocapture'],kind='behaviour',name='actual II browser capability')
-    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_unrestricted_delegation_is_rejected_before_governance','--nocapture'],kind='behaviour',name='actual II scope refusal before Governance')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_scoped_child_is_enforced_by_replica','--nocapture'],kind='behaviour',name='actual II child delegation replica scope enforcement')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_closed_popup_does_not_publish_session','--nocapture'],kind='behaviour',name='actual II popup cancellation and bootstrap cleanup')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_browser_wrong_provider_never_publishes_a_transaction_session','--nocapture'],kind='behaviour',name='actual local provider misconfiguration fails closed')
     completed_suites.add('system_browser_safety')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_compiled_frontend_known_managers_and_signed_governance','--nocapture'],kind='behaviour',name='actual II and signed real Governance team management')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_local_anonymous_browser_preserves_responsive_and_certificate_checks','--nocapture'],kind='behaviour',name='preserved responsive anonymous browser against local real protocol')
     completed_suites.add('system_browser')
 
+def source_is_stable():
+    if SOURCE_DIRTY or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()!=SOURCE_COMMIT or subprocess.check_output(['git','status','--porcelain']).strip():return False
+    current=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).decode().split('\0')
+    observed={f:hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest() for f in current if f and pathlib.Path(f).is_file()}
+    return observed==SOURCE_FILES
+
+def integrated_verdict(requirements,gates,completed,stable,evidence_directory):
+    failures=[]
+    if not stable:failures.append('source commit/tree changed or was dirty')
+    verified=[]
+    for gate in gates:
+        path=pathlib.Path(evidence_directory)/gate.get('log','')
+        if gate.get('exit_code')!=0 or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=gate.get('log_sha256'):
+            failures.append('failed or missing gate evidence: '+gate.get('name','unnamed'))
+        else:verified.append(gate)
+    tests={test for gate in verified if gate.get('kind')=='behaviour' and gate.get('passed',0)>0 for test in gate.get('executed_tests',[])}
+    validators={gate['name'] for gate in verified if gate.get('kind')=='validator'}
+    positive='real_ii_compiled_frontend_known_managers_and_signed_governance'
+    if positive not in tests:failures.append('positive actual-II signed browser management evidence absent')
+    executed=[]
+    for requirement in requirements:
+        row=dict(requirement)
+        named=bool(row.get('tests') or row.get('validators'))
+        passed=(row.get('status')=='implemented' and row['suite'] in completed and named
+                and set(row.get('tests',[]))<=tests and set(row.get('validators',[]))<=validators)
+        row['execution']='passed' if passed else 'unqualified'
+        row['evidence']=[{'log':g['log'],'sha256':g['log_sha256'],'tests':sorted(set(row.get('tests',[])) & set(g.get('executed_tests',[])))} for g in verified if set(row.get('tests',[])) & set(g.get('executed_tests',[])) or g['name'] in row.get('validators',[])]
+        if row.get('mandatory',True) and not passed:failures.append('unqualified requirement: '+row['id'])
+        executed.append(row)
+    return {'qualified':not failures,'status':'complete' if not failures else 'incomplete','requirements':executed,'evidence_failures':failures}
+
 def integrated_acceptance():
-    report={'qualified':False,'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'status':'running','failures':[]}
+    report={'qualified':False,'source':SOURCE_COMMIT,'source_tree_sha256':SOURCE_TREE_HASH,'source_dirty':SOURCE_DIRTY,'status':'running','failures':[]}
     report_path=OUT/'integrated-acceptance.json'
     report_path.write_text(json.dumps(report,indent=2)+'\n')
-    # Independent required lanes continue after failures. No weaker lane can
-    # substitute for an unavailable component, real protocol or signed browser.
     for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical)]:
         try:
+            if not source_is_stable():raise RuntimeError('source changed before '+name)
             gate()
+            if not source_is_stable():raise RuntimeError('source changed after '+name)
             if name=='acceptance':
                 save()
                 shutil.copyfile(OUT/(sys.argv[1]+'-run.json'),OUT/'dquorum-component-acceptance-run.json')
         except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as error:report['failures'].append({'suite':name,'error':str(error)})
         report_path.write_text(json.dumps(report,indent=2)+'\n')
     matrix=json.loads((ROOT/'docs/integration-matrix.json').read_text())
-    for requirement in matrix['requirements']:
-        requirement['execution']='passed' if requirement['status']=='implemented' and requirement['suite'] in completed_suites else 'unqualified'
-    report['requirements']=matrix['requirements'];report['status']='incomplete'
+    report.update(integrated_verdict(matrix['requirements'],results,completed_suites,source_is_stable(),OUT))
+    if report['failures']:report.update(qualified=False,status='incomplete')
     report_path.write_text(json.dumps(report,indent=2)+'\n')
-    if report['failures'] or any(r['execution']!='passed' for r in report['requirements']):raise RuntimeError('Integrated qualification incomplete; inspect integrated-acceptance.json')
+    if not report['qualified']:raise RuntimeError('Integrated qualification incomplete; inspect integrated-acceptance.json')
 
-COMMANDS={'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':lambda:run(['python3','tools/scripts/canonical.py']),'prepare':prepare}
-try:
-    cmd=sys.argv[1] if len(sys.argv)>1 else 'help'
-    if cmd not in COMMANDS:raise RuntimeError('commands: '+', '.join(COMMANDS))
-    COMMANDS[cmd]()
-except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as e:
-    print(str(e),file=sys.stderr);save();sys.exit(1)
+def integrated_readiness():
+    # Aggregate existing lane receipts. Never rerun or substitute a weaker suite.
+    directory=ROOT/'dist/ci-evidence'
+    required=['unit','mock','hardening','protocol','production','scale','capacity','coverage','security','integration_inventory','component_dendrite','system_protocol','system_browser','component_dendrite_canonical','reproducible','canonical_artifact','system_protocol_canonical']
+    gates=[];completed=set();failures=[]
+    for lane in required:
+        matches=list(directory.rglob(lane+'-run.json'))
+        if len(matches)!=1:failures.append('missing or duplicate receipt: '+lane);continue
+        receipt_path=matches[0];receipt=json.loads(receipt_path.read_text())
+        if receipt.get('source')!=SOURCE_COMMIT or receipt.get('source_tree_sha256')!=SOURCE_TREE_HASH or receipt.get('source_dirty') or receipt.get('status')!='complete':failures.append('unqualified source/status receipt: '+lane);continue
+        for original in receipt['gates']:
+            gate=dict(original);log=(receipt_path.parent/gate['log']).resolve()
+            if not log.is_relative_to(directory.resolve()):failures.append('unsafe evidence path');continue
+            gate['log']=str(log);gates.append(gate)
+        completed.update(receipt.get('completed_suites',[]))
+    if not failures:completed.add('acceptance')
+    matrix=json.loads((ROOT/'docs/integration-matrix.json').read_text())
+    verdict=integrated_verdict(matrix['requirements'],gates,completed,source_is_stable() and not failures,ROOT)
+    # Preserve the component requirement list too; no behavioural case disappears
+    # merely because its runner invocation came from a separate hosted job.
+    seen={test for gate in gates if gate.get('exit_code')==0 for test in gate.get('executed_tests',[])}
+    for requirement in json.loads((ROOT/'docs/acceptance-matrix.json').read_text())['requirements']:
+        if requirement.get('mandatory',True) and not set(requirement.get('tests',[]))<=seen:failures.append('missing D-QUORUM behavioural evidence: '+requirement['requirement'])
+    if failures:verdict.update(qualified=False,status='incomplete')
+    verdict.update(source=SOURCE_COMMIT,failures=failures,remote_ci='receipt aggregation; hosted execution exists only when this workflow actually runs')
+    (OUT/'integrated-readiness.json').write_text(json.dumps(verdict,indent=2)+'\n')
+    if not verdict['qualified']:raise RuntimeError('Required hosted evidence is incomplete; inspect integrated-readiness.json')
+
+COMMANDS={'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
+def main():
+    global RUN_STATUS
+    try:
+        cmd=sys.argv[1] if len(sys.argv)>1 else 'help'
+        if cmd not in COMMANDS:raise RuntimeError('commands: '+', '.join(COMMANDS))
+        COMMANDS[cmd]()
+        RUN_STATUS='complete';save()
+    except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as error:
+        RUN_STATUS='failed';print(str(error),file=sys.stderr);save();return 1
+    return 0
+
+if __name__=='__main__':sys.exit(main())

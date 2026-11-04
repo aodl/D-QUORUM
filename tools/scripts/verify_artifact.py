@@ -23,6 +23,8 @@ while i<len(b):
     i=end
 component=sys.argv[2] if len(sys.argv)>2 else 'dquorum'
 if component=='dendrite':
+    for marker in (b'scopeProbeResult',b'Scripted lost Governance mutation response after dispatch',b'invalid-certified-body',b'publicEvidenceProbe'):
+        assert marker not in b,'test-only browser probe present in production artifact: '+marker.decode()
     expected={'canister_query http_request','canister_update check_neuron'}
     allowed=expected|{'memory','get_candid_pointer','canister_init','canister_post_upgrade','__data_end','__heap_base'}
     assert set(exports)==allowed,(set(exports)-allowed,allowed-set(exports))

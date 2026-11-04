@@ -7,3 +7,5 @@
 *.profraw
 .env*
 *.pem
+
+__pycache__/

@@ -76,7 +76,7 @@ jobs:
           if-no-files-found: error
   canonical:
     name: Canonical reproducibility
-    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, integrated-readiness]
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -91,6 +91,9 @@ jobs:
       - run: npm --prefix dendrite ci --ignore-scripts
       - run: cargo install candid-extractor --version 0.1.6 --locked
       - run: docker buildx create --name dendrite-canonical --driver docker-container --bootstrap
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: evidence-signed-browser-ii
       - run: cargo run --locked -p xtask -- component_dendrite_canonical
       - run: cargo run --locked -p xtask -- reproducible
       - run: cargo run --locked -p xtask -- canonical_artifact
@@ -201,18 +204,20 @@ jobs:
 
   integrated-readiness:
     name: Complete integrated requirement selection
-    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii]
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, canonical]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Reject incomplete mandatory integration requirements
-        run: |
-          python3 - <<'PYTHON'
-          import json
-          matrix=json.load(open('docs/integration-matrix.json'))
-          incomplete=[r['id'] for r in matrix['requirements'] if r.get('mandatory',True) and r['status']!='implemented']
-          assert not incomplete, 'Mandatory integration requirements remain incomplete: '+', '.join(incomplete)
-          PYTHON
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist/ci-evidence
+      - run: python3 tools/scripts/xtask.py integrated_readiness
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: integrated-readiness-verdict
+          path: dist/evidence/
+          if-no-files-found: error

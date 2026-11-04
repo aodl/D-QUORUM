@@ -59,3 +59,12 @@ The previous scoring hardening introduced policy `selection-2` and stable V2. Th
 ## Integrated source repository
 
 Dendrite is retained under `dendrite/` with its own Cargo workspace, lockfile, verifier/asset canister, frontend, Candid and release procedure. This source consolidation does not alter the D-QUORUM policy in this specification, replace its vendored evaluator, combine canisters or merge authorities. Shared system tests use isolated real protocol instances. Component qualification and complete integrated/browser qualification are separate claims.
+
+Dendrite browser authority follows II app-origin parent → SDK-signed Governance-only
+child → direct browser-to-NNS operations. The parent is private bootstrap authority,
+not a transaction identity. Effective restrictions are intersected across all signed
+links; an omitted ancestor target list may be narrowed, while an empty or excluding
+list cannot be bypassed. The principal remains the II app principal. Fresh replicated
+scalar known-neuron metadata accompanies public full configuration at both transaction
+preparation and final preflight. These browser fixes change neither this document's
+D-QUORUM policy nor either canister's production API or stable representation.
