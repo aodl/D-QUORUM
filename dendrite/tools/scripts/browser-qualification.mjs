@@ -463,8 +463,8 @@ try {
   page.on("pageerror", (error) => failureErrors.push(error.message));
   await page.goto(failureUrl, { waitUntil: "networkidle0" });
   assert.equal(failureErrors.length, 0, failureErrors.join("\n"));
-  assert.match(await page.$eval(".report-header", (node) => node.textContent),
-    /Neuron 42.*Not Compliant/s);
+  assert.equal(await page.$eval(".header-verdict", node=>node.textContent),"Not Compliant");
+  assert.equal(await page.$eval(".neuron-id > span",node=>node.textContent),"42");
   assert.match(await page.$eval(".rule-filter-pass", (node) => node.textContent), /2 pass/);
   assert.match(await page.$eval(".rule-filter-fail", (node) => node.textContent), /2 fail/);
   assert.equal(await page.$eval(".rule-filter-all", (node) => node.getAttribute("aria-pressed")), "true");
@@ -502,8 +502,8 @@ try {
   assert.equal(failureRequests.length, 0, "failure-fixture filters or Raw report triggered a request");
   await page.screenshot({ path: join(evidenceDirectory, "deterministic-controller-failures.png"), fullPage: true });
   await page.goto(`${failureUrl}?status=compliant`, { waitUntil: "networkidle0" });
-  assert.match(await page.$eval(".report-header", (node) => node.textContent),
-    /Neuron 42.*Compliant/s);
+  assert.equal(await page.$eval(".header-verdict", node=>node.textContent),"Compliant");
+  assert.equal(await page.$eval(".neuron-id > span",node=>node.textContent),"42");
   assert.equal(await page.$eval(".report-header", (node) => getComputedStyle(node.querySelector("h2")).color),
     await page.$eval(".rule-filter-pass", (node) => getComputedStyle(node).color));
   await page.screenshot({ path: join(evidenceDirectory, "deterministic-compliant-verdict.png"), fullPage: true });
