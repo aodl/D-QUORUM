@@ -94,6 +94,10 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: evidence-signed-browser-ii
+          path: .cache/browser-evidence
+      - run: |
+          mkdir -p dist/evidence
+          cp -R .cache/browser-evidence/dist/evidence/browser-system dist/evidence/browser-system
       - run: cargo run --locked -p xtask -- component_dendrite_canonical
       - run: cargo run --locked -p xtask -- reproducible
       - run: cargo run --locked -p xtask -- canonical_artifact

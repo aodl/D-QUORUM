@@ -619,7 +619,7 @@ fn browser_world(scenario: &str) {
             .map(|topic| {
                 if topic == 1 {
                     fs(topic, &[11, 12, 13, 14, 15])
-                } else if topic == 4 {
+                } else if matches!(topic, 4 | 7) {
                     fs(topic, &[11, 12, 13])
                 } else {
                     fs(topic, &[dendrite_types::ALPHA_VOTE_NEURON_ID])
@@ -638,7 +638,7 @@ fn browser_world(scenario: &str) {
                 .map(|topic| {
                     if topic == 1 {
                         fs(topic, &(first..first + 5).collect::<Vec<_>>())
-                    } else if topic == 4 {
+                    } else if matches!(topic, 4 | 7) {
                         fs(topic, &(first..first + 3).collect::<Vec<_>>())
                     } else {
                         fs(topic, &[dendrite_types::ALPHA_VOTE_NEURON_ID])
@@ -649,23 +649,26 @@ fn browser_world(scenario: &str) {
             for id in first..first + 5 {
                 let mut manager = seed(id, user((id % 200) as u8), at);
                 manager.known_neuron_data = Some(known(id));
-                manager.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
+                manager.followees = vec![
+                    fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID]),
+                    fs(7, &[dendrite_types::OMEGA_REJECT_NEURON_ID]),
+                ];
                 neurons.push(manager);
             }
         }
         let mut source = seed(200, user(2), at);
         source.aging_since_timestamp_seconds = 0; // Saturated age bonus: independent VP reads remain comparable.
-        source.followees = vec![fs(4, &[100, 106])];
+        source.followees = vec![fs(4, &[100, 106]), fs(7, &[100, 106])];
         neurons.push(source);
         // Direct support from 202 only: 201's following of 202 must not propagate.
         let mut upstream = seed(201, user(2), at);
         upstream.aging_since_timestamp_seconds = 0;
-        upstream.followees = vec![fs(4, &[202])];
+        upstream.followees = vec![fs(4, &[202]), fs(7, &[202])];
         neurons.push(upstream);
         let mut direct = seed(202, user(2), at);
         direct.aging_since_timestamp_seconds = 0;
         direct.cached_neuron_stake_e8s = 5_000_000_000;
-        direct.followees = vec![fs(4, &[106])];
+        direct.followees = vec![fs(4, &[106]), fs(7, &[106])];
         neurons.push(direct);
         let mut quorum = seed(TARGET, user(9), at);
         quorum.hot_keys = vec![automation];
@@ -692,7 +695,10 @@ fn browser_world(scenario: &str) {
                 n.hot_keys = vec![principals[2]];
             }
             n.known_neuron_data = Some(known(id));
-            n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
+            n.followees = vec![
+                fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID]),
+                fs(7, &[dendrite_types::OMEGA_REJECT_NEURON_ID]),
+            ];
             neurons.push(n);
         }
         for id in [
@@ -989,22 +995,37 @@ fn browser_world(scenario: &str) {
         let raw = public_neuron(&pic, 200).deciding_voting_power.unwrap();
         let direct = public_neuron(&pic, 202).deciding_voting_power.unwrap();
         let expected = u128::from(raw) * quorum_policy::SCALE / 2;
-        assert_eq!(
-            scores
-                .iter()
-                .find(|s| s.topic == 4 && s.neuron_id == 100)
-                .unwrap()
-                .scaled_score,
-            expected
-        );
-        assert_eq!(
-            scores
-                .iter()
-                .find(|s| s.topic == 4 && s.neuron_id == 106)
-                .unwrap()
-                .scaled_score,
-            expected + u128::from(direct) * quorum_policy::SCALE
-        );
+        for topic in [4, 7] {
+            assert_eq!(
+                scores
+                    .iter()
+                    .find(|s| s.topic == topic && s.neuron_id == 100)
+                    .unwrap()
+                    .scaled_score,
+                expected
+            );
+            assert_eq!(
+                scores
+                    .iter()
+                    .find(|s| s.topic == topic && s.neuron_id == 106)
+                    .unwrap()
+                    .scaled_score,
+                expected + u128::from(direct) * quorum_policy::SCALE
+            );
+            assert_eq!(
+                public_neuron(&pic, TARGET)
+                    .followees
+                    .iter()
+                    .find(|(code, _)| *code == topic)
+                    .unwrap()
+                    .1
+                    .followees
+                    .iter()
+                    .map(|id| id.id)
+                    .collect::<Vec<_>>(),
+                vec![106, 100]
+            );
+        }
         let original: Option<g::ProposalInfo> =
             query(&pic, GOVERNANCE, "get_proposal_info", maturity_id);
         let original = original.unwrap();
@@ -1123,6 +1144,25 @@ fn browser_world(scenario: &str) {
         // A second actual Ledger-funded pot and changed support use the normal
         // weekly selection/daily payout cadence, retaining the first obligations.
         real_set_support(&pic, &[112, 118]);
+        let support: g::ManageResponse = update(
+            &pic,
+            GOVERNANCE,
+            user(2),
+            "manage_neuron",
+            g::request(
+                200,
+                g::Command::SetFollowing(g::SetFollowing {
+                    topic_following: Some(vec![g::Following {
+                        topic: Some(7),
+                        followees: Some(vec![g::NeuronId { id: 112 }, g::NeuronId { id: 118 }]),
+                    }]),
+                }),
+            ),
+        );
+        assert!(matches!(
+            support.command,
+            Some(g::ResponseCommand::SetFollowing(_))
+        ));
         let clear: g::ManageResponse = update(
             &pic,
             GOVERNANCE,
@@ -1131,10 +1171,15 @@ fn browser_world(scenario: &str) {
             g::request(
                 202,
                 g::Command::SetFollowing(g::SetFollowing {
-                    topic_following: Some(vec![g::Following {
-                        topic: Some(4),
-                        followees: Some(vec![]),
-                    }]),
+                    topic_following: Some(
+                        [4, 7]
+                            .into_iter()
+                            .map(|topic| g::Following {
+                                topic: Some(topic),
+                                followees: Some(vec![]),
+                            })
+                            .collect(),
+                    ),
                 }),
             ),
         );
@@ -1153,6 +1198,21 @@ fn browser_world(scenario: &str) {
                 break;
             }
             drive(&pic, 10);
+        }
+        for topic in [4, 7] {
+            assert_eq!(
+                public_neuron(&pic, TARGET)
+                    .followees
+                    .iter()
+                    .find(|(code, _)| *code == topic)
+                    .unwrap()
+                    .1
+                    .followees
+                    .iter()
+                    .map(|id| id.id)
+                    .collect::<Vec<_>>(),
+                vec![112, 118]
+            );
         }
         let transfer: Result<candid::Nat, l::TransferError> = update(
             &pic,
@@ -1241,7 +1301,7 @@ fn browser_world(scenario: &str) {
         let health: d_quorum::Health = query_empty(&pic, automation, "health");
         let status = pic.canister_status(automation, None).unwrap();
         fs::write(directory.join("world-resources.json"),serde_json::to_vec_pretty(&serde_json::json!({"wall_seconds":wall.elapsed().as_secs_f64(),"network_time_seconds":now(&pic),"virtual_elapsed_seconds":now(&pic)-at,"automation_cycles_before":automation_cycles_before,"automation_cycles_after":pic.cycle_balance(automation),"automation_cycle_use":automation_cycles_before-pic.cycle_balance(automation),"stable_snapshot_bytes":health.stable_snapshot_bytes,"stable_pages":health.stable_memory_pages,"memory_bytes":status.memory_size.to_string(),"checkpoints":health.checkpoints,"pending_maintenance":health.pending_refreshes,"abandoned_maintenance":health.abandoned_refreshes,"pending_financial_liabilities":plans.iter().map(|p|p.recipient_count-p.confirmed_count).sum::<u32>(),"protocol_call_counts":"real canister internal call totals not instrumented; public browser request paths and recording-fixture capacity counts are retained separately"})).unwrap()).unwrap();
-        fs::write(directory.join("economic-evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"same_instance":true,"observed_finalization_seconds":finalization,"authoritative_mints":mints,"seeded_maturity_e8s":5_000_000_000u64,"browser_manager_proposal":proposal,"browser_approved_maturity_proposal":maturity_id,"maturity_marker":maturity_marker,"maturity_fingerprint":hex::encode(maturity_fingerprint),"maturity_ballots":maturity_ballots,"initial_roster":[106,100],"later_roster":[112,118],"first_payments":first,"later_payments":second,"genuine_reward_accrual":"separate preserved real-protocol test; this journey uses explicitly seeded maturity"})).unwrap()).unwrap();
+        fs::write(directory.join("economic-evidence.json"),serde_json::to_vec_pretty(&serde_json::json!({"same_instance":true,"observed_finalization_seconds":finalization,"authoritative_mints":mints,"seeded_maturity_e8s":5_000_000_000u64,"browser_manager_proposal":proposal,"browser_approved_maturity_proposal":maturity_id,"maturity_marker":maturity_marker,"maturity_fingerprint":hex::encode(maturity_fingerprint),"maturity_ballots":maturity_ballots,"selected_topics":[4,7],"initial_roster":[106,100],"later_roster":[112,118],"first_payments":first,"later_payments":second,"genuine_reward_accrual":"separate preserved real-protocol test; this journey uses explicitly seeded maturity"})).unwrap()).unwrap();
     }));
     let _ = Command::new("docker")
         .args(["stop", "--timeout", "3", &name])
