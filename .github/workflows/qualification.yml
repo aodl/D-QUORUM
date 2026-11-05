@@ -84,9 +84,10 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
       - run: npm install --global npm@11.12.1 --ignore-scripts
       - run: npm --prefix dendrite ci --ignore-scripts
       - run: cargo install candid-extractor --version 0.1.6 --locked
@@ -137,6 +138,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: npm --prefix dendrite ci --ignore-scripts
       - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
       - run: cargo run --locked -p xtask -- integration_inventory
       - run: cargo run --locked -p xtask -- system_protocol
@@ -155,9 +163,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
       - run: npm install --global npm@11.12.1 --ignore-scripts
       - run: rustup toolchain install 1.94.1 --profile minimal --component llvm-tools-preview --target wasm32-unknown-unknown
       - run: npm --prefix dendrite ci --ignore-scripts
@@ -190,9 +199,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.15.0
+          package-manager-cache: false
       - run: npm install --global npm@11.12.1 --ignore-scripts
       - run: rustup toolchain install 1.94.1 --profile minimal --component llvm-tools-preview --target wasm32-unknown-unknown
       - run: npm --prefix dendrite ci --ignore-scripts

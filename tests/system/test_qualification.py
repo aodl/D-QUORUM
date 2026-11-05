@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 import io
 import os
+import subprocess
 spec=importlib.util.spec_from_file_location('existing_xtask',Path(__file__).resolve().parents[2]/'tools/scripts/xtask.py')
 xtask=importlib.util.module_from_spec(spec);spec.loader.exec_module(xtask)
 POSITIVE='real_ii_compiled_frontend_known_managers_and_signed_governance'
@@ -31,6 +32,17 @@ class QualificationVerdict(unittest.TestCase):
     def test_editing_matrix_alone_is_insufficient(self):
         self.requirements[0]['tests']=[];self.assertFalse(self.verdict()['qualified'])
 class WorkflowDependencies(unittest.TestCase):
+    def test_inventory_job_provisions_history_and_locked_frontend_dependencies(self):
+        text=(xtask.ROOT/'.github/workflows/qualification.yml').read_text()
+        body=re.search(r'(?ms)^  shared-system-protocol:\n(.*?)(?=^  [a-z][a-z-]+:\n|\Z)',text)[1]
+        inventory=body.index('cargo run --locked -p xtask -- integration_inventory')
+        setup=body[:inventory]
+        self.assertRegex(setup,r'(?m)^          fetch-depth: 0$')
+        self.assertIn('uses: actions/setup-node@',setup)
+        self.assertIn('node-version: 24.15.0',setup)
+        self.assertIn('npm install --global npm@11.12.1 --ignore-scripts',setup)
+        self.assertIn('npm --prefix dendrite ci --ignore-scripts',setup)
+        self.assertIn('persist-credentials: false',setup)
     def test_required_workflow_dependencies_are_acyclic(self):
         text=(xtask.ROOT/'.github/workflows/qualification.yml').read_text().split('jobs:',1)[1]
         jobs={}
@@ -44,6 +56,25 @@ class WorkflowDependencies(unittest.TestCase):
             self.assertIn(name,jobs);self.assertNotIn(name,stack)
             for dependency in jobs[name]:visit(dependency,stack+[name])
         for name in jobs:visit(name,[])
+class HistoricalControlPrerequisites(unittest.TestCase):
+    def test_missing_sdk_is_not_a_successful_historical_negative_control(self):
+        failure=subprocess.CompletedProcess([],1,'Error [ERR_MODULE_NOT_FOUND]: Cannot find package @icp-sdk/core\n# fail 1\n','')
+        original=xtask.subprocess.run
+        def run(command,*args,**kwargs):
+            if command[0]=='node':return failure
+            return original(command,*args,**kwargs)
+        with tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp') as directory:
+            with mock.patch.object(xtask,'OUT',Path(directory)),mock.patch.object(xtask.subprocess,'run',side_effect=run):
+                with self.assertRaises(RuntimeError):xtask.integration_negative_controls()
+    def test_module_error_cannot_replace_the_named_mutation_failure(self):
+        name='replicated manager preparation uses scalar registration'
+        positive=subprocess.CompletedProcess([],0,'✔ '+name+' (1ms)\nℹ pass 1\nℹ fail 0\n','')
+        unrelated=subprocess.CompletedProcess([],1,'Error [ERR_MODULE_NOT_FOUND]\n# fail 1\n','')
+        source=(xtask.ROOT/'dendrite/canisters/dendrite/web/src/transaction.js').read_text()
+        with tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp') as directory:
+            with mock.patch.object(xtask,'OUT',Path(directory)),mock.patch.object(xtask.subprocess,'check_output',return_value=source),mock.patch.object(xtask.subprocess,'run',side_effect=[positive,unrelated]) as run:
+                with self.assertRaisesRegex(RuntimeError,'named regression'):xtask.integration_negative_controls()
+                self.assertEqual(run.call_count,2)
 class FixtureServerOwnership(unittest.TestCase):
     def test_dead_server_is_not_restarted_within_a_lane(self):
         server=mock.Mock();server.poll.return_value=-9

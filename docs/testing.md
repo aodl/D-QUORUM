@@ -93,11 +93,23 @@ counted separately from passing behavioural executions. Probes never enter canon
 production assets.
 
 The integrated verdict requires exact named executions, hashed log files, all mandatory
-component gates, a clean unchanged commit/tree and the positive browser case. Nine
+component gates, a clean unchanged commit/tree and the positive browser case. Twelve
 small runner regressions cover all-pass, failure, absent logs, changed source, missing
 positive browser, matrix-only edits, an acyclic CI dependency graph, refusal to restart
-a dead server within a lane, and idempotent cleanup of only owned handles. Hosted readiness
+a dead server within a lane, idempotent cleanup of only owned handles, inventory job
+prerequisites, and rejection of dependency/module failures as historical negative controls. Hosted readiness
 aggregates all existing lane receipts after canonical jobs; workflow source is not a
 hosted run. The owner must require every root job, including Signed browser II required,
 Shared application real protocol, Dendrite preserved qualification, Canonical
 reproducibility and Complete integrated requirement selection.
+
+The shared-protocol job checks out full history (`fetch-depth: 0`) because inventory
+reads the historical authentication and metadata helpers from commit `52b546f`.
+It installs pinned Node 24.15.0/npm 11.12.1 and locked frontend dependencies before
+inventory. Active jobs pin setup-node v7.1.0, whose action runtime is Node 24, with
+automatic package-manager caching disabled; application Node/npm pins are unchanged.
+Each historical control first runs its current named test successfully;
+only then is the old helper substituted. The mutated run must fail that named test.
+Missing SDK packages, module-load errors and unrelated failed tests cannot count as
+evidence that a historical defect was detected. Both positive and negative logs and
+their hashes are retained as validator evidence, outside behavioural execution counts.

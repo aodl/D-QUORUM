@@ -312,14 +312,20 @@ def integration_negative_controls():
                 destination=isolated/source.relative_to(ROOT/'dendrite');destination.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,destination)
             (isolated/'node_modules').symlink_to(ROOT/'dendrite/node_modules',target_is_directory=True)
             target=isolated/'canisters/dendrite/web/src'/module
+            command=['node','--test','--test-name-pattern',pattern,str(isolated/'canisters/dendrite/web/test'/test)]
+            positive=subprocess.run(command,capture_output=True,text=True)
+            positive_log=positive.stdout+positive.stderr
+            positive_name=name+'-positive.log';(directory/positive_name).write_text(positive_log)
+            if positive.returncode!=0 or not re.search(r'(?m)^[ℹ#] pass 1$',positive_log) or pattern not in positive_log:
+                raise RuntimeError('historical control positive test did not execute successfully; install locked frontend dependencies: '+name)
             current=target.read_text();old=subprocess.check_output(['git','show',historical+':dendrite/canisters/dendrite/web/src/'+module],text=True)
             replacement=old[old.index(start):old.index(old_end,old.index(start))]
             target.write_text(current[:current.index(start)]+replacement+current[current.index(new_end,current.index(start)):])
-            command=['node','--test','--test-name-pattern',pattern,str(isolated/'canisters/dendrite/web/test'/test)]
             process=subprocess.run(command,capture_output=True,text=True)
             log=process.stdout+process.stderr;(directory/(name+'.log')).write_text(log)
-            if process.returncode!=1 or not re.search(r'(?m)^[ℹ#] fail 1$',log):raise RuntimeError('historical mutation was not detected: '+name)
-            receipts.append({'name':name,'classification':'isolated historical helper; one expected failing test, excluded from passing test counts','historical_source':historical,'historical_helper_sha256':hashlib.sha256(replacement.encode()).hexdigest(),'current_test_sha256':hashlib.sha256((ROOT/'dendrite/canisters/dendrite/web/test'/test).read_bytes()).hexdigest(),'expected_failed_test':pattern,'log':name+'.log','log_sha256':hashlib.sha256(log.encode()).hexdigest(),'expected_failure_observed':True})
+            named_failure=re.search(r'(?m)^(?:✖ |not ok \d+ - )'+re.escape(pattern),log)
+            if process.returncode!=1 or not re.search(r'(?m)^[ℹ#] fail 1$',log) or not named_failure:raise RuntimeError('historical mutation did not fail its named regression: '+name)
+            receipts.append({'name':name,'classification':'isolated historical helper; positive prerequisite then one expected named failing test; validator, excluded from behavioural execution counts','historical_source':historical,'historical_helper_sha256':hashlib.sha256(replacement.encode()).hexdigest(),'current_test_sha256':hashlib.sha256((ROOT/'dendrite/canisters/dendrite/web/test'/test).read_bytes()).hexdigest(),'expected_failed_test':pattern,'positive_log':positive_name,'positive_log_sha256':hashlib.sha256(positive_log.encode()).hexdigest(),'log':name+'.log','log_sha256':hashlib.sha256(log.encode()).hexdigest(),'expected_failure_observed':True})
     (directory/'receipts.json').write_text(json.dumps({'source':SOURCE_COMMIT,'controls':receipts},indent=2)+'\n')
     print('Both isolated historical authentication and metadata helpers fail their positive regressions as required.')
     completed_suites.add('integration_negative_controls')
