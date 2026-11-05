@@ -17,7 +17,7 @@ Use `cargo run --locked -p xtask -- COMMAND`. Unit discovery uses Cargo workspac
 | reproducible | Two no-cache digest-pinned Docker builds, exact filenames/bytes and source/artifact manifests |
 | acceptance | All gates and mandatory behavioural matrix; incomplete requirements fail |
 
-Wasm is compiled before fixtures start. The runner owns a checksum-pinned local PocketIC server with an explicit twelve-hour wall-clock hard lifetime and stops it on exit; this avoids the SDK implicit server's ten-minute hard exit during long suites. It does not alter virtual production time, job timers or freshness bounds. Direct ignored-test invocations without the runner use the SDK default lifetime. `protocol-pins.json` verifies the PocketIC executable and real protocol gzip/raw hashes. Test package imports do not add their dependencies or exports to production Wasm. Mock scripts do not establish NNS permissions. Real tests explicitly install the separately pinned Governance and Ledger; PocketIC's CMC and Registry provide the modulation environment. Real transfers compare exact account IDs, amounts and fees. Real archive creation/readback is exercised. Cached neuron stake is tested separately from a Ledger stake-account top-up.
+Wasm is compiled before fixtures start. The runner owns a checksum-pinned local PocketIC server with an explicit twelve-hour wall-clock hard lifetime and stops it on exit; this avoids the SDK implicit server's ten-minute hard exit during long suites. It does not alter virtual production time, job timers or freshness bounds. The combined runner closes its owned server only after a top-level lane finishes, then starts a fresh server for a later independent lane. Each generation retains a distinct log and port file. A server exit within a lane fails closed with its exit status; there is no mid-case restart or joining of worlds. Direct ignored-test invocations without the runner use the SDK default lifetime. `protocol-pins.json` verifies the PocketIC executable and real protocol gzip/raw hashes. Test package imports do not add their dependencies or exports to production Wasm. Mock scripts do not establish NNS permissions. Real tests explicitly install the separately pinned Governance and Ledger; PocketIC's CMC and Registry provide the modulation environment. Real transfers compare exact account IDs, amounts and fees. Real archive creation/readback is exercised. Cached neuron stake is tested separately from a Ledger stake-account top-up.
 
 The production module has no debug drivers. Tests advance virtual time and observe bounded public queries. A CDK self-only timer executor is an explicit infrastructure export. The export validator rejects all unreviewed application exports and checks embedded Candid against the committed interface. `didc 0.6.2` checks public types and dependency subtyping against pinned upstream DIDs; response variants are retained or rejected safely, not silently interpreted.
 
@@ -93,9 +93,10 @@ counted separately from passing behavioural executions. Probes never enter canon
 production assets.
 
 The integrated verdict requires exact named executions, hashed log files, all mandatory
-component gates, a clean unchanged commit/tree and the positive browser case. Seven
+component gates, a clean unchanged commit/tree and the positive browser case. Nine
 small runner regressions cover all-pass, failure, absent logs, changed source, missing
-positive browser, matrix-only edits and an acyclic CI dependency graph. Hosted readiness
+positive browser, matrix-only edits, an acyclic CI dependency graph, refusal to restart
+a dead server within a lane, and idempotent cleanup of only owned handles. Hosted readiness
 aggregates all existing lane receipts after canonical jobs; workflow source is not a
 hosted run. The owner must require every root job, including Signed browser II required,
 Shared application real protocol, Dendrite preserved qualification, Canonical

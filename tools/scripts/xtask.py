@@ -20,30 +20,49 @@ SOURCE_TREE_HASH=hashlib.sha256(json.dumps(SOURCE_FILES,sort_keys=True).encode()
 PREPARED_ARTIFACTS={}
 
 FIXTURE_SERVER=None
+FIXTURE_LOG=None
+FIXTURE_PORT=None
+FIXTURE_GENERATION=0
+
+def stop_fixture_server():
+    global FIXTURE_SERVER,FIXTURE_LOG,FIXTURE_PORT
+    server,log,port=FIXTURE_SERVER,FIXTURE_LOG,FIXTURE_PORT
+    FIXTURE_SERVER=FIXTURE_LOG=FIXTURE_PORT=None
+    try:
+        if server is not None:
+            os.environ.pop('D_QUORUM_POCKET_IC_URL',None)
+            if server.poll() is None:
+                server.terminate()
+                try:server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server.kill();server.wait()
+            print(f'Closed owned PocketIC fixture server (exit status {server.returncode}).',flush=True)
+    finally:
+        if log is not None:log.close()
+        if port is not None:port.unlink(missing_ok=True)
+
+atexit.register(stop_fixture_server)
 
 def fixture_server():
-    global FIXTURE_SERVER
+    global FIXTURE_SERVER,FIXTURE_LOG,FIXTURE_PORT,FIXTURE_GENERATION
     if FIXTURE_SERVER is not None:
-        if FIXTURE_SERVER.poll() is not None:raise RuntimeError('managed PocketIC server exited during suite')
+        code=FIXTURE_SERVER.poll()
+        if code is not None:raise RuntimeError(f'managed PocketIC server exited during suite (exit status {code})')
         return
-    # The SDK's implicit server has a 600s hard TTL. This is a wall-clock test
-    # harness lifetime, unrelated to virtual production timers/freshness bounds.
-    port=ROOT/f'.cache/tmp/pocketic-runner-{os.getpid()}.port'
+    # A lane owns its server. Never restart within a test or join test worlds.
+    # Fresh top-level lanes match the isolation of the existing hosted jobs.
+    FIXTURE_GENERATION+=1
+    port=ROOT/f'.cache/tmp/pocketic-runner-{os.getpid()}-{FIXTURE_GENERATION}.port'
     port.unlink(missing_ok=True)
-    log=(OUT/f'pocketic-server-{os.getpid()}.log').open('w')
+    log=(OUT/f'pocketic-server-{os.getpid()}-{FIXTURE_GENERATION}.log').open('w')
+    FIXTURE_PORT,FIXTURE_LOG=port,log
     # Keep server/sandbox teardown signals out of the qualification launcher's group.
     FIXTURE_SERVER=subprocess.Popen([str(ROOT/'.cache/tools/pocket-ic'),'--ttl','43200','--hard-ttl','43200','--port-file',str(port)],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
-    def stop():
-        if FIXTURE_SERVER.poll() is None:
-            FIXTURE_SERVER.terminate()
-            try:FIXTURE_SERVER.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                FIXTURE_SERVER.kill();FIXTURE_SERVER.wait()
-        log.close();port.unlink(missing_ok=True)
-    atexit.register(stop)
+    print(f'Owned PocketIC fixture server {FIXTURE_GENERATION}: pid {FIXTURE_SERVER.pid}, log {log.name}.',flush=True)
     deadline=time.monotonic()+60
     while time.monotonic()<deadline:
-        if FIXTURE_SERVER.poll() is not None:raise RuntimeError('managed PocketIC startup failed')
+        code=FIXTURE_SERVER.poll()
+        if code is not None:raise RuntimeError(f'managed PocketIC startup failed (exit status {code})')
         if port.exists() and port.read_text().endswith('\n'):
             number=int(port.read_text().strip())
             if not 0<number<65536:raise RuntimeError('invalid PocketIC port')
@@ -457,6 +476,7 @@ def integrated_acceptance():
     report_path=OUT/'integrated-acceptance.json'
     report_path.write_text(json.dumps(report,indent=2)+'\n')
     for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical)]:
+        print('Integrated lane: '+name,flush=True)
         try:
             if not source_is_stable():raise RuntimeError('source changed before '+name)
             gate()
@@ -465,6 +485,7 @@ def integrated_acceptance():
                 save()
                 shutil.copyfile(OUT/(sys.argv[1]+'-run.json'),OUT/'dquorum-component-acceptance-run.json')
         except (RuntimeError,FileNotFoundError,subprocess.CalledProcessError) as error:report['failures'].append({'suite':name,'error':str(error)})
+        finally:stop_fixture_server()
         report_path.write_text(json.dumps(report,indent=2)+'\n')
     matrix=json.loads((ROOT/'docs/integration-matrix.json').read_text())
     report.update(integrated_verdict(matrix['requirements'],results,completed_suites,source_is_stable(),OUT))

@@ -41,7 +41,9 @@
       "suite": "component_dendrite_canonical",
       "status": "implemented",
       "mandatory": true,
-      "tests": [],
+      "tests": [
+        "production mapping, cache exclusion, manifest, and release sums are strict"
+      ],
       "validators": [
         "Dendrite two forced-clean canonical builds and export checks",
         "canonical Dendrite complete production exports",

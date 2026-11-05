@@ -60,6 +60,10 @@ Keep these identities separate:
   its exact source and both clean build sets. The production configuration remains
   unchanged; the separate local-browser configuration and Wasm are labelled as such.
 
+The fixed candidate in `icp.yaml` and `mainnet-deploy.sh` must agree with the exact
+reviewed hash. The strict release-tooling regression checks both; updating only one
+binding fails qualification. This changes no deployment permission or lifecycle flow.
+
 The saved historical and current build configurations are byte-identical. No missing
 historical source/build evidence has been reconstructed, and no current live hash is
 inferred from any saved artifact. Only `verify-release-artifacts.sh` is used for local

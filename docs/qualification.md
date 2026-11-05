@@ -1,7 +1,7 @@
 # Scoped authentication integration qualification
 
-This candidate is **not yet qualified**. The strengthened two-topic journey and the
-required final clean-source combined acceptance run remain outstanding. The provisional
+This candidate is **not yet qualified**. A complete clean-source combined run after
+the release-guard and fixture-lifetime corrections remains outstanding. The provisional
 undeployed binding comes from two matching clean builds and still requires final
 source-stable verification. No historical result qualifies these changed frontend
 bytes. The [initial integration qualification](releases/integration-initial-qualification.md)
@@ -19,6 +19,23 @@ upgrade case and the historical Dendrite deployment binding. The exact timed-out
 case then passed with the same canonical Wasm and unchanged request timeout in a
 fresh isolated instance; its [diagnostic receipt](../dist/history/scoped-prebinding-29bbe69/exact-canonical-timeout-diagnostic/receipt.json)
 does not replace the failed run. The original timeout's cause remains unproven.
+
+The subsequent unchanged-source attempt at
+`f934d2a6812721b24f3dba688ee13ddb044d6cad` also remains **unqualified**.
+Its complete D-QUORUM component and all fifteen canonical repeats passed, including
+240 recipients in 6,688.21 host seconds with zero remaining liabilities or refreshes.
+The full attempted matrix recorded 175 gates, 171 passing and four failing; 344 unique
+passing printed names, 908 passing executions and four failed executions. Three
+frontend-invoking gates failed the same stale historical-hash assertion. The owned
+PocketIC server then exited during Governance installation in the shared reward test;
+the log does not establish why. Browser and canonical-pair lanes could not run.
+The [complete failed record](../dist/history/scoped-binding-test-f934d2a/evidence/integrated-acceptance.json)
+retains those failures without substituting the separately passing browser preflight.
+The current correction aligns the deployment guard and strict test with the intended
+candidate, and gives independent completed lanes separate owned fixture-server
+lifetimes and logs. It never restarts a server within a case or turns a failed lane
+into passing evidence. A new complete run is required; prior passing results do not
+qualify this source.
 
 The corrected authority path is **II app-origin parent → SDK-signed Governance-only
 child → direct browser-to-NNS operations**. An unscoped II parent is private bootstrap

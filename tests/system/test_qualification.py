@@ -5,6 +5,9 @@ from pathlib import Path
 import tempfile
 import re
 import unittest
+from unittest import mock
+import io
+import os
 spec=importlib.util.spec_from_file_location('existing_xtask',Path(__file__).resolve().parents[2]/'tools/scripts/xtask.py')
 xtask=importlib.util.module_from_spec(spec);spec.loader.exec_module(xtask)
 POSITIVE='real_ii_compiled_frontend_known_managers_and_signed_governance'
@@ -41,4 +44,22 @@ class WorkflowDependencies(unittest.TestCase):
             self.assertIn(name,jobs);self.assertNotIn(name,stack)
             for dependency in jobs[name]:visit(dependency,stack+[name])
         for name in jobs:visit(name,[])
+class FixtureServerOwnership(unittest.TestCase):
+    def test_dead_server_is_not_restarted_within_a_lane(self):
+        server=mock.Mock();server.poll.return_value=-9
+        with mock.patch.object(xtask,'FIXTURE_SERVER',server),mock.patch.object(xtask.subprocess,'Popen') as start:
+            with self.assertRaisesRegex(RuntimeError,'exit status -9'):xtask.fixture_server()
+            start.assert_not_called()
+    def test_lane_cleanup_releases_only_owned_handles_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp') as directory:
+            port=Path(directory)/'owned.port';port.write_text('1234\n')
+            other=Path(directory)/'unrelated.port';other.write_text('5678\n')
+            log=io.StringIO();server=mock.Mock();server.poll.return_value=None;server.returncode=-15
+            with mock.patch.object(xtask,'FIXTURE_SERVER',server),mock.patch.object(xtask,'FIXTURE_LOG',log),mock.patch.object(xtask,'FIXTURE_PORT',port),mock.patch.dict(os.environ,{'D_QUORUM_POCKET_IC_URL':'http://127.0.0.1:1234/'}),mock.patch('builtins.print'):
+                xtask.stop_fixture_server();xtask.stop_fixture_server()
+                server.terminate.assert_called_once();server.wait.assert_called_once_with(timeout=10);server.kill.assert_not_called()
+                self.assertIsNone(xtask.FIXTURE_SERVER);self.assertIsNone(xtask.FIXTURE_LOG);self.assertIsNone(xtask.FIXTURE_PORT)
+                self.assertTrue(log.closed);self.assertFalse(port.exists());self.assertTrue(other.exists())
+                self.assertNotIn('D_QUORUM_POCKET_IC_URL',os.environ)
+
 if __name__=='__main__':unittest.main(verbosity=2)
