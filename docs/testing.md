@@ -58,6 +58,8 @@ The root `xtask` remains the orchestrator. `integration_inventory` discovers bot
 
 `system_browser` first probes actual II HTTP/certificate delivery with the pinned Chromium/WebAuthn stack, then requires the compiled local application to obtain real II sessions and send signed management operations to the same real Governance fixture. Its local frontend is built in an isolated tracked-source copy before network creation; production assets are untouched. Only public principals, request paths and bounded control labels are retained. No session, delegation, passkey credential material or private key is exported. Browser time advances with host-aligned real-time progress during the bounded interactive phase. After real browser majority and maturity approval, the same coordinator closes the browser and switches that same instance to long deterministic advancement for actual maturity minting and two payout cycles. No certificate or delegation validity window is enlarged.
 
+Browser setup records II's bounded public error heading in `ii-failure.json` and surfaces it in the coordinator failure. A positive fixture may restart an II **setup channel** once, only for the pinned `Unable to connect` or `Connection closed` states, by destroying that browser context and creating a fresh one. This happens before the coordinator provisions manager authority. It never retries manager mutations, a scope/signature check, an origin refusal, cancellation or any unknown failure. Both failed setup and restart evidence remain in `authentication-retries.json`; a second failure fails the gate. Focused runner tests execute the actual driver retry function with scripted setup outcomes to check context disposal, the two-attempt bound and immediate refusal of other failures. These are harness unit tests, not mocked II acceptance proof. All six original real-browser tests remain mandatory, including actual passkey login and the complete allowed/denied replica scope proof. The original hosted log omitted II's error heading; its exact subcause remains unproven until a hosted rerun records that heading.
+
 `integrated_acceptance` continues independent lanes after a failure and exits nonzero unless the entire documented integration matrix is implemented and passes. The existing `acceptance` retains its original D-QUORUM scope and source-stability checks; it cannot certify the full integrated product. Root workflows are read-only, retain all existing capacity and canonical repeats, and make canonical qualification depend on the added component, shared-protocol and signed-browser jobs. Hosted runs and branch-protection enforcement are operator steps.
 
 The `Complete integrated requirement selection` CI validator prevents component success from hiding unfinished cross-application requirements; it is not a behavioural test. Canonical publication evidence remains blocked while any mandatory integrated matrix entry is incomplete. The repository owner must require the existing behavioural, production/capacity, security, coverage, canonical, Dendrite component, shared-protocol, signed-browser and integrated-readiness checks after observing actual hosted runs. No branch protection setting has been changed.
@@ -93,11 +95,12 @@ counted separately from passing behavioural executions. Probes never enter canon
 production assets.
 
 The integrated verdict requires exact named executions, hashed log files, all mandatory
-component gates, a clean unchanged commit/tree and the positive browser case. Twelve
+component gates, a clean unchanged commit/tree and the positive browser case. Sixteen
 small runner regressions cover all-pass, failure, absent logs, changed source, missing
 positive browser, matrix-only edits, an acyclic CI dependency graph, refusal to restart
 a dead server within a lane, idempotent cleanup of only owned handles, inventory job
-prerequisites, and rejection of dependency/module failures as historical negative controls. Hosted readiness
+prerequisites, rejection of dependency/module failures as historical negative controls,
+and bounded browser setup recovery without retrying other failures. Hosted readiness
 aggregates all existing lane receipts after canonical jobs; workflow source is not a
 hosted run. The owner must require every root job, including Signed browser II required,
 Shared application real protocol, Dendrite preserved qualification, Canonical

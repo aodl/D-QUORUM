@@ -75,6 +75,54 @@ class HistoricalControlPrerequisites(unittest.TestCase):
             with mock.patch.object(xtask,'OUT',Path(directory)),mock.patch.object(xtask.subprocess,'check_output',return_value=source),mock.patch.object(xtask.subprocess,'run',side_effect=[positive,unrelated]) as run:
                 with self.assertRaisesRegex(RuntimeError,'named regression'):xtask.integration_negative_controls()
                 self.assertEqual(run.call_count,2)
+class BrowserSetupRecovery(unittest.TestCase):
+    def exercise(self,failures,channel=True):
+        # Execute the production test driver's function, not a second retry model.
+        # Only setup outcomes and browser-context disposal are scripted here.
+        source=(xtask.ROOT/'tests/browser/team-management.mjs').read_text()
+        start=source.index('async function authenticate(index){')
+        end=source.index('async function authenticateAttempt(index){',start)
+        function=source[start:end]
+        script="""
+const applicationPages=[],authenticationRetries=[],receipts=[];
+const directory='unused';let calls=0,closed=0;
+const console={error(){}};
+const writeEvidence=async(path,bytes)=>receipts.push(JSON.parse(bytes));
+async function authenticateAttempt(index){
+ calls++;applicationPages.push({browserContext:()=>({async close(){closed++;}})});
+ if(calls<=FAILURES){
+  const error=Error('scripted setup failure');
+  if(CHANNEL)error.iiChannelFailure='Unable to connect';
+  throw error;
+ }
+ return {index,setupSucceeded:true};
+}
+FUNCTION
+let result,error;
+try{result=await authenticate(7);}catch(caught){error=caught.message;}
+process.stdout.write(JSON.stringify({calls,closed,retries:authenticationRetries.length,receipts:receipts.length,result,error}));
+""".replace('FAILURES',str(failures)).replace('CHANNEL','true' if channel else 'false').replace('FUNCTION',function)
+        completed=subprocess.run(['node','--input-type=module'],input=script,text=True,capture_output=True)
+        self.assertEqual(completed.returncode,0,completed.stderr)
+        import json
+        return json.loads(completed.stdout)
+    def test_known_channel_failure_restarts_in_a_fresh_context(self):
+        result=self.exercise(1)
+        self.assertEqual((result['calls'],result['closed'],result['retries'],result['receipts']),(2,1,1,1))
+        self.assertTrue(result['result']['setupSucceeded'])
+    def test_repeated_setup_failure_stops_after_two_attempts(self):
+        result=self.exercise(100)
+        self.assertEqual((result['calls'],result['closed'],result['retries']),(2,1,1))
+        self.assertNotIn('result',result);self.assertIn('error',result)
+    def test_other_failure_never_gets_a_new_attempt(self):
+        result=self.exercise(1,channel=False)
+        self.assertEqual((result['calls'],result['closed'],result['retries']),(1,0,0))
+        self.assertNotIn('result',result);self.assertIn('error',result)
+    def test_healthy_setup_does_not_restart(self):
+        result=self.exercise(0)
+        self.assertEqual((result['calls'],result['closed'],result['retries']),(1,0,0))
+        self.assertTrue(result['result']['setupSucceeded'])
+
 class FixtureServerOwnership(unittest.TestCase):
     def test_dead_server_is_not_restarted_within_a_lane(self):
         server=mock.Mock();server.poll.return_value=-9

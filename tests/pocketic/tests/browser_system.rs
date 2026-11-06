@@ -336,7 +336,13 @@ fn signal(directory: &Path, name: &str, child: &mut Child) -> serde_json::Value 
             return serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         }
         if let Some(status) = child.try_wait().unwrap() {
-            panic!("browser exited before {name}: {status}; inspect browser-system.log");
+            // This file contains only a public II heading and clicked control labels,
+            // never SDK errors, request envelopes or delegation credentials.
+            let ii_failure = fs::read_to_string(directory.join("ii-failure.json"))
+                .unwrap_or_else(|_| "no II failure heading recorded".into());
+            panic!(
+                "browser exited before {name}: {status}; {ii_failure}; inspect browser-system.log"
+            );
         }
         assert!(
             Instant::now() < deadline,
@@ -1316,6 +1322,8 @@ fn browser_world(scenario: &str) {
         "dendrite-local.wasm",
         "http-certification-negative.json",
         "browser-system.log",
+        "ii-failure.json",
+        "authentication-retries.json",
         "review.json",
         "submitted.json",
         "voted.json",

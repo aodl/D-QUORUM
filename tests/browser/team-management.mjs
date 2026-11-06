@@ -7,7 +7,7 @@ const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
 const browser=await puppeteer.launch({executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']});
 const deadline=setTimeout(()=>{console.error('signed browser test exceeded 20 minutes');process.exit(1);},1200000);
-const denied=[];const events=[];const applicationPages=[];const preflightHolds=new WeakMap();
+const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
 await containBrowserNetwork(browser,denied);
 const scenario=process.env.SYSTEM_BROWSER_SCENARIO;
 if(!['scoped-signing','team-management','cancellation','wrong-provider'].includes(scenario))throw Error('explicit local browser scenario required');
@@ -105,7 +105,23 @@ async function wrongProvider(){
  await writeEvidence(`${directory}/wrong-provider.json`,JSON.stringify({failedClosed:true,configurationFault:'actual local non-II provider origin; no fabricated signer or session',governanceRequests:events.length}));
  await context.close();
 }
+// Only setup-channel failures can restart, once, in an empty browser context.
+// All identities are provisioned before manager authority or mutations exist.
 async function authenticate(index){
+ for(let attempt=0;attempt<2;attempt++){
+  const pageIndex=applicationPages.length;
+  try{return await authenticateAttempt(index);}
+  catch(error){
+   if(!error.iiChannelFailure||attempt===1)throw error;
+   await applicationPages[pageIndex].browserContext().close();
+   const retry={index,failedAttempt:attempt+1,heading:error.iiChannelFailure,freshContext:true};
+   authenticationRetries.push(retry);
+   console.error(JSON.stringify({phase:'II setup retry',...retry}));
+   await writeEvidence(`${directory}/authentication-retries.json`,JSON.stringify(authenticationRetries));
+  }
+ }
+}
+async function authenticateAttempt(index){
  const actions=[];
  const context=await browser.createBrowserContext();const page=await context.newPage();applicationPages.push(page);await guard(page);
  await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
@@ -119,7 +135,16 @@ async function authenticate(index){
   try {
   let labels;try{labels=await popup.$$eval('button',els=>els.map(b=>b.textContent.trim()));}catch(error){if(popup.isClosed())break;if(String(error.message).includes('Execution context was destroyed')){await pause(500);continue;}throw error;}
   // These are public control labels, never credential, delegation or recovery material.
-  if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels}));
+  const headings=await popup.$$eval('h1,h2',els=>els.map(el=>el.textContent.trim().slice(0,160)));
+  if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings}));
+  const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
+  if(failureHeading){
+   const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};
+   await writeEvidence(`${directory}/ii-failure.json`,JSON.stringify(failure));
+   const error=Error(`Internet Identity authentication failed: ${failureHeading}`);
+   if(['Unable to connect','Connection closed'].includes(failureHeading))error.iiChannelFailure=failureHeading;
+   throw error;
+  }
   if(labels.includes('Create identity')){actions.push('Create identity');const field=await popup.$('input:not([type=hidden])');if(field)await field.type(`Synthetic manager ${index}`);await click(popup,'Create identity');}
   else if(labels.includes('Create with passkey')){actions.push('Create with passkey');await click(popup,'Create with passkey');}
   else if(labels.includes('Create')){actions.push('Create');await click(popup,'Create');}
@@ -133,7 +158,7 @@ async function authenticate(index){
   const proof=await page.evaluate(()=>globalThis.scopeProbeResult);
   if(!proof)throw Error(await page.$eval('body',el=>el.innerText));
   if(denied.length)throw Error('nonlocal browser request attempted');
-  await writeEvidence(`${directory}/scope-probe.json`,JSON.stringify({...proof,uiActions:actions,deniedOrigins:denied,browser:await browser.version()}));
+  await writeEvidence(`${directory}/scope-probe.json`,JSON.stringify({...proof,uiActions:actions,authenticationRetries,deniedOrigins:denied,browser:await browser.version()}));
   return {scoped:true};
  }
  await page.waitForFunction(()=>document.body.innerText.includes('Dendrite principal:'),{timeout:45000});
