@@ -1,0 +1,23 @@
+[package]
+name = "dendrite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+candid.workspace = true
+dendrite-types = { version = "=0.1.0", path = "../../crates/dendrite-types" }
+hex.workspace = true
+ic-asset-certification.workspace = true
+ic-cdk.workspace = true
+ic-http-certification.workspace = true
+ic-clients = { version = "=0.1.0", path = "../../crates/ic-clients" }
+include_dir.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+pocket-ic.workspace = true

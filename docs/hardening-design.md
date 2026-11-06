@@ -79,3 +79,23 @@ Primary executable sources at the exact runtime pin:
 No mint records this proposal's fingerprint. Terminal execution therefore does not imply exact receipt attribution, and recovery does not search for a plausible unrelated mint. Existing tentative V2 receipt references remain historical, without stronger claims. Payout accounting uses actual Ledger funds independently. Open/Adopted or ambiguous creation with pruned/unavailable history remains unresolved; a previously verified Executed V2 phase preserves its proof without fabricating an old timestamp.
 
 Stable V3 adds the fifth job, payout cadence deadline, maintenance-eviction counter and optional execution/terminal observation timestamps. Financial attempt and refresh enums gain explicit cooldown/backoff/abandoned variants. `legacy_v2.rs` freezes actual RC2 types; V2 values are never manufactured using V3 types under an old label. Native tests cover the financial/proposal migration matrix and actual RC2 Wasm checkpoint tests exercise both upgrades. V1 remains the exact original envelope. A changed policy pin still defaults to ObserveOnly; this tranche does not rename or alter `selection-2` or the pinned Dendrite Standard. Public method names and the sole Governance-only update are unchanged; response enum/status extensions require updated client decoders.
+
+## Browser integration correction
+
+The authenticated boundary is now II app-origin parent → SDK-signed Governance-only
+child → direct browser-to-NNS operations. An II parent need not repeat the child's
+restriction. Ancestor exclusions cannot be bypassed. This corrects the rejected initial
+integration assumption without broadening the transaction signer. Bootstrap credentials
+are ephemeral, the II principal and parent signatures are preserved, and local sign-out
+invalidates pending publication. See dendrite/docs/architecture.md and security.md for
+custody and replica-verification limits. No D-QUORUM scoring, financial state, stable V3,
+public API, authority, cadence, or reward-policy change accompanies this correction.
+
+The local browser topology keeps the actual NNS canister IDs but does not force a
+mainnet subnet ID onto a different synthetic root key. That former harness option made
+the SDK's root-derived subnet/range lookup fail. Certificates, query signatures,
+delegation targets and local root trust remain verified. Public coordinator files are
+atomically renamed and contain only public principals, proposal IDs and bounded results.
+Governance filters returned ballots by caller-readable neurons, so the independent
+management oracle combines authorised readbacks instead of treating one response as the
+complete electorate. The original failed integration qualification remains historical.

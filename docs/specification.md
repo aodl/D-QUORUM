@@ -55,3 +55,16 @@ The stable header pins the application policy revision, evaluator commit and pro
 Queries cap each page at 100 rows. The current scan, outcomes, scaled scores, planned/applied rosters, overlaps, proposal progress, payout/transfer references and cycle/job health are public. Completed payout detail is limited to 32 plans; unresolved obligations are never pruned. Score rows label whether a complete scan supports them. Controller/wallet data for private support neurons is not published.
 
 The previous scoring hardening introduced policy `selection-2` and stable V2. This financial lifecycle tranche preserves that scoring policy and the Dendrite pin, and introduces stable V3 only for the necessary lifecycle fields/variants and independent maintenance job. Exact historical V1 and V2 wire envelopes have explicit lossless conversion. V2 Held attempts become safely retryable only when their persisted execution flag conclusively says no execution; reason strings never supply that proof. Historical ambiguous Held records remain ambiguous. See [the hardening contracts](hardening-design.md). RC1/RC2 qualification does not qualify V3.
+
+## Integrated source repository
+
+Dendrite is retained under `dendrite/` with its own Cargo workspace, lockfile, verifier/asset canister, frontend, Candid and release procedure. This source consolidation does not alter the D-QUORUM policy in this specification, replace its vendored evaluator, combine canisters or merge authorities. Shared system tests use isolated real protocol instances. Component qualification and complete integrated/browser qualification are separate claims.
+
+Dendrite browser authority follows II app-origin parent → SDK-signed Governance-only
+child → direct browser-to-NNS operations. The parent is private bootstrap authority,
+not a transaction identity. Effective restrictions are intersected across all signed
+links; an omitted ancestor target list may be narrowed, while an empty or excluding
+list cannot be bypassed. The principal remains the II app principal. Fresh replicated
+scalar known-neuron metadata accompanies public full configuration at both transaction
+preparation and final preflight. These browser fixes change neither this document's
+D-QUORUM policy nor either canister's production API or stable representation.

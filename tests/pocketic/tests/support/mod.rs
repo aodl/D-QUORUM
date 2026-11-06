@@ -20,6 +20,14 @@ pub fn wasm(name: &str) -> Vec<u8> {
     fs::read(root().join(format!("target/wasm32-unknown-unknown/release/{name}.wasm")))
         .expect("prepare Wasm with xtask before starting PocketIC")
 }
+pub fn dendrite_wasm() -> Vec<u8> {
+    let path = std::env::var("DENDRITE_TEST_WASM")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            root().join("dendrite/target/wasm32-unknown-unknown/release/dendrite.wasm")
+        });
+    fs::read(path).expect("prepare the independent Dendrite artifact before creating a fixture")
+}
 pub fn artifact(name: &str) -> Vec<u8> {
     let pins: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("protocol-pins.json")).unwrap())
@@ -499,5 +507,187 @@ pub fn fixture(at: u64, empty: Principal, app: Principal) -> quorum_mocks::Fixtu
         neurons,
         known,
         infos,
+    }
+}
+
+// PocketIC 15's default II enables dummy auth. Real-browser tests explicitly
+// disable it using the very same checksum-pinned production II modules.
+pub fn ii_frontend_id() -> Principal {
+    // ic_nns_constants::INTERNET_IDENTITY_FRONTEND_CANISTER_INDEX = 0x02100006.
+    Principal::from_slice(&[0, 0, 0, 0, 2, 16, 0, 6, 1, 1])
+}
+#[derive(CandidType, Deserialize, Debug)]
+struct IiDummyAuth {
+    prompt_for_index: bool,
+}
+#[derive(CandidType, Deserialize, Debug)]
+struct IiBackendConfig {
+    dummy_auth: Option<Option<IiDummyAuth>>,
+    related_origins: Option<Vec<String>>,
+    new_flow_origins: Option<Vec<String>>,
+}
+#[derive(CandidType)]
+struct IiFrontendConfig {
+    backend_canister_id: Principal,
+    backend_origin: String,
+    related_origins: Option<Vec<String>>,
+    fetch_root_key: Option<bool>,
+    dummy_auth: Option<Option<IiDummyAuth>>,
+    dev_csp: Option<bool>,
+}
+pub fn configure_real_ii(pic: &PocketIc) {
+    let backend = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
+    let frontend = ii_frontend_id();
+    let origins = vec![
+        "http://id.ai.localhost:4943".into(),
+        format!("http://{frontend}.localhost:4943"),
+    ];
+    let mut modules = serde_json::Map::new();
+    for (id, artifact_name) in [
+        (backend, "internet_identity_backend"),
+        (frontend, "internet_identity_frontend"),
+    ] {
+        let uncompressed = artifact(artifact_name);
+        let bytes =
+            fs::read(root().join(format!(".cache/protocol/{artifact_name}.wasm.gz"))).unwrap();
+        let controller = pic.get_controllers(id)[0];
+        let status = pic.canister_status(id, Some(controller)).unwrap();
+        assert_eq!(
+            status.module_hash.as_ref().unwrap(),
+            &Sha256::digest(&bytes).to_vec(),
+            "II must match the reviewed PocketIC production module pin"
+        );
+        modules.insert(artifact_name.into(),serde_json::json!({"canister":id.to_text(),"installed_module_sha256":hex::encode(Sha256::digest(&bytes)),"wasm_sha256":hex::encode(Sha256::digest(&uncompressed))}));
+        if id == backend {
+            pic.upgrade_canister(
+                id,
+                bytes,
+                encode_one(Some(IiBackendConfig {
+                    dummy_auth: Some(None),
+                    related_origins: Some(origins.clone()),
+                    new_flow_origins: Some(origins.clone()),
+                }))
+                .unwrap(),
+                Some(controller),
+            )
+            .unwrap();
+        } else {
+            // Fresh isolated frontend has no user identities or financial state.
+            pic.reinstall_canister(
+                id,
+                bytes,
+                encode_one(IiFrontendConfig {
+                    backend_canister_id: backend,
+                    backend_origin: format!("http://{backend}.localhost:4943"),
+                    related_origins: Some(origins.clone()),
+                    fetch_root_key: Some(true),
+                    dummy_auth: Some(None),
+                    dev_csp: Some(true),
+                })
+                .unwrap(),
+                Some(controller),
+            )
+            .unwrap();
+        }
+    }
+    let config: IiBackendConfig = query_empty(pic, backend, "config");
+    assert!(
+        matches!(config.dummy_auth, Some(None)),
+        "dummy authentication must be disabled, not counted as real II"
+    );
+    modules.insert("configuration".into(),serde_json::json!({"dummy_auth":false,"captcha":"preinstalled fixture disabled; WebAuthn proof remains required","origins":origins,"source":"PocketIC server 8258578e6212d445aeeafb71c1160fa4ea356d60; II release-2026-06-20 initialize explicitly applies Some(None)"}));
+    fs::write(
+        root().join("dist/evidence/real-ii-modules.json"),
+        serde_json::to_vec_pretty(&modules).unwrap(),
+    )
+    .unwrap();
+}
+
+// Shared authoritative settlement oracles, also used by the signed browser world.
+pub fn public_neuron(pic: &pocket_ic::PocketIc, id: u64) -> g::Neuron {
+    let mut r: g::ListNeuronsResponse = update(
+        pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "list_neurons",
+        g::ListNeurons {
+            neuron_ids: vec![id],
+            include_neurons_readable_by_caller: false,
+            include_empty_neurons_readable_by_caller: Some(false),
+            include_public_neurons_in_full_neurons: Some(true),
+            page_number: Some(0),
+            page_size: Some(50),
+            neuron_subaccounts: None,
+        },
+    );
+    g::validate_batch(&[id], &r).unwrap();
+    let n = r.full_neurons.pop().expect("public neuron unavailable");
+    assert_eq!(n.visibility, Some(2));
+    n
+}
+
+pub fn real_plans(pic: &pocket_ic::PocketIc, app: Principal) -> Vec<d_quorum::PayoutSummary> {
+    query2(pic, app, "payout_page", (None::<u64>, 100u16))
+}
+pub fn real_transfers(
+    pic: &pocket_ic::PocketIc,
+    app: Principal,
+    id: u64,
+) -> Vec<quorum_accounting::Transfer> {
+    query2(pic, app, "transfer_page", (id, 0u32, 100u16))
+}
+
+pub fn real_set_support(pic: &pocket_ic::PocketIc, ids: &[u64]) {
+    let r: g::ManageResponse = update(
+        pic,
+        GOVERNANCE,
+        user(2),
+        "manage_neuron",
+        g::request(
+            200,
+            g::Command::SetFollowing(g::SetFollowing {
+                topic_following: Some(vec![g::Following {
+                    topic: Some(4),
+                    followees: Some(ids.iter().map(|id| g::NeuronId { id: *id }).collect()),
+                }]),
+            }),
+        ),
+    );
+    assert!(matches!(
+        r.command,
+        Some(g::ResponseCommand::SetFollowing(_))
+    ));
+}
+
+pub fn real_confirmed_evidence(
+    pic: &pocket_ic::PocketIc,
+    app: Principal,
+    ts: &[quorum_accounting::Transfer],
+) {
+    for t in ts {
+        let quorum_accounting::TransferStatus::Confirmed { block } = t.status else {
+            panic!("unconfirmed {t:?}")
+        };
+        let h: l::History = query(
+            pic,
+            LEDGER,
+            "query_blocks",
+            l::BlocksArgs {
+                start: block,
+                length: 1,
+            },
+        );
+        // Small lifecycle fixtures retain their settlement blocks in the main Ledger.
+        assert_eq!(h.first_block_index, block);
+        let a = t.attempt.as_ref().unwrap();
+        assert!(l::matches(
+            &h.blocks[0],
+            app,
+            &t.destination.subaccount,
+            t.amount,
+            a.fee,
+            &a.memo,
+            a.created_at_time
+        ));
     }
 }

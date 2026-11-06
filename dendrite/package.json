@@ -1,0 +1,29 @@
+{
+  "name": "dendrite",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.12.1",
+  "type": "module",
+  "scripts": {
+    "build": "node canisters/dendrite/web/build-frontend.mjs",
+    "test": "node --test canisters/dendrite/web/test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=canisters/dendrite/web/src/** --test-coverage-exclude=src/declarations/** --test-coverage-lines=85 --test-coverage-functions=85 --test-coverage-branches=85 canisters/dendrite/web/test/*.test.js"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "7.1.0",
+    "@icp-sdk/core": "5.4.0"
+  },
+  "devDependencies": {
+    "@cyclonedx/cyclonedx-npm": "6.0.1",
+    "esbuild": "0.28.1",
+    "puppeteer-core": "25.16.0",
+    "tar": "7.5.21"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.12"
+  },
+  "engines": {
+    "node": "24.15.0",
+    "npm": "11.12.1"
+  }
+}

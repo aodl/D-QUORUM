@@ -1,0 +1,15 @@
+ClaimOrRefresh enabled
+Configure enabled
+Disburse unavailable-target-not-for-profit-false
+DisburseMaturity high-risk
+DisburseToNeuron unavailable-target-not-for-profit-false
+Follow enabled
+MakeProposal unavailable-nested-proposal
+Merge high-risk
+MergeMaturity unavailable-removed-upstream
+RefreshVotingPower enabled
+RegisterVote enabled
+SetFollowing high-risk
+Spawn high-risk
+Split high-risk
+StakeMaturity enabled

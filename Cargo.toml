@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["dendrite"]
 members = ["canisters/d_quorum", "crates/policy", "crates/accounting", "crates/ic_clients", "vendor/dendrite/crates/dendrite-types", "tests/mocks", "tests/pocketic", "tools/xtask"]
 [workspace.package]
 version = "0.1.0"

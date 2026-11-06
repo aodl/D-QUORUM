@@ -1,0 +1,153 @@
+{
+  "scope": "Integrated undeployed candidate. Implemented is a selection contract, not proof of execution; exact source-stable logs and artifact validators are mandatory. Review-bundle checksums are verified separately at handover.",
+  "qualified": false,
+  "requirements": [
+    {
+      "id": "history-workspaces-evaluator",
+      "suite": "integration_inventory",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [],
+      "validators": [
+        "imported evaluator exact consistency",
+        "historical authentication and metadata negative controls"
+      ]
+    },
+    {
+      "id": "dquorum-preserved-full-qualification",
+      "suite": "acceptance",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "tests::exact_19000_and_ineligible_denominator"
+      ],
+      "validators": [
+        "two clean canonical builds"
+      ]
+    },
+    {
+      "id": "dendrite-native-frontend-fixture-coverage-security",
+      "suite": "component_dendrite",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [],
+      "validators": [
+        "Dendrite preserved gate:security-scan",
+        "Dendrite preserved gate:sbom"
+      ]
+    },
+    {
+      "id": "dendrite-canonical-two-clean-builds",
+      "suite": "component_dendrite_canonical",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "production mapping, cache exclusion, manifest, and release sums are strict"
+      ],
+      "validators": [
+        "Dendrite two forced-clean canonical builds and export checks",
+        "canonical Dendrite complete production exports",
+        "actual Dendrite Candid structural compatibility",
+        "current candidate deployment binding verified locally without network writes"
+      ]
+    },
+    {
+      "id": "shared-real-governance-ledger-compliance-selection-payments",
+      "suite": "system_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "connected_dendrite_and_automation_use_one_real_governance_and_ledger"
+      ],
+      "validators": []
+    },
+    {
+      "id": "real-voting-reward-accrual-missed-window-upgrade-later-harvest-new-roster",
+      "suite": "system_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "connected_real_maturity_rewards_and_later_harvest"
+      ],
+      "validators": []
+    },
+    {
+      "id": "real-ii-scoped-child-replica-positive-and-negative-controls",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_scoped_child_is_enforced_by_replica"
+      ],
+      "validators": []
+    },
+    {
+      "id": "actual-ii-compiled-browser-signed-management-known-metadata-majority",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_compiled_frontend_known_managers_and_signed_governance"
+      ],
+      "validators": []
+    },
+    {
+      "id": "real-ii-security-cancellation-provider-origin-expiry-authority",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_closed_popup_does_not_publish_session",
+        "real_browser_wrong_provider_never_publishes_a_transaction_session",
+        "real_ii_scoped_child_is_enforced_by_replica",
+        "real_ii_compiled_frontend_known_managers_and_signed_governance"
+      ],
+      "validators": []
+    },
+    {
+      "id": "one-browser-to-economic-golden-world-two-payouts",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_compiled_frontend_known_managers_and_signed_governance"
+      ],
+      "validators": []
+    },
+    {
+      "id": "dendrite-authenticated-upgrade-assets-and-interface-mismatch",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_compiled_frontend_known_managers_and_signed_governance"
+      ],
+      "validators": []
+    },
+    {
+      "id": "anonymous-responsive-certified-local-and-corrupt-response-negative",
+      "suite": "system_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_local_anonymous_browser_preserves_responsive_and_certificate_checks"
+      ],
+      "validators": []
+    },
+    {
+      "id": "canonical-pair-artifacts-and-production-exports",
+      "suite": "system_protocol_canonical",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "connected_dendrite_and_automation_use_one_real_governance_and_ledger",
+        "connected_real_maturity_rewards_and_later_harvest"
+      ],
+      "validators": [
+        "canonical actual exports and embedded Candid",
+        "actual canonical Dendrite runtime Candid extraction",
+        "canonical pair and local-browser artifact source binding"
+      ]
+    }
+  ]
+}

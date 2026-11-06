@@ -1,0 +1,31 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2026-12-04
+reason = "Unmaintained compile-time-only paste macro is transitive through pinned Candid; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0012"
+ignoreUntil = 2026-12-04
+reason = "Unmaintained backoff is reachable only through dev/test PocketIC and excluded from the production tree; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+ignoreUntil = 2026-12-04
+reason = "Unmaintained instant is reachable only through dev/test PocketIC and excluded from the production tree; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0127"
+ignoreUntil = 2026-12-04
+reason = "serde_cbor is transitive through official HTTP certification libraries and dev/test PocketIC; see docs/security.md."
+
+# Narrow, expiring applicability review. check-tooling-audit.py must pass first.
+# Raw full-development npm/OSV results remain retained, including these findings.
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2026-12-04
+reason = "glob 10.5.0 is confined to optional libxmljs2/node-gyp build tooling. Installation scripts are disabled; JSON SBOM generation passes a verified module-load rejection control. tools/scripts/check-tooling-audit.py enforces exact paths/versions; see docs/security.md."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-04
+reason = "minimatch 9.0.9 is confined to optional libxmljs2/node-gyp build tooling. Installation scripts are disabled; JSON SBOM generation passes a verified module-load rejection control. tools/scripts/check-tooling-audit.py enforces exact paths/versions; see docs/security.md."

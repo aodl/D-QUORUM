@@ -7,27 +7,6 @@ use support::*;
 
 // The legacy get_full_neuron endpoint is authority-gated even for public neurons.
 // Use the same supported public list endpoint as the production client.
-fn public_neuron(pic: &pocket_ic::PocketIc, id: u64) -> g::Neuron {
-    let mut r: g::ListNeuronsResponse = update(
-        pic,
-        GOVERNANCE,
-        Principal::anonymous(),
-        "list_neurons",
-        g::ListNeurons {
-            neuron_ids: vec![id],
-            include_neurons_readable_by_caller: false,
-            include_empty_neurons_readable_by_caller: Some(false),
-            include_public_neurons_in_full_neurons: Some(true),
-            page_number: Some(0),
-            page_size: Some(50),
-            neuron_subaccounts: None,
-        },
-    );
-    g::validate_batch(&[id], &r).unwrap();
-    let n = r.full_neurons.pop().expect("public neuron unavailable");
-    assert_eq!(n.visibility, Some(2));
-    n
-}
 
 #[test]
 #[ignore = "xtask protocol prepares pinned real Wasm first"]
@@ -986,16 +965,7 @@ fn wait_real_reward_roster(pic: &pocket_ic::PocketIc, app: Principal) {
         query_empty::<d_quorum::Health>(pic, app, "health")
     );
 }
-fn real_plans(pic: &pocket_ic::PocketIc, app: Principal) -> Vec<d_quorum::PayoutSummary> {
-    query2(pic, app, "payout_page", (None::<u64>, 100u16))
-}
-fn real_transfers(
-    pic: &pocket_ic::PocketIc,
-    app: Principal,
-    id: u64,
-) -> Vec<quorum_accounting::Transfer> {
-    query2(pic, app, "transfer_page", (id, 0u32, 100u16))
-}
+
 fn real_vote(pic: &pocket_ic::PocketIc, manager: u64, controller: Principal, id: u64) {
     let _: RawResponse = update(
         pic,
@@ -1031,59 +1001,7 @@ fn real_fund(pic: &pocket_ic::PocketIc, to: Principal, amount: u64) {
     );
     r.unwrap();
 }
-fn real_set_support(pic: &pocket_ic::PocketIc, ids: &[u64]) {
-    let r: g::ManageResponse = update(
-        pic,
-        GOVERNANCE,
-        user(2),
-        "manage_neuron",
-        g::request(
-            200,
-            g::Command::SetFollowing(g::SetFollowing {
-                topic_following: Some(vec![g::Following {
-                    topic: Some(4),
-                    followees: Some(ids.iter().map(|id| g::NeuronId { id: *id }).collect()),
-                }]),
-            }),
-        ),
-    );
-    assert!(matches!(
-        r.command,
-        Some(g::ResponseCommand::SetFollowing(_))
-    ));
-}
-fn real_confirmed_evidence(
-    pic: &pocket_ic::PocketIc,
-    app: Principal,
-    ts: &[quorum_accounting::Transfer],
-) {
-    for t in ts {
-        let quorum_accounting::TransferStatus::Confirmed { block } = t.status else {
-            panic!("unconfirmed {t:?}")
-        };
-        let h: l::History = query(
-            pic,
-            LEDGER,
-            "query_blocks",
-            l::BlocksArgs {
-                start: block,
-                length: 1,
-            },
-        );
-        // Small lifecycle fixtures retain their settlement blocks in the main Ledger.
-        assert_eq!(h.first_block_index, block);
-        let a = t.attempt.as_ref().unwrap();
-        assert!(l::matches(
-            &h.blocks[0],
-            app,
-            &t.destination.subaccount,
-            t.amount,
-            a.fee,
-            &a.memo,
-            a.created_at_time
-        ));
-    }
-}
+
 #[test]
 #[ignore = "xtask protocol prepares pinned real artifacts and production Wasm"]
 fn financially_settled_real_payments_allow_later_roster_despite_unrefreshable_stake() {
@@ -1368,6 +1286,14 @@ fn lost_real_maturity_creation_reply_recovers_exact_history_and_missed_window() 
     missed_real_maturity_window(MaturityOutage::LostCreationReply);
 }
 fn missed_real_maturity_window(outage: MaturityOutage) {
+    missed_real_maturity_window_with_verifier(outage, false);
+}
+#[test]
+#[ignore = "xtask system_protocol prepares both applications and pinned protocols"]
+fn connected_real_maturity_rewards_and_later_harvest() {
+    missed_real_maturity_window_with_verifier(MaturityOutage::Upgrade, true);
+}
+fn missed_real_maturity_window_with_verifier(outage: MaturityOutage, connected: bool) {
     let upgrade = matches!(
         outage,
         MaturityOutage::Upgrade | MaturityOutage::CycleReserve
@@ -1384,6 +1310,22 @@ fn missed_real_maturity_window(outage: MaturityOutage) {
             200_000_000_000_000
         },
     );
+    if connected {
+        let verifier = pic.create_canister();
+        pic.add_cycles(verifier, 100_000_000_000_000);
+        pic.install_canister(verifier, dendrite_wasm(), encode_one(()).unwrap(), None);
+        let report: Result<dendrite_types::ComplianceReport, candid::Reserved> = update(
+            &pic,
+            verifier,
+            Principal::anonymous(),
+            "check_neuron",
+            106u64,
+        );
+        assert_eq!(
+            report.unwrap().overall_status,
+            dendrite_types::ComplianceStatus::Compliant
+        );
+    }
     let start = now(&pic);
     let initial_cycles = pic.cycle_balance(app);
     let mut original = None;
@@ -1723,6 +1665,47 @@ fn missed_real_maturity_window(outage: MaturityOutage) {
             .count(),
         1
     );
+    if connected {
+        let plans = real_plans(&pic, app);
+        assert!(!plans.is_empty());
+        assert!(plans[0].complete);
+        let paid = real_transfers(&pic, app, plans[0].id);
+        assert_eq!(paid.len(), 2);
+        assert_eq!(paid[0].amount, paid[1].amount);
+        real_confirmed_evidence(&pic, app, &paid);
+        // Execute the later operation funded by actual voting rewards, then let
+        // ordinary weekly selection and daily payout admit a different roster.
+        real_set_support(&pic, &[112, 118]);
+        real_vote(&pic, 12, user(12), next);
+        drive(&pic, 60);
+        let executed: Option<g::ProposalInfo> = query(&pic, GOVERNANCE, "get_proposal_info", next);
+        assert_eq!(executed.unwrap().status, 4);
+        drive(&pic, 9 * 86400);
+        let mut later = None;
+        for _ in 0..1200 {
+            drive(&pic, 10);
+            later = real_plans(&pic, app)
+                .into_iter()
+                .find(|p| p.id > plans[0].id && p.complete);
+            if later.is_some() {
+                break;
+            }
+        }
+        let later =
+            later.expect("genuinely accrued maturity must fund a later complete distribution");
+        let later_paid = real_transfers(&pic, app, later.id);
+        assert_eq!(
+            later_paid
+                .iter()
+                .map(|t| t.destination.neuron_id)
+                .collect::<Vec<_>>(),
+            vec![112, 118]
+        );
+        assert_eq!(later_paid[0].amount, later_paid[1].amount);
+        real_confirmed_evidence(&pic, app, &later_paid);
+        assert_eq!(real_transfers(&pic, app, plans[0].id), paid);
+        std::fs::write(root().join("dist/evidence/connected-economic-lifecycle.json"), serde_json::to_string_pretty(&serde_json::json!({"classification":"real protocol, no browser authentication claim","original_proposal":id,"later_distinct_proposal":next,"actual_minted_e8s":credited,"receipts_attributed":false,"recipients":paid.iter().map(|t|t.destination.neuron_id).collect::<Vec<_>>(),"transfer_confirmations":paid.iter().map(|t|format!("{:?}",t.status)).collect::<Vec<_>>(),"seeded_initial_maturity":true,"later_maturity":"actual NNS voting rewards, executed and paid to new roster","later_payout_id":later.id,"later_recipients":[112,118]})).unwrap()).unwrap();
+    }
     let health: d_quorum::Health = query_empty(&pic, app, "health");
     let status = pic.canister_status(app, None).unwrap();
     let added_cycles = if matches!(outage, MaturityOutage::CycleReserve) {
@@ -1862,4 +1845,101 @@ fn repeated_real_ledger_refusals_recover_after_durable_cooldown() {
     )
     .unwrap();
     println!("{metrics}");
+}
+
+#[test]
+#[ignore = "xtask system_protocol builds both production-feature applications"]
+fn connected_dendrite_and_automation_use_one_real_governance_and_ledger() {
+    let wall = std::time::Instant::now();
+    let (pic, app, _) = lifecycle_real(0, 2_000_000, 200_000_000_000_000);
+    let manager_batch: g::ListNeuronsResponse = update(
+        &pic,
+        GOVERNANCE,
+        Principal::anonymous(),
+        "list_neurons",
+        g::ListNeurons {
+            neuron_ids: (2010..2015).collect(),
+            include_neurons_readable_by_caller: false,
+            include_empty_neurons_readable_by_caller: Some(false),
+            include_public_neurons_in_full_neurons: Some(true),
+            page_number: Some(0),
+            page_size: Some(50),
+            neuron_subaccounts: None,
+        },
+    );
+    assert_eq!(manager_batch.full_neurons.len(), 5);
+    let mut metadata = Vec::new();
+    for id in 2010..2015 {
+        let scalar: Result<g::NeuronInfo, g::GovernanceError> = update(
+            &pic,
+            GOVERNANCE,
+            Principal::anonymous(),
+            "get_neuron_info",
+            id,
+        );
+        let info = scalar.unwrap();
+        assert!(info.known_neuron_data.is_some());
+        metadata.push(serde_json::json!({"id":id,"full_list_has_metadata":manager_batch.full_neurons.iter().find(|n|n.id.as_ref().unwrap().id==id).unwrap().known_neuron_data.is_some(),"scalar_has_metadata":true}));
+    }
+    std::fs::write(
+        root().join("dist/evidence/real-known-manager-metadata.json"),
+        serde_json::to_string_pretty(&metadata).unwrap(),
+    )
+    .unwrap();
+    let verifier = pic.create_canister();
+    pic.add_cycles(verifier, 100_000_000_000_000);
+    let verifier_wasm = dendrite_wasm();
+    pic.install_canister(
+        verifier,
+        verifier_wasm.clone(),
+        encode_one(()).unwrap(),
+        None,
+    );
+    // Decode the error opaquely: an error can never be interpreted as compliance.
+    let report: Result<dendrite_types::ComplianceReport, candid::Reserved> = update(
+        &pic,
+        verifier,
+        Principal::anonymous(),
+        "check_neuron",
+        106u64,
+    );
+    let report = report.expect("replicated verifier failed against actual Governance");
+    assert_eq!(
+        report.overall_status,
+        dendrite_types::ComplianceStatus::Compliant
+    );
+    assert_eq!(report.neuron_id, 106);
+    wait_real_reward_roster(&pic, app);
+    let candidates: Vec<d_quorum::state::CandidateResult> =
+        query2(&pic, app, "candidate_page", (None::<u64>, 100u16));
+    let candidate = candidates.iter().find(|c| c.id == 106).unwrap();
+    assert_eq!(candidate.status, report.overall_status);
+    let admitted = candidate.admitted.as_ref().unwrap();
+    let mut managers: Vec<_> = report.managers.iter().map(|m| m.neuron_id).collect();
+    managers.sort_unstable();
+    assert_eq!(
+        admitted.managers.iter().copied().collect::<Vec<_>>(),
+        managers
+    );
+    for _ in 0..800 {
+        drive(&pic, 10);
+        if real_plans(&pic, app).first().is_some_and(|p| p.complete) {
+            break;
+        }
+    }
+    let plans = real_plans(&pic, app);
+    assert!(plans[0].complete);
+    let transfers = real_transfers(&pic, app, plans[0].id);
+    assert_eq!(transfers.len(), 2);
+    assert_eq!(transfers[0].amount, transfers[1].amount);
+    real_confirmed_evidence(&pic, app, &transfers);
+    let target = public_neuron(&pic, TARGET);
+    assert!(target.followees.iter().any(|(topic, ids)| *topic == 4
+        && ids.followees.iter().map(|n| n.id).collect::<Vec<_>>() == vec![100, 106]));
+    let evidence = serde_json::json!({"classification":"real pinned protocol; no browser or II claim","same_instance":true,"dquorum_module_sha256":hex::encode(sha2::Sha256::digest(wasm("d_quorum"))),"dendrite_module_sha256":hex::encode(sha2::Sha256::digest(verifier_wasm)),"recipients":transfers.iter().map(|t| t.destination.neuron_id).collect::<Vec<_>>(),"wall_seconds":wall.elapsed().as_secs_f64()});
+    std::fs::write(
+        root().join("dist/evidence/connected-applications.json"),
+        serde_json::to_string_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
 }

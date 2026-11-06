@@ -17,7 +17,7 @@ Use `cargo run --locked -p xtask -- COMMAND`. Unit discovery uses Cargo workspac
 | reproducible | Two no-cache digest-pinned Docker builds, exact filenames/bytes and source/artifact manifests |
 | acceptance | All gates and mandatory behavioural matrix; incomplete requirements fail |
 
-Wasm is compiled before fixtures start. The runner owns a checksum-pinned local PocketIC server with an explicit twelve-hour wall-clock hard lifetime and stops it on exit; this avoids the SDK implicit server's ten-minute hard exit during long suites. It does not alter virtual production time, job timers or freshness bounds. Direct ignored-test invocations without the runner use the SDK default lifetime. `protocol-pins.json` verifies the PocketIC executable and real protocol gzip/raw hashes. Test package imports do not add their dependencies or exports to production Wasm. Mock scripts do not establish NNS permissions. Real tests explicitly install the separately pinned Governance and Ledger; PocketIC's CMC and Registry provide the modulation environment. Real transfers compare exact account IDs, amounts and fees. Real archive creation/readback is exercised. Cached neuron stake is tested separately from a Ledger stake-account top-up.
+Wasm is compiled before fixtures start. The runner owns a checksum-pinned local PocketIC server with an explicit twelve-hour wall-clock hard lifetime and stops it on exit; this avoids the SDK implicit server's ten-minute hard exit during long suites. It does not alter virtual production time, job timers or freshness bounds. The combined runner closes its owned server only after a top-level lane finishes, then starts a fresh server for a later independent lane. Each generation retains a distinct log and port file. A server exit within a lane fails closed with its exit status; there is no mid-case restart or joining of worlds. Direct ignored-test invocations without the runner use the SDK default lifetime. `protocol-pins.json` verifies the PocketIC executable and real protocol gzip/raw hashes. Test package imports do not add their dependencies or exports to production Wasm. Mock scripts do not establish NNS permissions. Real tests explicitly install the separately pinned Governance and Ledger; PocketIC's CMC and Registry provide the modulation environment. Real transfers compare exact account IDs, amounts and fees. Real archive creation/readback is exercised. Cached neuron stake is tested separately from a Ledger stake-account top-up.
 
 The production module has no debug drivers. Tests advance virtual time and observe bounded public queries. A CDK self-only timer executor is an explicit infrastructure export. The export validator rejects all unreviewed application exports and checks embedded Candid against the committed interface. `didc 0.6.2` checks public types and dependency subtyping against pinned upstream DIDs; response variants are retained or rejected safely, not silently interpreted.
 
@@ -49,3 +49,70 @@ Lost real proposal-reply injection captures the actual production stable Intent 
 The cycle-reserve scenario starts with an explicit local cycle balance, with platform freezing disabled to isolate the application's reserve gate. After ordinary setup, actual local compute-allocation charges consume the margin before manager approval. Allocation then returns to zero. The Live canister remains below reserve for the complete progress window, including an upgrade. Adding test cycles permits exact outcome recovery and a later distinct harvesting proposal. This adds no production drain/debug endpoint or synthetic cycle-balance mutation.
 
 The focused typed-barrier regressions distinguish native response validation, actual adapter calls through recording fixtures, production state-machine fault injection, and pinned real Governance/Ledger execution. The real error-14 fixture seeds the target's actual staking balance below the minimum, verifies the typed Governance response, and retains strict ordinary refresh failure. It then misses a complete executed maturity window, upgrades, and recovers through production timers without assigning a receipt. The recording fixture separately exercises wrong IDs, other codes, absent/unexpected/malformed replies and rejected calls; none authorizes another proposal. Canonical repeats include both fixture tests and the real error-14 lifecycle. The same state-machine test must fail against the historical RC3 production artifact before the correction; that expected negative-control failure is evidence, not a passing qualification gate.
+
+## Integrated application testing
+
+The root `xtask` remains the orchestrator. `integration_inventory` discovers both independent Cargo workspaces and frontend test targets and verifies evaluator source/fixture equality. Discovery is not execution. `component_dendrite` invokes Dendrite's original runner and frontend coverage; missing tools, failed gates and zero behavioural matches fail. `component_dendrite_canonical` invokes the original two-clean-Docker-build procedure and retains both compared output sets. The original anonymous browser assertions now run in an explicitly local mode against the shared pinned fixture, including all five viewports, keyboard/filter/copy checks, signature-verifying queries and certified controller reads. Its legacy public-network mode is not run in the local-only lane.
+
+`system_protocol` installs Dendrite and production-feature D-QUORUM in one existing real Governance/Ledger PocketIC fixture. Independent Governance following, replicated verifier reports and exact Ledger records are the oracles. A second case adds Dendrite to the existing missed-window/upgrade/reward-accrual lifecycle, then executes another actual maturity operation and pays a changed roster. Seeded initial maturity and later genuinely accrued voting rewards are identified separately. These backend journeys are not browser-to-economic golden-journey proof.
+
+`system_browser` first probes actual II HTTP/certificate delivery with the pinned Chromium/WebAuthn stack, then requires the compiled local application to obtain real II sessions and send signed management operations to the same real Governance fixture. Its local frontend is built in an isolated tracked-source copy before network creation; production assets are untouched. Only public principals, request paths and bounded control labels are retained. No session, delegation, passkey credential material or private key is exported. Browser time advances with host-aligned real-time progress during the bounded interactive phase. After real browser majority and maturity approval, the same coordinator closes the browser and switches that same instance to long deterministic advancement for actual maturity minting and two payout cycles. No certificate or delegation validity window is enlarged.
+
+Browser setup records II's bounded public error heading in `ii-failure.json` and surfaces it in the coordinator failure. A positive fixture may restart an II **setup channel** once, only for the pinned `Unable to connect` or `Connection closed` states, by destroying that browser context and creating a fresh one. This happens before the coordinator provisions manager authority. It never retries manager mutations, a scope/signature check, an origin refusal, cancellation or any unknown failure. Both failed setup and restart evidence remain in `authentication-retries.json`; a second failure fails the gate. Focused runner tests execute the actual driver retry function with scripted setup outcomes to check context disposal, the two-attempt bound and immediate refusal of other failures. These are harness unit tests, not mocked II acceptance proof. All six original real-browser tests remain mandatory, including actual passkey login and the complete allowed/denied replica scope proof. The original hosted log omitted II's error heading; its exact subcause remains unproven until a hosted rerun records that heading.
+
+`integrated_acceptance` continues independent lanes after a failure and exits nonzero unless the entire documented integration matrix is implemented and passes. The existing `acceptance` retains its original D-QUORUM scope and source-stability checks; it cannot certify the full integrated product. Root workflows are read-only, retain all existing capacity and canonical repeats, and make canonical qualification depend on the added component, shared-protocol and signed-browser jobs. Hosted runs and branch-protection enforcement are operator steps.
+
+The `Complete integrated requirement selection` CI validator prevents component success from hiding unfinished cross-application requirements; it is not a behavioural test. Canonical publication evidence remains blocked while any mandatory integrated matrix entry is incomplete. The repository owner must require the existing behavioural, production/capacity, security, coverage, canonical, Dendrite component, shared-protocol, signed-browser and integrated-readiness checks after observing actual hosted runs. No branch protection setting has been changed.
+
+II uses the production backend/frontend artifacts from `release-2026-06-20`, exactly matching PocketIC's pinned source references, with separately verified compressed and uncompressed digests. `id.ai.localhost` maps to the **frontend** canister `uqzsh-gqaaa-aaaaq-qaada-cai`; the backend is `rdmx6-jaaaa-aaaaa-aaadq-cai`. The default built-in configuration enables dummy authentication. The real lane explicitly clears it in both modules before any browser identity exists and queries the backend configuration to prove it is disabled. Captcha remains disabled in this isolated fixture, while actual WebAuthn credential proof remains required. The test never accepts dummy index prompts.
+
+`system_protocol_canonical` repeats the two connected backend journeys against the exact canonical pair after both component builds. `dist/integration-manifest.json` binds that pair without replacing either component's individual manifests. Dendrite's original Wasm format exposes `get_candid_pointer` rather than a public Candid custom section. The canonical gate extracts its interface from the actual Wasm with pinned `candid-extractor 0.1.6`, checks structural equality using `didc`, and independently checks the complete production export set. It does not claim a missing custom section exists.
+
+The positive browser test uses four independent real II principals. Neuron 11's signed
+proposal supplies its automatic Yes; explicit browser votes from 12 and 13 reach the
+original five-manager majority without a coordinator-supplied deciding vote. Neuron
+21 initially lacks authority and later acquires it through the actual management
+change. The final voter is a hotkey, separately tested against controller revocation.
+An exact proposal/ballot/following readback and authoritative Ledger blocks are the
+oracles. Scripted lost HTTP replies, held preflight requests and a deliberately
+incompatible verifier are labelled faults; they do not substitute for authentication.
+The same world selects each recipient on topics 4 and 7, yet requires exactly two
+financial obligations per pot. Both Governance rosters and hand-calculated scores are
+checked independently, followed by a changed roster and a second payout.
+
+`real_ii_scoped_child_is_enforced_by_replica` uses actual II and an SDK-signed child,
+then compares a working non-Governance control destination with the same request under
+the scoped signer. An unsuccessful replica HTTP response and delegation-target diagnostics establish replica scope
+enforcement. Expired parent/child, wrong key, cyclic chain and excluding ancestor
+probes retain only public outcomes. The raw bootstrap also fails the production actor
+boundary. The genuine II popup cancellation uses the SDK's actual timeout.
+
+The anonymous lane upgrades a healthy local verifier with a test-only response-body
+mutation after certification. The direct canister returns 200 while the real gateway
+rejects it with a verification error; restoring the original module restores 200.
+This negative control and the isolated historical auth/metadata helper failures are
+counted separately from passing behavioural executions. Probes never enter canonical
+production assets.
+
+The integrated verdict requires exact named executions, hashed log files, all mandatory
+component gates, a clean unchanged commit/tree and the positive browser case. Sixteen
+small runner regressions cover all-pass, failure, absent logs, changed source, missing
+positive browser, matrix-only edits, an acyclic CI dependency graph, refusal to restart
+a dead server within a lane, idempotent cleanup of only owned handles, inventory job
+prerequisites, rejection of dependency/module failures as historical negative controls,
+and bounded browser setup recovery without retrying other failures. Hosted readiness
+aggregates all existing lane receipts after canonical jobs; workflow source is not a
+hosted run. The owner must require every root job, including Signed browser II required,
+Shared application real protocol, Dendrite preserved qualification, Canonical
+reproducibility and Complete integrated requirement selection.
+
+The shared-protocol job checks out full history (`fetch-depth: 0`) because inventory
+reads the historical authentication and metadata helpers from commit `52b546f`.
+It installs pinned Node 24.15.0/npm 11.12.1 and locked frontend dependencies before
+inventory. Active jobs pin setup-node v7.1.0, whose action runtime is Node 24, with
+automatic package-manager caching disabled; application Node/npm pins are unchanged.
+Each historical control first runs its current named test successfully;
+only then is the old helper substituted. The mutated run must fail that named test.
+Missing SDK packages, module-load errors and unrelated failed tests cannot count as
+evidence that a historical defect was detected. Both positive and negative logs and
+their hashes are retained as validator evidence, outside behavioural execution counts.
