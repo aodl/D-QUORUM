@@ -133,9 +133,9 @@ async function authenticateAttempt(index){
  for(let i=0;i<120;i++){
   if(popup.isClosed())break;
   try {
-  let labels;try{labels=await popup.$$eval('button',els=>els.map(b=>b.textContent.trim()));}catch(error){if(popup.isClosed())break;if(String(error.message).includes('Execution context was destroyed')){await pause(500);continue;}throw error;}
+  // One guarded snapshot: the popup may close as authentication completes.
+  let labels,headings;try{({labels,headings}=await popup.evaluate(()=>({labels:Array.from(document.querySelectorAll('button'),b=>b.textContent.trim()),headings:Array.from(document.querySelectorAll('h1,h2'),el=>el.textContent.trim().slice(0,160))})));}catch(error){if(popup.isClosed())break;if(String(error.message).includes('Execution context was destroyed')){await pause(500);continue;}throw error;}
   // These are public control labels, never credential, delegation or recovery material.
-  const headings=await popup.$$eval('h1,h2',els=>els.map(el=>el.textContent.trim().slice(0,160)));
   if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings}));
   const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
   if(failureHeading){
