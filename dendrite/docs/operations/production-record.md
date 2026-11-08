@@ -5,6 +5,74 @@
 Only an operator-supplied real deployment result may change this into completed
 evidence. Never include private identity or authentication material.
 
+## Scoped authentication frontend upgrade — 2026-11-08
+
+The user explicitly requested deployment of the latest Dendrite frontend using
+`dfx` and `codex_local`. This authorizes the lifecycle-client and identity exceptions
+to the default `icp-cli` procedure for this upgrade. The frontend is embedded in the
+single Dendrite canister, so the operation upgraded the complete canonical Wasm.
+
+| Field | Recorded value |
+| --- | --- |
+| Release source Git commit | `d1793f7728447b58232f5542dac95a07ee5e199b` |
+| Latest main source comparison | `origin/main` at `49f8d57`; identical Dendrite subtree `fce567a2259bb3aacafb8eeb6730a6d7ea8d236b` |
+| Browser harness repair commit | `7cca8bc`; test tooling only, no production asset or canister source changes |
+| Lifecycle client / identity | `dfx 0.31.0` / `codex_local` |
+| Operator identity principal | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae` |
+| Exact upgrade command | `DFX_IDENTITY=codex_local DFX_WARNING=-mainnet_plaintext_identity dfx canister install hp4av-oiaaa-aaaar-qcaha-cai --network ic --mode upgrade --wasm dist/release/dendrite.wasm --argument '()'` |
+| Controllers before and after | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae`, `zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe` |
+| Cycles balance before / after | `4_794_414_414_333` / `4_771_790_289_394` |
+| Freezing threshold before and after | `7_776_000` seconds |
+| Previous module hash | `bc75d0510e40affcc57d164df764ea2274ea044ca5c4332c6ed9ae3e66b4a501` |
+| Installed canonical Wasm SHA-256 | `5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d` |
+| Release `SHA256SUMS` SHA-256 | `d8c2f1e0aa927743d80fa869b023c5d56357b356204e6786f5c4a6ee3bbaff71` |
+| Asset-manifest SHA-256 | `8efaded8cd5a9af029ff805e38a362cf0664a54baa4db67c95a72225e2b8c342` |
+| Generated application SHA-256 | `eb36d22b3c1a1093f4cf58237728bba409ea53c5b7be24a1c8dba560b380ccc6` |
+| Generated stylesheet SHA-256 | `008b98904943b9caf17647649eb069684bfad51f5887b03943c896fe64d9dbf3` |
+| Build-configuration SHA-256 | `ff7d399c7f3ff4baaa79904bc76e5edcd7d1c502c0eab4e5b684da444f79121d` |
+| SBOM checksum-manifest SHA-256 | `d732ba705432c3539240b2002ffa08bd2ff1a24e411e1e1488a53b8284cd86e6` |
+| Upgrade started / verification completed | `2026-11-08T11:54:08Z` / `2026-11-08T11:54:26Z` |
+
+Required command gates passed: `npm ci --ignore-scripts`, `cargo xtask check`,
+`cargo xtask test`, `cargo xtask coverage`, `cargo xtask build`,
+`cargo xtask build-reproducible`, `cargo xtask verify-reproducible`,
+`cargo xtask security-scan`, `cargo xtask sbom`, `npm test`, and
+`npm run test:coverage`. The suite passed 62 Rust unit tests, three PocketIC scenarios,
+and 172 frontend tests. Workspace line coverage was 89.97%; rule-engine line/branch
+coverage was 98.79%/95.51%; frontend line/branch/function coverage was
+95.87%/87.37%/93.70%. Two clean local builds and two clean no-cache canonical Docker
+builds were independently byte-identical. The canonical export exactly matched the
+bound release. Scans passed with the existing documented, narrowly scoped exceptions
+in [security](../security.md), including the two inactive optional npm build-tool
+advisories; production npm audit reported zero vulnerabilities.
+
+Read-only verification checked the installed module hash and byte identity of `/`,
+`/index.html`, `/asset-manifest.json`, `/.well-known/ii-alternative-origins`, and both
+generated assets. Every response returned HTTP 200 with certification v2, its
+certificate expression, expected MIME/cache policy, popup-compatible COOP, CSP, and
+security headers. Alternative origins remained exactly `{"alternativeOrigins":[]}`.
+Controllers and settings were unchanged. No cycle transfer, D-QUORUM deployment,
+blackholing, or NNS mutation was performed. The production Candid interface and fixed
+evidence destinations/methods are unchanged; the pinned NNS revision remains
+`d55a0f4d4edfabe49d8fd543aff473084cb741f2`.
+
+Additional Chromium qualification did **not** pass completely. After correcting two
+harness defects with failing-then-passing regressions (public DNS containment and
+automatic favicon-404 accounting), desktop and actual 200% page-scale scenarios
+passed. The 720-pixel equivalent-reflow scenario measured a frequent icon target at
+42.859375 CSS pixels, below its unchanged 44-pixel gate. The run stopped there;
+mobile and narrow scenarios were not reached. This is a retained limitation of the
+requested existing artifact, not a passing browser qualification. Final-origin II,
+controlled transactions, and blackholing operator gates remain UNRUN.
+
+Bounded local evidence is under
+[`dist/deployment-20261108`](../../dist/deployment-20261108/):
+[command results](../../dist/deployment-20261108/check-results.txt),
+[canonical build comparison](../../dist/deployment-20261108/canonical.log),
+[live verification](../../dist/deployment-20261108/live-verification.json), and
+[browser failure](../../dist/deployment-20261108/browser-smoke-final.log).
+These generated files are ignored by Git; this entry retains the durable result.
+
 ## Evidence-specific rule diagnostics upgrade — 2026-07-29
 
 | Field | Recorded value |

@@ -6,5 +6,5 @@ canisters:
       type: "@dfinity/prebuilt@v2.0.0"
       configuration:
         path: dist/release/dendrite.wasm
-        # Undeployed scoped-authentication candidate; see docs/operations/reproducible-builds.md.
+        # Deployed scoped-authentication release; see docs/operations/production-record.md.
         sha256: 5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d
