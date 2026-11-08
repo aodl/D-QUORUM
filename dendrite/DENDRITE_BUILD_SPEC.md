@@ -1,6 +1,6 @@
 # Dendrite build specification
 
-**Status:** normative browser-to-NNS management tranche
+**Status:** normative browser-to-NNS management and per-neuron creation tranche
 
 **Standard identifier:** `nns-dendrite/1.1-draft`
 
@@ -25,8 +25,12 @@ assistance run only in the browser through one fixed NNS Governance actor. Inter
 Identity supplies an app-origin parent. The pinned SDK appends a genuinely signed
 Governance-only child before exposing the transaction signer; all ancestor restrictions
 remain effective. Dendrite never receives or reconstructs a delegation or authenticated
-principal. Proposal history, reward calculation or
-distribution, timers, indexers, analytics, and background work remain out of scope.
+principal. The creation workflow may provision one temporary bootstrap canister per
+new neuron, retaining bounded state until its code and controllers are removed. It
+is not a shared factory, wallet, treasury, signing proxy, or application database.
+Dendrite itself remains stateless and D-QUORUM's independent automation is unchanged.
+Proposal history, new reward policy, timers, indexers, analytics, and background work
+remain out of scope.
 
 ## 2. Fixed standard constants
 
@@ -109,9 +113,9 @@ count.
 - `DENDRITE-CONTROL-002`: Controller canister has no installed code.
 - `DENDRITE-CONTROL-003`: No principal controls the controller canister.
 - `DENDRITE-CONTROL-004`: Neuron has no hotkeys.
-- `DENDRITE-CONTROL-005`: Proposal-based dissolution is disabled. The neuron must
-  have `not_for_profit = false` so that a Neuron Management proposal cannot start
-  dissolving it.
+- `DENDRITE-CONTROL-005`: The neuron must have `not_for_profit = false`.
+  This flag restricts certain Governance proposal commands. It does not establish a
+  universal prohibition on dissolution, maturity disbursement or economic operations.
 
 ### Manager group
 
@@ -188,7 +192,7 @@ addition invalidates the batch.
 
 ## 6. Production architecture and API
 
-There is exactly one production canister, `dendrite`. It embeds deterministic frontend
+There is exactly one long-lived Dendrite service, `dendrite`. It embeds deterministic frontend
 assets, serves them through HTTP certification v2, collects fixed public evidence, and
 runs the pure rule engine.
 
@@ -273,6 +277,28 @@ Return one bounded suggested delay for temporary rejection. The guard resets on 
 has no stable persistence, no per-user state, and no public counters. Each admission
 prunes in-flight entries at least 300 seconds old so a post-await trap cannot consume a
 slot indefinitely.
+
+### Per-neuron creation exception
+
+One additional deployable component type, `dendrite-bootstrap`, is permitted. Each
+instance binds actual creator caller P, one immutable creation identifier/nonce, a
+reviewed plan, a fixed return account, and at most one claimed neuron T. The canister
+principal C remains T's controller after code and controller removal. Initially C's
+exact controller list is `[P]`; P can replace its provisional code. The bootstrap
+receives no browser credentials and has no arbitrary command, recipient, target,
+upload, forwarding, factory or timer endpoint. Its bounded versioned stable state
+preserves dispatched intents across upgrades. Dendrite and D-QUORUM public APIs and
+D-QUORUM stable V3 remain unchanged.
+
+Production candidates require registration first and verified manager rehearsal,
+then explicit uninstall followed by a separate explicit empty-controller update.
+Only the two known bootstrap code/controller failures may remain at readiness; the
+unchanged evaluator supplies the actual final verdict. Recoverable one-manager test
+creations remain non-compliant and cannot enter irreversible finalisation. Imported
+non-secret receipts establish no authority and never substitute for replicated
+Governance/ledger evidence and fresh certified system state. Financial ambiguity
+retains its exact operation identity, even after deduplication windows expire.
+The creation contracts in `docs/architecture.md` define funding and recovery boundaries.
 The local canister clock is used only for this operational guard, including rate-window
 and in-flight expiry behavior; it is never exposed as the NNS evidence timestamp.
 
