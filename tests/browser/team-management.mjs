@@ -154,6 +154,14 @@ async function authenticateAttempt(index){
   }catch(error){if(/Target closed|Execution context was destroyed/.test(String(error.message))){await pause(200);if(popup.isClosed())break;continue;}throw error;}
  }
  if(scopeProbeMode){
+  await page.waitForFunction(()=>globalThis.scopeProvisioningPhase||document.body.innerText.includes('Scope probe failed:'),{timeout:90000});
+  const provisioning=await page.evaluate(()=>globalThis.scopeProvisioningPhase);
+  if(!provisioning)throw Error('scope probe failed before provisioning');
+  await writeEvidence(`${directory}/scope-provisioning-principal.json`,JSON.stringify(provisioning));
+  await waitSignal('scope-funding-ready');await page.evaluate(()=>globalThis.scopeProvisioningFunded=true);
+  for(const label of ['Approve local funding capability probe','Approve local management capability probe']){
+   await page.waitForFunction(label=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent===label),{timeout:90000},label);await click(page,label);
+  }
   await page.waitForFunction(()=>globalThis.scopeProbeResult||document.body.innerText.includes('Scope probe failed:'),{timeout:90000});
   const proof=await page.evaluate(()=>globalThis.scopeProbeResult);
   if(!proof)throw Error(await page.$eval('body',el=>el.innerText));

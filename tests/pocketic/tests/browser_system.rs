@@ -1,3 +1,5 @@
+#[path = "support/creation.rs"]
+mod creation;
 mod support;
 use candid::{CandidType, Deserialize, Principal, encode_one};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig, InstanceHttpGatewayConfig};
@@ -12,6 +14,18 @@ use std::{
 };
 use support::*;
 
+// A separate loopback test port avoids disrupting another workspace's replica.
+fn browser_port() -> u16 {
+    let port = std::env::var("DENDRITE_TEST_HTTP_PORT")
+        .unwrap_or_else(|_| "4943".into())
+        .parse()
+        .expect("local browser port");
+    assert!(
+        [4943, 4944].contains(&port),
+        "unsupported local browser port"
+    );
+    port
+}
 // Test-only, independently decoded proposal fields; no production client expansion.
 #[derive(CandidType, Deserialize)]
 struct BrowserBallot {
@@ -155,12 +169,12 @@ fn gateway_get(id: Principal, directory: &Path, label: &str) -> (u16, Vec<u8>) {
             "--max-time",
             "30",
             "--resolve",
-            &format!("{id}.localhost:4943:127.0.0.1"),
+            &format!("{id}.localhost:{}:127.0.0.1", browser_port()),
             "--output",
             body.to_str().unwrap(),
             "--write-out",
             "%{http_code}",
-            &format!("http://{id}.localhost:4943/"),
+            &format!("http://{id}.localhost:{}/", browser_port()),
         ])
         .output()
         .unwrap();
@@ -263,10 +277,13 @@ fn local_frontend(
         bytes.extend_from_slice(b"\n/* isolated authenticated-upgrade asset evidence */\n");
         fs::write(css, bytes).unwrap();
     }
-    let origin = format!("http://{id}.localhost:4943");
-    let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":"http://127.0.0.1:4943","DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
+    let origin = format!("http://{id}.localhost:{}", browser_port());
+    let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":format!("http://127.0.0.1:{}",browser_port()),"DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
     let mut build = Command::new("npm");
-    build.args(["run", "build"]).current_dir(&source);
+    build.args(["run", "build"]).current_dir(&source).env(
+        "DENDRITE_BOOTSTRAP_RELEASE_DIR",
+        root().join("dendrite/target/bootstrap-release"),
+    );
     for (key, value) in config.as_object().unwrap() {
         build.env(key, value.as_str().unwrap());
     }
@@ -441,9 +458,12 @@ fn browser_world(scenario: &str) {
     // Compile and checksum the local application before starting the test world.
     let expected_verifier = Principal::from_text("pi33i-pt777-77776-aaaaa-cai").unwrap();
     let provider = if scenario == "wrong-provider" {
-        format!("http://{expected_verifier}.localhost:4943/authorize")
+        format!(
+            "http://{expected_verifier}.localhost:{}/authorize",
+            browser_port()
+        )
     } else {
-        "http://id.ai.localhost:4943/authorize".into()
+        format!("http://id.ai.localhost:{}/authorize", browser_port())
     };
     let local = local_frontend(&directory, expected_verifier, false, &provider, false);
     let upgraded_local = if scenario == "team-management" {
@@ -479,7 +499,7 @@ fn browser_world(scenario: &str) {
         .with_ii_subnet()
         .with_http_gateway(InstanceHttpGatewayConfig {
             ip_addr: Some("127.0.0.1".into()),
-            port: Some(4943),
+            port: Some(browser_port()),
             domains: Some(vec!["localhost".into()]),
             https_config: None,
             domain_custom_provider_local_file: Some(domains.to_str().unwrap().into()),
@@ -491,7 +511,7 @@ fn browser_world(scenario: &str) {
             ..Default::default()
         })
         .build();
-    configure_real_ii(&pic);
+    configure_real_ii_at_port(&pic, browser_port());
     let verifier = pic.create_canister();
     pic.add_cycles(verifier, 200_000_000_000_000);
     assert_eq!(
@@ -510,7 +530,7 @@ fn browser_world(scenario: &str) {
         interactive_time,
     ));
     pic.auto_progress();
-    pic.make_live(Some(4943));
+    pic.make_live(Some(browser_port()));
     let uid = Command::new("id").arg("-u").output().unwrap();
     let gid = Command::new("id").arg("-g").output().unwrap();
     let process_user = format!(
@@ -546,7 +566,7 @@ fn browser_world(scenario: &str) {
             .env("DENDRITE_BROWSER_CANISTER_ID", verifier.to_text())
             .env(
                 "DENDRITE_BROWSER_BASE_URL",
-                format!("http://{verifier}.localhost:4943"),
+                format!("http://{verifier}.localhost:{}", browser_port()),
             )
             .env(
                 "DENDRITE_BROWSER_EVIDENCE_DIR",
@@ -557,7 +577,7 @@ fn browser_world(scenario: &str) {
             .spawn()
             .unwrap()
     } else {
-        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:4943"),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
+        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:{}",browser_port()),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
     };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if scenario == "anonymous" {
@@ -585,17 +605,82 @@ fn browser_world(scenario: &str) {
             install_real(
                 &pic,
                 vec![seed(100, user(100), at)],
-                vec![],
+                vec![(
+                    l::Account {
+                        owner: user(41),
+                        subaccount: None,
+                    },
+                    1_000_000_000,
+                )],
                 artifact("governance-canister"),
                 artifact("ledger-canister"),
             );
+            creation::install_provisioning(&pic);
             publish(&directory, "provisioned", serde_json::json!({}));
+            let identity = signal(&directory, "scope-provisioning-principal", &mut child);
+            let principal = Principal::from_text(identity["principal"].as_str().unwrap()).unwrap();
+            let payment: Result<candid::Nat, l::TransferError> = update(
+                &pic,
+                LEDGER,
+                user(41),
+                "icrc1_transfer",
+                l::TransferArg {
+                    from_subaccount: None,
+                    to: l::Account {
+                        owner: principal,
+                        subaccount: None,
+                    },
+                    fee: Some(10_000u64.into()),
+                    amount: 600_000_000u64.into(),
+                    memo: None,
+                    created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+                },
+            );
+            payment.unwrap();
+            publish(&directory, "scope-funding-ready", serde_json::json!({}));
             let proof = signal(&directory, "scope-probe", &mut child);
             assert_eq!(proof["unrestrictedRejected"], true);
             assert_eq!(proof["principalPreserved"], true);
             assert_eq!(proof["allowedGovernanceRead"], true);
             assert_eq!(proof["nonGovernanceScopeDenied"], true);
             assert_eq!(proof["controlDestinationSucceeded"], true);
+            let provisioned = &proof["provisioning"];
+            assert_eq!(provisioned["principal"], principal.to_text());
+            assert_eq!(provisioned["exactBootstrapManagementDenied"], true);
+            assert_eq!(
+                provisioned["sameManagementScopeCanReadOtherOwnedCanister"],
+                true
+            );
+            for name in [
+                "principalPreserved",
+                "fundingManagementDenied",
+                "soleControllerVerified",
+                "installedHashVerified",
+                "bootstrapCallSucceeded",
+                "stopVerified",
+                "uninstallBeforeControllerRemoval",
+                "certifiedModuleAbsent",
+                "certifiedControllersEmpty",
+                "reinstallDenied",
+            ] {
+                assert_eq!(
+                    provisioned[name], true,
+                    "missing real delegated provisioning proof: {name}"
+                );
+            }
+            assert!(
+                pic.get_controllers(
+                    Principal::from_text(provisioned["canister"].as_str().unwrap()).unwrap()
+                )
+                .is_empty()
+            );
+            assert_eq!(
+                pic.get_controllers(
+                    Principal::from_text(provisioned["otherOwnedCanister"].as_str().unwrap())
+                        .unwrap()
+                ),
+                vec![principal]
+            );
             assert!(child.wait().unwrap().success());
             return;
         }

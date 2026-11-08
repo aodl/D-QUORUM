@@ -61,6 +61,34 @@ deposit failure refunded original ICP less its two-transfer-fee penalty and refu
 transfer fee. These native probes use fixture callers and do not count as real-II
 delegation or positive signed-browser journey proof.
 
+The development real-II scope probe subsequently passed the actual signed funding,
+CMC conversion, Cycles Ledger creation and duplicate, bootstrap installation/call,
+stop, uninstall, certified empty-module/empty-controller and refused-reinstall path.
+The funding-only child was denied management by the replica. A child targeted only
+at C could call C but could not call management; the named management child targeting
+`[aaaaa-aa, C]` succeeded. The same management child could read another canister
+actually owned by P. Thus inclusion of `aaaaa-aa` does **not** constrain management
+arguments to C. Production UI must independently bind each reviewed request to its
+verified creation and recheck sole P authority. These are development probes, not the
+final unchanged-source browser-creation qualification or a mainnet compatibility claim.
+
+Pinned Governance initially claims a neuron with a seven-day dissolve delay
+(`INITIAL_NEURON_DISSOLVE_DELAY = 7 * ONE_DAY_SECONDS`), verified by real claim and
+configuration readback. The recoverable test profile therefore uses that short lock;
+it does not promise immediate disbursement. The native journey separately started
+dissolution, advanced the actual seven-day wait, verified an executed management
+proposal and independently decoded the eventual fixed-destination ledger return.
+The production Standard remains exactly 63,115,200 seconds.
+
+The repeated real-II development probe also verified public request-content plus
+IC-certified reply witnesses after code removal. They contain no signed ingress
+envelopes, keys or reusable delegations. Historical provenance uses an explicit
+30-day SDK verification window; it does not prove current authority. Expired or
+incomplete provenance blocks automatic finalisation. Current canister state uses
+ordinary SDK certificate freshness checks independently. Local qualification may
+bind loopback port 4944 when another workspace owns 4943; origin, API and port must
+match in the reviewed plan and II fixture configuration.
+
 ```text
 Public route report:
 Browser -> anonymous signed Governance list_neurons and get_neuron_info queries

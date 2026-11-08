@@ -4,6 +4,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { DelegationChain, DelegationIdentity, Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { AUTHENTICATION_DELEGATION_TTL_NS, NNS_GOVERNANCE_CANISTER_ID, authenticationOrigin, createBrowserAuthSession, deriveGovernanceSession, identityConfiguration, validateGovernanceDelegation } from "../src/auth.js";
 import { classifyManagerAuthority, renderManagerAuthority } from "../src/authority.js";
+import { CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID, ICP_LEDGER_CANISTER_ID, PROVISIONING_DELEGATION_TTL_NS, createBrowserProvisioningSession, deriveProvisioningSession, validateProvisioningDelegation } from "../src/auth.js";
 const canonical = "https://dendrite.example", alternative = "https://www.dendrite.example";
 const configuration = { derivationOrigin: canonical, alternativeOrigins: [alternative], identityProvider: "https://id.ai/authorize" };
 const user = Principal.fromText("aaaaa-aa"), other = Principal.anonymous();
@@ -27,6 +28,59 @@ class FakeAuthClient {
   async signOut() { this.signedOut = true; }
 }
 const session = (origin = canonical) => createBrowserAuthSession({ ...configuration, currentOrigin: origin, AuthClientClass: FakeAuthClient });
+
+test("named provisioning children retain P and exact limited destinations without changing management login", async () => {
+  const parent = await bootstrap({ expires: Date.now() + 3_600_000 });
+  const controller = "pi33i-pt777-77776-aaaaa-cai";
+  for (const [profile, canister, targets] of [
+    ["FundProvisioning", undefined, [ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID]],
+    ["ManageBootstrap", controller, ["aaaaa-aa", controller]],
+    ["CallBootstrap", controller, [controller]],
+  ]) {
+    const child = await deriveProvisioningSession(parent.identity, parent.key.getPublicKey().toDer(), profile, canister);
+    assert.equal(child.principal.toText(), parent.identity.getPrincipal().toText());
+    const leaf = child.signingIdentity.getDelegation().delegations.at(-1).delegation;
+    assert.deepEqual(leaf.targets.map((p) => p.toText()), targets);
+    assert.ok(leaf.expiration <= BigInt(Date.now()) * 1_000_000n + PROVISIONING_DELEGATION_TTL_NS);
+    assert.equal(child.validate(), true);
+    assert.throws(() => validateGovernanceDelegation(child.signingIdentity), /permit|Unrestricted/);
+    assert.throws(() => validateProvisioningDelegation(parent.identity, profile, canister), /Unscoped/);
+  }
+  const governanceOnly = await deriveGovernanceSession(parent.identity, parent.key.getPublicKey().toDer());
+  assert.deepEqual(governanceOnly.signingIdentity.getDelegation().delegations.at(-1).delegation.targets.map((p) => p.toText()), [NNS_GOVERNANCE_CANISTER_ID]);
+});
+
+test("provisioning rejects arbitrary targets broadened children inherited exclusions and changed keys", async () => {
+  const parent = await bootstrap();
+  for (const [profile, target] of [["arbitrary", undefined], ["FundProvisioning", "pi33i-pt777-77776-aaaaa-cai"], ["CallBootstrap", undefined], ["CallBootstrap", "aaaaa-aa"], ["CallBootstrap", NNS_GOVERNANCE_CANISTER_ID]]) {
+    await assert.rejects(() => deriveProvisioningSession(parent.identity, parent.key.getPublicKey().toDer(), profile, target));
+  }
+  const excluded = await bootstrap({ targets: [governance] });
+  await assert.rejects(() => deriveProvisioningSession(excluded.identity, excluded.key.getPublicKey().toDer(), "FundProvisioning"), /ancestor/);
+  await assert.rejects(() => deriveProvisioningSession(parent.identity, Ed25519KeyIdentity.generate().getPublicKey().toDer(), "FundProvisioning"), /provisioning key/);
+  const key = Ed25519KeyIdentity.generate();
+  for (const [targets, expiration] of [
+    [[ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID, NNS_GOVERNANCE_CANISTER_ID], Date.now()+50_000],
+    [[ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID], Date.now()+3_600_000],
+  ]) {
+    const chain = await DelegationChain.create(parent.identity, key.getPublicKey(), new Date(expiration), { previous: parent.chain, targets: targets.map((p) => Principal.fromText(p)) });
+    assert.throws(() => validateProvisioningDelegation(DelegationIdentity.fromDelegation(key, chain), "FundProvisioning"), /Unscoped/);
+  }
+});
+
+test("separately consented provisioning login uses short TTL and memory-only SDK cleanup", async () => {
+  const auth = createBrowserProvisioningSession("FundProvisioning", undefined, { ...configuration, currentOrigin: canonical, AuthClientClass: FakeAuthClient });
+  assert.equal(await auth.restore(), null);
+  const scoped = await auth.signIn();
+  const client = FakeAuthClient.instances.at(-1);
+  assert.equal(client.signInOptions.maxTimeToLive, PROVISIONING_DELEGATION_TTL_NS);
+  assert.equal(client.signedOut, true);
+  await client.options.storage.set("credential", "discarded");
+  assert.equal(await client.options.storage.get("credential"), null);
+  await auth.signOut();
+  assert.equal(await auth.restore(), null);
+  assert.throws(() => scoped.validate(), /signed out/);
+});
 test("canonical alternative and unapproved origins are explicit", async () => {
   assert.equal(authenticationOrigin(canonical, configuration), undefined);
   assert.equal(authenticationOrigin(alternative, configuration), canonical);

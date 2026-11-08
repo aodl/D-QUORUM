@@ -5,6 +5,7 @@ import { Actor, HttpAgent } from '@icp-sdk/core/agent';
 import { IDL } from '@icp-sdk/core/candid';
 import { deriveGovernanceSession, identityConfiguration, validateGovernanceDelegation } from '@dendrite-auth';
 import { createAuthenticatedNnsActor } from '@dendrite-nns';
+import { provisioningScopeProbe } from './provisioning-scope-probe.js';
 const button = document.createElement('button');button.textContent='Sign in with Internet Identity';document.body.append(button);
 button.onclick=async()=>{
  button.disabled=true;
@@ -60,7 +61,8 @@ button.onclick=async()=>{
   malformed.wrongTargetParent=await rejects(DelegationIdentity.fromDelegation(next,forbidden));
   if(Object.values(malformed).some(value=>!value))throw Error('replica accepted an invalid delegation chain');
   // Public summaries only. No keys, signatures, delegation objects or envelopes.
-  globalThis.scopeProbeResult={principal:session.principal.toText(),principalPreserved:true,parentExpirations:parent.delegations.map(link=>link.delegation.expiration.toString()),childExpiration:session.signingIdentity.getDelegation().delegations.at(-1).delegation.expiration.toString(),invalidChainsRejected:malformed,unrestrictedRejected,allowedGovernanceRead:true,unauthorisedGovernanceError:3,controlDestinationSucceeded:true,nonGovernanceScopeDenied:scopeDenied,denialClassification:'replica HTTP rejection with delegation/target diagnostic; status recorded rather than assumed',replicaRejections,links:session.signingIdentity.getDelegation().delegations.length,finalTargets:['rrkah-fqaaa-aaaaa-aaaaq-cai']};
+  const provisioning=await provisioningScopeProbe(bootstrap,key.getPublicKey().toDer());
+  globalThis.scopeProbeResult={provisioning,principal:session.principal.toText(),principalPreserved:true,parentExpirations:parent.delegations.map(link=>link.delegation.expiration.toString()),childExpiration:session.signingIdentity.getDelegation().delegations.at(-1).delegation.expiration.toString(),invalidChainsRejected:malformed,unrestrictedRejected,allowedGovernanceRead:true,unauthorisedGovernanceError:3,controlDestinationSucceeded:true,nonGovernanceScopeDenied:scopeDenied,denialClassification:'replica HTTP rejection with delegation/target diagnostic; status recorded rather than assumed',replicaRejections,links:session.signingIdentity.getDelegation().delegations.length,finalTargets:['rrkah-fqaaa-aaaaa-aaaaq-cai']};
   document.body.append(document.createTextNode('Scope probe complete'));
  }catch(error){document.body.append(document.createTextNode('Scope probe failed: '+error.message));throw error;}
  finally{if(client)await client.signOut();}

@@ -332,6 +332,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dendrite-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "dendrite-types",
+ "ic-cdk",
+ "ic-clients",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "dendrite-test-governance"
 version = "0.1.0"
 dependencies = [

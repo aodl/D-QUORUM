@@ -39,7 +39,7 @@ type FolloweesForTopic = record { followees : opt vec NeuronId; topic : opt int3
 type SetFollowing = record { topic_following : opt vec FolloweesForTopic };
 type MakeProposalRequest = record { url : text; title : opt text; action : opt ProposalActionRequest; summary : text };
 type ProposalActionRequest = variant {
-  ManageNeuron : ManageNeuronRequest; RegisterKnownNeuron : reserved;
+  ManageNeuron : ManageNeuronRequest; RegisterKnownNeuron : RegisterKnownNeuron;
   DeregisterKnownNeuron : reserved; UpdateCanisterSettings : reserved; InstallCode : reserved;
   StopOrStartCanister : reserved; CreateServiceNervousSystem : reserved;
   ExecuteNnsFunction : reserved; RewardNodeProvider : reserved; RewardNodeProviders : reserved;
@@ -77,7 +77,7 @@ type ManageNeuronProposalCommand = variant {
 };
 type ManageNeuronProposal = record { id : opt NeuronId; command : opt ManageNeuronProposalCommand; neuron_id_or_subaccount : opt NeuronIdOrSubaccount };
 type Action = variant {
-  ManageNeuron : ManageNeuronProposal; RegisterKnownNeuron : reserved;
+  ManageNeuron : ManageNeuronProposal; RegisterKnownNeuron : RegisterKnownNeuron;
   DeregisterKnownNeuron : reserved; UpdateCanisterSettings : reserved; InstallCode : reserved;
   StopOrStartCanister : reserved; CreateServiceNervousSystem : reserved;
   ExecuteNnsFunction : reserved; RewardNodeProvider : reserved; OpenSnsTokenSwap : reserved;
@@ -92,7 +92,7 @@ type Proposal = record { url : text; title : opt text; action : opt Action; summ
 type ProposalInfo = record {
   id : opt ProposalId; status : int32; topic : int32; ballots : vec record { nat64; Ballot };
   proposal_timestamp_seconds : nat64; deadline_timestamp_seconds : opt nat64;
-  proposal : opt Proposal; proposer : opt NeuronId
+  proposal : opt Proposal; proposer : opt NeuronId; executed_timestamp_seconds : nat64; failed_timestamp_seconds : nat64; failure_reason : opt GovernanceError; latest_tally : opt record { yes : nat64; no : nat64; total : nat64; timestamp_seconds : nat64 }
 };
 type ListProposalInfoRequest = record {
   include_reward_status : vec int32; omit_large_fields : opt bool; before_proposal : opt ProposalId;
@@ -100,22 +100,29 @@ type ListProposalInfoRequest = record {
   include_status : vec int32; return_self_describing_action : opt bool
 };
 type ListProposalInfoResponse = record { proposal_info : vec ProposalInfo };
-type NetworkEconomics = record { neuron_management_fee_per_proposal_e8s : nat64 };
+type NetworkEconomics = record { neuron_management_fee_per_proposal_e8s : nat64; neuron_minimum_stake_e8s : nat64; reject_cost_e8s : nat64; transaction_fee_e8s : nat64 };
 type ListNeurons = record {
   neuron_ids : vec nat64; include_neurons_readable_by_caller : bool;
   include_empty_neurons_readable_by_caller : opt bool;
   include_public_neurons_in_full_neurons : opt bool; page_number : opt nat64;
   page_size : opt nat64; neuron_subaccounts : opt vec record { subaccount : blob }
 };
+type TopicToFollow = variant { CatchAll; NeuronManagement; ExchangeRate; NetworkEconomics; Governance; NodeAdmin; ParticipantManagement; SubnetManagement; Kyc; NodeProviderRewards; IcOsVersionDeployment; IcOsVersionElection; SnsAndCommunityFund; ApiBoundaryNodeManagement; SubnetRental; ApplicationCanisterManagement; ProtocolCanisterManagement; ServiceNervousSystemManagement };
 type KnownNeuronData = record {
-  name : text; description : opt text; links : opt vec text; committed_topics : reserved
+  name : text; description : opt text; links : opt vec text; committed_topics : opt vec opt TopicToFollow
 };
+type RegisterKnownNeuron = record { id : opt NeuronId; known_neuron_data : opt KnownNeuronData };
+type DissolveState = variant { DissolveDelaySeconds : nat64; WhenDissolvedTimestampSeconds : nat64 };
 type FullNeuron = record {
   id : opt NeuronId; controller : opt principal; hot_keys : vec principal;
   cached_neuron_stake_e8s : nat64; neuron_fees_e8s : nat64;
-  known_neuron_data : opt KnownNeuronData; visibility : opt int32; followees : reserved
+  known_neuron_data : opt KnownNeuronData; visibility : opt int32;
+  account : blob; not_for_profit : bool; dissolve_state : opt DissolveState;
+  followees : vec record { int32; record { followees : vec NeuronId } };
+  potential_voting_power : opt nat64; deciding_voting_power : opt nat64;
+  voting_power_refreshed_timestamp_seconds : opt nat64
 };
-type NeuronInfo = record { id : opt NeuronId; retrieved_at_timestamp_seconds : nat64; known_neuron_data : opt KnownNeuronData; visibility : opt int32 };
+type NeuronInfo = record { id : opt NeuronId; retrieved_at_timestamp_seconds : nat64; voting_power : nat64; known_neuron_data : opt KnownNeuronData; visibility : opt int32 };
 type NeuronInfoResult = variant { Ok : NeuronInfo; Err : GovernanceError };
 type ListNeuronsResponse = record { neuron_infos : vec record { nat64; NeuronInfo }; full_neurons : vec FullNeuron; total_pages_available : opt nat64 };
 service : {

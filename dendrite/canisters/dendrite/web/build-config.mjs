@@ -6,6 +6,8 @@ export const AUTHENTICATION_DELEGATION_TTL_NS = 8n * 60n * 60n * 1_000_000_000n;
 export const LOCAL_IC_API_HOSTS = new Set([
   "http://127.0.0.1:4943",
   "http://localhost:4943",
+  "http://127.0.0.1:4944",
+  "http://localhost:4944",
 ]);
 export const ACCEPTED_CONNECTION_ORIGINS = new Set([
   PRODUCTION_IC_API_HOST,

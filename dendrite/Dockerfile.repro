@@ -1,4 +1,15 @@
 # syntax=docker/dockerfile:1.7
+FROM docker.io/library/rust:1.94.1-slim-bookworm@sha256:cf9dd0ec73e75f827fe59123fff9dc65af1a1c8363c3c31ee8d7f8ad0b6a5fb2 AS bootstrap
+ENV SOURCE_DATE_EPOCH=0
+WORKDIR /src
+RUN rustup target add wasm32-unknown-unknown
+COPY . .
+RUN cargo build --locked --release --target wasm32-unknown-unknown -p dendrite-bootstrap \
+    && mkdir -p /bootstrap \
+    && cp target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm /bootstrap/bootstrap.wasm \
+    && cargo run --locked --quiet -p dendrite-bootstrap --example bootstrap-interface > /bootstrap/bootstrap.did \
+    && cargo run --locked --quiet -p dendrite-bootstrap --example bootstrap-policy > /bootstrap/policy.json
+
 FROM docker.io/library/node:24.15.0-bookworm-slim@sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d AS frontend
 ARG DENDRITE_CANISTER_ID
 ARG DENDRITE_API_HOST=https://icp-api.io
@@ -12,12 +23,18 @@ ENV DENDRITE_CANISTER_ID=$DENDRITE_CANISTER_ID \
     DENDRITE_IDENTITY_PROVIDER=$DENDRITE_IDENTITY_PROVIDER \
     DENDRITE_BUILD_MODE=production \
     DENDRITE_FETCH_ROOT_KEY=false
+ENV DENDRITE_BOOTSTRAP_COMPILED_DIR=/bootstrap
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY canisters/dendrite/web canisters/dendrite/web
 COPY canisters/dendrite/public canisters/dendrite/public
 COPY src/declarations src/declarations
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY canisters/bootstrap canisters/bootstrap
+COPY crates/ic-clients crates/ic-clients
+COPY crates/dendrite-types crates/dendrite-types
+COPY --from=bootstrap /bootstrap /bootstrap
 RUN test -n "$DENDRITE_CANISTER_ID" \
     && test -n "$DENDRITE_DERIVATION_ORIGIN" \
     && test -n "$DENDRITE_ALTERNATIVE_ORIGINS_JSON" \
@@ -34,6 +51,7 @@ RUN mkdir -p /release/frontend \
     && cp target/wasm32-unknown-unknown/release/dendrite.wasm /release/dendrite.wasm \
     && cp -R canisters/dendrite/public/. /release/frontend/ \
     && cp canisters/dendrite/public/asset-manifest.json /release/asset-manifest.json
+COPY --from=frontend /src/target/bootstrap-release /release/bootstrap
 ARG DENDRITE_CANISTER_ID
 ARG DENDRITE_API_HOST=https://icp-api.io
 ARG DENDRITE_DERIVATION_ORIGIN

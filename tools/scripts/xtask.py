@@ -124,6 +124,22 @@ def prepare():
     run(['cargo','build','--locked','--release','--target','wasm32-unknown-unknown','--manifest-path','dendrite/Cargo.toml','-p','dendrite'],name='prepare independent Dendrite Wasm')
     provision()
 
+def prepare_bootstrap():
+    run(['sh','-c','cd dendrite && node canisters/dendrite/web/build-bootstrap.mjs'],name='build bootstrap before certified frontend assets')
+    manifest=json.loads((ROOT/'dendrite/target/bootstrap-release/manifest.json').read_text())
+    PREPARED_ARTIFACTS['dendrite_bootstrap']=manifest
+
+def creation_pure():
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js'],kind='behaviour',name='creation plan account receipt and protocol intent properties')
+    completed_suites.add('creation_pure')
+
+def creation_recording():
+    run(['cargo','test','--locked','--manifest-path','dendrite/Cargo.toml','-p','dendrite-bootstrap','--lib'],kind='behaviour',name='bootstrap recording faults checkpoints and operation generations')
+    completed_suites.add('creation_recording')
+
+def creation_protocol():
+    prepare_bootstrap();suite('creation_protocol')
+
 def provision():
     pins=json.loads((ROOT/'protocol-pins.json').read_text())
     for entry in pins['artifacts']:
@@ -195,7 +211,7 @@ def unit():
 
 def suite(target):
     prepare()
-    if target in ('protocol','capacity'):
+    if target in ('protocol','capacity','creation_protocol'):
         listing=run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--list'],name='ignored '+target+' discovery')
         names=re.findall(r'(?m)^([A-Za-z0-9_]+): test$',listing)
         if not names:raise RuntimeError('required ignored protocol suite absent')
@@ -436,7 +452,7 @@ def integration_inventory():
     completed_suites.add('integration_inventory')
 
 def system_browser():
-    prepare()
+    prepare_bootstrap();prepare()
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_capability','--','--ignored','--exact','actual_ii_page_and_virtual_webauthn_capability','--nocapture'],kind='behaviour',name='actual II browser capability')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_scoped_child_is_enforced_by_replica','--nocapture'],kind='behaviour',name='actual II child delegation replica scope enforcement')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_closed_popup_does_not_publish_session','--nocapture'],kind='behaviour',name='actual II popup cancellation and bootstrap cleanup')
@@ -527,7 +543,7 @@ def integrated_readiness():
     (OUT/'integrated-readiness.json').write_text(json.dumps(verdict,indent=2)+'\n')
     if not verdict['qualified']:raise RuntimeError('Required hosted evidence is incomplete; inspect integrated-readiness.json')
 
-COMMANDS={'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
+COMMANDS={'creation_pure':creation_pure,'creation_recording':creation_recording,'creation_protocol':creation_protocol,'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
 def main():
     global RUN_STATUS
     try:
