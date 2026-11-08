@@ -20,6 +20,7 @@ fn save(s: &State) {
         "bootstrap state bound exceeded"
     );
     ic_cdk::storage::stable_save((s,)).expect("cannot checkpoint bootstrap state");
+    ic_cdk::api::certified_data_set(s.readiness_marker());
     STATE.with_borrow_mut(|slot| *slot = Some(s.clone()));
 }
 fn caller() -> candid::Principal {
@@ -50,12 +51,27 @@ fn status(revision: u64) -> Result<State, String> {
     Ok(s)
 }
 #[ic_cdk::update]
-fn replace_plan(revision: u64, plan: Plan) -> Result<State, String> {
-    if BUSY.get() {
-        return Err("Creation operation in progress".into());
-    }
+async fn replace_plan(revision: u64, plan: Plan) -> Result<State, String> {
     let mut s = load();
     s.authorize(caller(), revision)?;
+    if BUSY.replace(true) {
+        return Err("Creation operation in progress".into());
+    }
+    let _guard = Busy;
+    if let Some(proposal) = &s.external_proposal {
+        protocol::verify_external_proposal(
+            &s,
+            proposal
+                .proposal_id
+                .ok_or("Resolve the original proposal reservation before editing")?,
+            true,
+        )
+        .await?;
+    }
+    let current = load();
+    if current.plan.revision != revision || current.sequence != s.sequence {
+        return Err("Stale plan replacement".into());
+    }
     s.replace(plan)?;
     save(&s);
     Ok(s)

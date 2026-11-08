@@ -21,6 +21,12 @@ pub(crate) trait CreationClient {
     ) -> Result<ic_clients::CanisterInfoResponse, String>;
     async fn rehearsal(&self, state: &State, id: u64) -> Result<(), String>;
     async fn verify_return(&self, state: &State, block: u64) -> Result<(), String>;
+    async fn verify_external_proposal(
+        &self,
+        state: &State,
+        id: u64,
+        terminal: bool,
+    ) -> Result<(), String>;
 }
 pub(crate) struct Replica;
 impl CreationClient for Replica {
@@ -63,6 +69,14 @@ impl CreationClient for Replica {
     }
     async fn verify_return(&self, s: &State, block: u64) -> Result<(), String> {
         protocol::verify_return(s, block).await
+    }
+    async fn verify_external_proposal(
+        &self,
+        s: &State,
+        id: u64,
+        terminal: bool,
+    ) -> Result<(), String> {
+        protocol::verify_external_proposal(s, id, terminal).await
     }
 }
 
@@ -150,12 +164,52 @@ pub(crate) async fn perform(
         return Ok(());
     }
     if let Step::ReconcileDisbursement(block) = step {
-        if !matches!(s.pending.as_ref().map(|p| &p.step), Some(Step::Disburse)) {
+        if !matches!(
+            s.pending.as_ref().map(|p| &p.step),
+            Some(Step::Disburse { .. })
+        ) {
             return Err("No original disbursement intent".into());
         }
         client.verify_return(s, block).await?;
         s.disbursement_block = Some(block);
         s.phase = Phase::Recovered;
+        return Ok(());
+    }
+    if let Step::ResolveProposal(id) = step {
+        let current = s
+            .external_proposal
+            .as_ref()
+            .ok_or("No original external proposal reservation")?;
+        if current.proposal_id.is_some_and(|original| original != id) {
+            return Err("External proposal ID substitution".into());
+        }
+        client.verify_external_proposal(s, id, false).await?;
+        s.external_proposal.as_mut().unwrap().proposal_id = Some(id);
+        return Ok(());
+    }
+    if let Step::MarkProposalDispatched(id) = &step {
+        let intent = s
+            .external_proposal
+            .as_mut()
+            .ok_or("No reserved external proposal")?;
+        if intent.intent_id != *id || intent.dispatched || intent.proposal_id.is_some() {
+            return Err(
+                "The original proposal dispatch is already owned or resolved; never submit again"
+                    .into(),
+            );
+        }
+        intent.dispatched = true;
+        return Ok(());
+    }
+    if let Step::CancelReservedProposal(id) = &step {
+        let intent = s
+            .external_proposal
+            .as_ref()
+            .ok_or("No reserved external proposal")?;
+        if intent.intent_id != *id || intent.dispatched || intent.proposal_id.is_some() {
+            return Err("A dispatched or resolved proposal cannot be cancelled as unsent".into());
+        }
+        s.external_proposal = None;
         return Ok(());
     }
     if step == Step::Claim {
@@ -169,6 +223,14 @@ pub(crate) async fn perform(
         }
         client.managers(s).await?;
         if let Some(n) = client.neuron(s).await? {
+            if s.neuron_id.is_none()
+                && !matches!(
+                    s.pending.as_ref().and_then(|p| p.effect.as_ref()),
+                    Some(Effect::Claim)
+                )
+            {
+                return Err("Existing neuron has no original dispatched claim intent; do not adopt a fresh creation onto it".into());
+            }
             let id = secure_target(s, &n)?;
             s.neuron_id = Some(id);
             s.phase = Phase::Configuring;
@@ -216,6 +278,46 @@ pub(crate) async fn perform(
     }
     secure_target(s, &n)?;
     match step {
+        Step::ReserveProposal(mut intent) => {
+            configured(client, s, &n).await?;
+            if intent.revision != s.plan.revision
+                || intent.proposer == 0
+                || intent.intent_id.len() != 32
+                || intent.request_digest.len() != 32
+                || intent.proposal_id.is_some()
+                || intent.dispatched
+            {
+                return Err("Invalid external proposal reservation".into());
+            }
+            let permitted = match intent.kind {
+                ProposalKind::Registration => {
+                    s.plan.profile == Profile::ProductionCandidate
+                        && s.phase == Phase::AwaitingRegistration
+                        && s.plan.metadata.is_some()
+                }
+                ProposalKind::Rehearsal => {
+                    s.plan.managers.contains(&intent.proposer)
+                        && (s.phase == Phase::Rehearsing || s.phase == Phase::RecoverableTestReady)
+                }
+            };
+            if !permitted {
+                return Err("Proposal is outside the reviewed creation phase/profile".into());
+            }
+            if let Some(existing) = &s.external_proposal {
+                if existing.intent_id == intent.intent_id
+                    && existing.request_digest == intent.request_digest
+                    && existing.proposer == intent.proposer
+                    && existing.kind == intent.kind
+                {
+                    return Ok(());
+                }
+                return Err(
+                    "Reconcile the original external proposal before another submission".into(),
+                );
+            }
+            intent.created_at = client.now();
+            s.external_proposal = Some(intent);
+        }
         Step::Configure => {
             if let Some(Effect::Following(f)) = s.pending.as_ref().and_then(|p| p.effect.clone()) {
                 if n.visibility != Some(2) {
@@ -316,6 +418,7 @@ pub(crate) async fn perform(
             if n.visibility != Some(2) {
                 return Err("Visibility readback mismatch".into());
             }
+            s.public_visibility_confirmed = true;
             if let Some(Effect::Following(f)) = s.pending.as_ref().and_then(|p| p.effect.as_ref()) {
                 let observed = n
                     .followees
@@ -337,6 +440,10 @@ pub(crate) async fn perform(
             }
         }
         Step::CommitLock => {
+            let economics = client.economics().await?;
+            if s.plan.lock_seconds < economics.minimum_voting_delay() {
+                return Err("Network voting minimum exceeds the fixed Standard lock; no increase was dispatched".into());
+            }
             if n.visibility != Some(2) || !exact_following(s, &n) {
                 return Err("Finish reversible setup before committing lock".into());
             }
@@ -403,6 +510,15 @@ pub(crate) async fn perform(
             }
         }
         Step::BeginRehearsal | Step::Seal(_) => {
+            if let Some(id) = s.external_proposal.as_ref().and_then(|p| p.proposal_id) {
+                client.verify_external_proposal(s, id, true).await?;
+            }
+            if s.external_proposal
+                .as_ref()
+                .is_some_and(|p| p.proposal_id.is_none())
+            {
+                return Err("Original external proposal outcome remains unresolved".into());
+            }
             if s.plan.profile != Profile::ProductionCandidate {
                 return Err("Test profile cannot finalise".into());
             }
@@ -437,6 +553,7 @@ pub(crate) async fn perform(
             } else {
                 s.rehearsal_started_at = Some(client.now());
                 s.rehearsal_proposal = None;
+                s.external_proposal = None;
                 s.phase = Phase::Rehearsing;
             }
         }
@@ -473,7 +590,10 @@ pub(crate) async fn perform(
             s.rehearsal_proposal = None;
             s.phase = Phase::Recovering;
         }
-        Step::Disburse => {
+        Step::Disburse {
+            expected_amount_e8s,
+            expected_fee_e8s,
+        } => {
             if s.pending.as_ref().unwrap().effect.is_some() {
                 return Err("Disbursement may have executed; supply its original ledger block for reconciliation, never resend".into());
             }
@@ -494,6 +614,13 @@ pub(crate) async fn perform(
                     .and_then(|v| v.checked_sub(economics.transaction_fee_e8s))
                     .ok_or("Stake cannot cover fees")?,
             );
+            s.pending.as_mut().unwrap().expected_return_fee_e8s =
+                Some(economics.transaction_fee_e8s);
+            if s.pending.as_ref().unwrap().expected_return_e8s != Some(expected_amount_e8s)
+                || economics.transaction_fee_e8s != expected_fee_e8s
+            {
+                return Err("Disbursement amount or fee changed after the exact review; no transfer was sent".into());
+            }
             effect(client, s, Effect::Disburse);
             let reply = send(
                 client,
@@ -513,7 +640,12 @@ pub(crate) async fn perform(
             s.disbursement_block = Some(reply.transfer_block_height);
             s.phase = Phase::Recovered;
         }
-        Step::Claim | Step::Unseal | Step::ReconcileDisbursement(_) => {
+        Step::Claim
+        | Step::Unseal
+        | Step::ReconcileDisbursement(_)
+        | Step::ResolveProposal(_)
+        | Step::MarkProposalDispatched(_)
+        | Step::CancelReservedProposal(_) => {
             unreachable!("handled before target read")
         }
     }

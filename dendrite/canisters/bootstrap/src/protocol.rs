@@ -90,6 +90,23 @@ pub async fn stake_balance(sub: Vec<u8>) -> Result<u64, String> {
 pub struct Economics {
     pub neuron_minimum_stake_e8s: u64,
     pub transaction_fee_e8s: u64,
+    pub voting_power_economics: Option<VotingEconomics>,
+}
+#[derive(CandidType, Deserialize)]
+pub struct VotingEconomics {
+    pub neuron_minimum_dissolve_delay_to_vote_seconds: Option<u64>,
+}
+impl Economics {
+    pub fn minimum_voting_delay(&self) -> u64 {
+        // Executable defaults of the qualified source, separate from Standard.
+        // The browser verifies its exact deployed module before creation writes.
+        match &self.voting_power_economics {
+            None => 15_778_800,
+            Some(p) => p
+                .neuron_minimum_dissolve_delay_to_vote_seconds
+                .unwrap_or(1_209_600),
+        }
+    }
 }
 pub async fn economics() -> Result<Economics, String> {
     Call::unbounded_wait(NNS_GOVERNANCE, "get_network_economics_parameters")
@@ -320,6 +337,97 @@ pub enum RehearsalCommand {
     Follow(Reserved),
     Configure(Reserved),
 }
+#[derive(CandidType, Deserialize)]
+struct ExternalRecord {
+    status: i32,
+    topic: i32,
+    proposal_timestamp_seconds: u64,
+    proposer: Option<NeuronId>,
+    proposal: Option<ExternalPayload>,
+}
+#[derive(CandidType, Deserialize)]
+struct ExternalPayload {
+    summary: String,
+    action: Option<ExternalAction>,
+}
+#[derive(CandidType, Deserialize)]
+enum ExternalAction {
+    ManageNeuron(Managed),
+    RegisterKnownNeuron(RegistrationRead),
+    Motion(Reserved),
+}
+#[derive(CandidType, Deserialize)]
+struct RegistrationRead {
+    id: Option<NeuronId>,
+    known_neuron_data: Option<ic_clients::KnownNeuronData>,
+}
+pub async fn verify_external_proposal(s: &State, id: u64, terminal: bool) -> Result<(), String> {
+    use crate::model::ProposalKind;
+    let intent = s
+        .external_proposal
+        .as_ref()
+        .ok_or("No original external proposal")?;
+    let p: Option<ExternalRecord> = Call::unbounded_wait(NNS_GOVERNANCE, "get_proposal_info")
+        .with_arg(id)
+        .await
+        .map_err(bounded)?
+        .candid()
+        .map_err(bounded)?;
+    let p = p.ok_or("Original external proposal unavailable")?;
+    if terminal && !matches!(p.status, 2 | 4 | 5) {
+        return Err("Original proposal is still open or adopted without execution".into());
+    }
+    let payload = p.proposal.ok_or("Original proposal payload unavailable")?;
+    let hex = |bytes: &[u8]| bytes.iter().map(|v| format!("{v:02x}")).collect::<String>();
+    let marker = format!(
+        "Dendrite creation {} operation {}",
+        hex(&s.plan.creation_id),
+        hex(&intent.intent_id)
+    );
+    if p.proposer.as_ref().map(|p| p.id) != Some(intent.proposer)
+        || p.proposal_timestamp_seconds < intent.created_at
+        || !payload.summary.contains(&marker)
+        || payload.summary.len() > 5000
+        || !(1..=5).contains(&p.status)
+    {
+        return Err("Proposal does not match its original reserved operation/proposer/time".into());
+    }
+    match (&intent.kind, payload.action) {
+        (ProposalKind::Registration, Some(ExternalAction::RegisterKnownNeuron(r))) => {
+            let expected = s
+                .plan
+                .metadata
+                .as_ref()
+                .ok_or("No reviewed registration metadata")?;
+            let data = r
+                .known_neuron_data
+                .ok_or("Registration metadata unavailable")?;
+            if p.topic != 4
+                || r.id.as_ref().map(|id| id.id) != s.neuron_id
+                || data.name != expected.name
+                || data.description.as_deref().unwrap_or("") != expected.description
+                || data.links.unwrap_or_default() != expected.links
+            {
+                return Err("Registration payload differs from the reviewed creation".into());
+            }
+        }
+        (ProposalKind::Rehearsal, Some(ExternalAction::ManageNeuron(m))) => {
+            let target = match m.neuron_id_or_subaccount {
+                Some(ReadId::NeuronId(id)) => Some(id.id),
+                None => m.id.map(|id| id.id),
+                _ => None,
+            };
+            if p.topic != 1
+                || target != s.neuron_id
+                || !matches!(m.command, Some(RehearsalCommand::RefreshVotingPower(_)))
+            {
+                return Err("Reserved rehearsal is not the exact target's benign refresh".into());
+            }
+        }
+        _ => return Err("Reserved proposal action differs from its fixed creation purpose".into()),
+    }
+    Ok(())
+}
 pub async fn rehearsal(s: &State, id: u64) -> Result<(), String> {
     let p: Option<Rehearsal> = Call::unbounded_wait(NNS_GOVERNANCE, "get_proposal_info")
         .with_arg(id)
@@ -357,7 +465,7 @@ pub async fn rehearsal(s: &State, id: u64) -> Result<(), String> {
     // IDs. C cannot see other callers' filtered ballots and never claims it can.
     Ok(())
 }
-#[derive(CandidType)]
+#[derive(CandidType, Deserialize)]
 struct Blocks {
     start: u64,
     length: u64,
@@ -366,10 +474,27 @@ struct Blocks {
 struct History {
     first_block_index: u64,
     blocks: Vec<Block>,
+    archived_blocks: Vec<ArchivedRange>,
+}
+candid::define_function!(ArchiveCallback : (Blocks) -> (Result<ArchivedBlocks, Reserved>) query);
+#[derive(CandidType, Deserialize)]
+struct ArchivedRange {
+    start: u64,
+    length: u64,
+    callback: ArchiveCallback,
+}
+#[derive(CandidType, Deserialize)]
+struct ArchivedBlocks {
+    blocks: Vec<Block>,
 }
 #[derive(CandidType, Deserialize)]
 struct Block {
     transaction: Transaction,
+    timestamp: Timestamp,
+}
+#[derive(CandidType, Deserialize)]
+struct Timestamp {
+    timestamp_nanos: u64,
 }
 #[derive(CandidType, Deserialize)]
 struct Transaction {
@@ -388,7 +513,7 @@ enum LedgerOperation {
     Approve(Reserved),
 }
 pub async fn verify_return(s: &State, block: u64) -> Result<(), String> {
-    let h: History = Call::unbounded_wait(LEDGER, "query_blocks")
+    let mut h: History = Call::unbounded_wait(LEDGER, "query_blocks")
         .with_arg(Blocks {
             start: block,
             length: 1,
@@ -397,24 +522,57 @@ pub async fn verify_return(s: &State, block: u64) -> Result<(), String> {
         .map_err(bounded)?
         .candid()
         .map_err(bounded)?;
-    if h.first_block_index != block || h.blocks.len() != 1 {
-        return Err(
-            "Return block unavailable in direct ledger history; preserve unresolved receipt".into(),
-        );
-    }
+    // Only a callback endorsed by the fixed, replicated Ledger response is
+    // accepted. The caller supplies a block index, never a destination/method.
+    let returned = if h.first_block_index == block && h.blocks.len() == 1 {
+        h.blocks.pop().unwrap()
+    } else {
+        if !h.blocks.is_empty() || h.archived_blocks.len() != 1 {
+            return Err("Original return block is absent or ambiguous".into());
+        }
+        let range = h.archived_blocks.pop().unwrap();
+        if block < range.start
+            || block
+                .checked_sub(range.start)
+                .is_none_or(|n| n >= range.length)
+            || range.callback.0.method != "get_blocks"
+            || range.callback.0.principal == Principal::anonymous()
+            || range.callback.0.principal == Principal::management_canister()
+        {
+            return Err("Ledger did not endorse this bounded archive callback".into());
+        }
+        let result: Result<ArchivedBlocks, Reserved> =
+            Call::unbounded_wait(range.callback.0.principal, "get_blocks")
+                .with_arg(Blocks {
+                    start: block,
+                    length: 1,
+                })
+                .await
+                .map_err(bounded)?
+                .candid()
+                .map_err(bounded)?;
+        let mut archived = result.map_err(|_| "Ledger archive rejected the original block")?;
+        if archived.blocks.len() != 1 {
+            return Err("Original archived return block unavailable".into());
+        }
+        archived.blocks.pop().unwrap()
+    };
     let Some(LedgerOperation::Transfer {
         from,
         to,
         amount,
         fee,
-    }) = &h.blocks[0].transaction.operation
+    }) = &returned.transaction.operation
     else {
         return Err("Return was not a transfer".into());
     };
     if *from != crate::model::legacy_account(NNS_GOVERNANCE, &s.staking_subaccount)
         || *to != s.plan.return_account
         || Some(amount.e8s) != s.pending.as_ref().and_then(|p| p.expected_return_e8s)
-        || fee.e8s == 0
+        || Some(fee.e8s) != s.pending.as_ref().and_then(|p| p.expected_return_fee_e8s)
+        || s.pending
+            .as_ref()
+            .is_none_or(|p| returned.timestamp.timestamp_nanos < p.dispatched_at)
     {
         return Err("Return block does not match the original disbursement intent".into());
     }

@@ -90,6 +90,9 @@ export function normalizeCertifiedCanisterState(certificate, canisterId) {
     throw new TypeError("Certified module-hash status is ambiguous.");
   }
   const certificateTimeNanos = decodeUnsignedLeb128(foundBytes(certificate, PATH_TIME, "Certificate time"));
+  const dataLookup = certificate.lookup_path(path(principal, "certified_data"));
+  let certifiedData;
+  if(dataLookup.status===LookupPathStatus.Found){if(!(dataLookup.value instanceof Uint8Array)||dataLookup.value.length>32)throw new TypeError("Certified data is malformed.");certifiedData=new Uint8Array(dataLookup.value);}
   const certificateTimeMilliseconds = certificateTimeNanos / 1_000_000n;
   if (certificateTimeMilliseconds > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new TypeError("Certificate time is outside the supported range.");
@@ -97,6 +100,7 @@ export function normalizeCertifiedCanisterState(certificate, canisterId) {
   return Object.freeze({
     callSucceeded: true,
     moduleHash,
+    certifiedData,
     controllers: Object.freeze(controllers),
     certificateTime: new Date(Number(certificateTimeMilliseconds)).toISOString(),
   });
@@ -124,6 +128,7 @@ export function createCertifiedCanisterStateReader(options = {}) {
           PATH_TIME,
           path(principal, "controllers"),
           path(principal, "module_hash"),
+          path(principal, "certified_data"),
         ];
         const response = await agent.readState(principal, { paths: requestedPaths });
         const certificate = await createCertificate({

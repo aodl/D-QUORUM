@@ -3,8 +3,12 @@
 export const idlFactory = ({ IDL }) => {
   const ManageNeuronRequest = IDL.Rec();
   const Proposal = IDL.Rec();
+  const VotingPowerEconomics = IDL.Record({
+    'neuron_minimum_dissolve_delay_to_vote_seconds' : IDL.Opt(IDL.Nat64),
+  });
   const NetworkEconomics = IDL.Record({
     'neuron_minimum_stake_e8s' : IDL.Nat64,
+    'voting_power_economics' : IDL.Opt(VotingPowerEconomics),
     'neuron_management_fee_per_proposal_e8s' : IDL.Nat64,
     'reject_cost_e8s' : IDL.Nat64,
     'transaction_fee_e8s' : IDL.Nat64,
@@ -358,6 +362,20 @@ export const idlFactory = ({ IDL }) => {
     'get_proposal_info' : IDL.Func(
         [IDL.Nat64],
         [IDL.Opt(ProposalInfo)],
+        [],
+      ),
+    'list_known_neurons' : IDL.Func(
+        [],
+        [
+          IDL.Record({
+            'known_neurons' : IDL.Vec(
+              IDL.Record({
+                'id' : IDL.Opt(NeuronId),
+                'known_neuron_data' : IDL.Opt(KnownNeuronData),
+              })
+            ),
+          }),
+        ],
         [],
       ),
     'list_neurons' : IDL.Func([ListNeurons], [ListNeuronsResponse], []),

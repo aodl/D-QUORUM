@@ -5,12 +5,18 @@ import {parseNeuronId} from "./ids.js";
 import {parseIcpToE8s} from "./transaction.js";
 import {RECOGNISED_TOPICS, SOURCE_REVISION, OMEGA_REJECT_NEURON_ID} from "./preliminary-evidence.js";
 import {MAX_DISSOLVE_DELAY_SECONDS, STANDARD_VERSION} from "./preliminary-evaluator.js";
-import {encodeBootstrapPlan} from "./creation-protocol.js";
 import {bytesHex,hexBytes,sha256Hex,legacyAccount,validateLegacyAccount} from "./creation-accounts.js";
 
 export const CREATION_POLICY=Object.freeze(policy);
 export const CREATION_PROTOCOL_PINS=Object.freeze(protocolPins);
-const fields=["version","profile","owner","network","dendrite_service","origin","api_host","funding_budget_e8s","provision_cycles","policy_version","creation_id","nonce","revision","policy_revision","bootstrap_sha256","managers","committed_topics","following","stake_e8s","lock_seconds","cycle_reserve","return_account","metadata"];
+export function creationVotingMinimum(economics,qualifiedModule){
+  if(qualifiedModule!==protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"])throw Error("Voting defaults require the exact qualified Governance executable.");
+  const outer=economics.voting_power_economics;if(!Array.isArray(outer)||outer.length>1)throw Error("Current voting economics are unavailable.");
+  if(!outer.length)return 15_778_800n;const inner=outer[0]?.neuron_minimum_dissolve_delay_to_vote_seconds;
+  if(!Array.isArray(inner)||inner.length>1||(inner.length&&(typeof inner[0]!=="bigint"||inner[0]<0n)))throw Error("Malformed current minimum voting delay.");
+  return inner[0]??1_209_600n;
+}
+const fields=["version","profile","owner","network","dendrite_service","origin","api_host","funding_budget_e8s","icp_fee_e8s","provision_cycles","policy_version","creation_id","nonce","revision","policy_revision","bootstrap_sha256","managers","committed_topics","following","stake_e8s","lock_seconds","cycle_reserve","return_account","metadata"];
 const utf8=new TextEncoder();
 export function exactKeys(value,keys,label="creation data") {
   if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).length!==keys.length||Object.keys(value).some(k=>!keys.includes(k)))throw Error(`Invalid ${label} schema.`);
@@ -32,7 +38,7 @@ export function planJson(plan) {
   const out={};
   for(const name of fields){const value=plan[name];out[name]=typeof value==="bigint"?value.toString():value instanceof Uint8Array?bytesHex(value):value;}
   out.profile=variant(plan.profile);out.network=variant(plan.network);out.owner=plan.owner.toText();out.dendrite_service=plan.dendrite_service.toText();
-  out.managers=plan.managers.map(String);out.following=plan.following.map(f=>({topic:f.topic,followees:f.followees.map(String)}));out.metadata=plan.metadata[0]??null;
+  out.managers=Array.from(plan.managers,String);out.committed_topics=Array.from(plan.committed_topics);out.following=Array.from(plan.following,f=>({topic:f.topic,followees:Array.from(f.followees,String)}));out.metadata=plan.metadata[0]??null;
   return out;
 }
 export function parseCreationPlan(value,bindings) {
@@ -41,7 +47,7 @@ export function parseCreationPlan(value,bindings) {
   if(!["ProductionCandidate","RecoverableTest"].includes(value.profile)||!["Ic","Local"].includes(value.network))throw Error("Unsupported creation profile/network.");
   const plan={...value,profile:{[value.profile]:null},network:{[value.network]:null},owner:Principal.fromText(value.owner),dendrite_service:Principal.fromText(value.dendrite_service)};
   if(plan.owner.isAnonymous()||plan.owner.toUint8Array().at(-1)!==2)throw Error("Creation requires the stable authenticated II principal P.");
-  for(const name of ["funding_budget_e8s","provision_cycles","nonce","revision","stake_e8s","lock_seconds","cycle_reserve"])plan[name]=natString(value[name],{nonzero:!["nonce","lock_seconds"].includes(name)});
+  for(const name of ["funding_budget_e8s","icp_fee_e8s","provision_cycles","nonce","revision","stake_e8s","lock_seconds","cycle_reserve"])plan[name]=natString(value[name],{nonzero:!["nonce","lock_seconds"].includes(name)});
   for(const name of ["creation_id","bootstrap_sha256","return_account"])plan[name]=hexBytes(value[name],32);
   validateLegacyAccount(plan.return_account);
   if(bindings&&(value.origin!==bindings.origin||value.api_host!==bindings.host||value.dendrite_service!==bindings.canisterId||value.network!==(bindings.local?"Local":"Ic")))throw Error("Receipt belongs to another network, API or application origin.");
@@ -62,22 +68,48 @@ export function parseCreationPlan(value,bindings) {
   else if(plan.following.length!==1||plan.committed_topics.length)throw Error("Test profile supports only topic-1 following.");
   plan.metadata=metadata(value.metadata);return plan;
 }
-export const creationPlanDigest=plan=>sha256Hex(encodeBootstrapPlan(plan));
+export function creationPlanDigest(p){const out=[...utf8.encode("dendrite-creation-plan-v1")];
+  const number=(value,width)=>{let n=BigInt(value);for(let i=0;i<width;i++){out.push(Number(n&255n));n>>=8n;}if(n!==0n)throw Error("Plan digest integer overflow.");};
+  const blob=value=>{number(value.length,4);out.push(...value);},text=value=>blob(utf8.encode(value)),ids=value=>{number(value.length,4);for(const id of value)number(id,8);};
+  number(p.version,2);out.push(variant(p.profile)==="ProductionCandidate"?1:0);blob(p.owner.toUint8Array());out.push(variant(p.network)==="Ic"?1:0);blob(p.dendrite_service.toUint8Array());text(p.origin);text(p.api_host);
+  for(const n of [p.funding_budget_e8s,p.icp_fee_e8s,p.provision_cycles])number(n,8);text(p.policy_version);blob(p.creation_id);number(p.nonce,8);number(p.revision,8);text(p.policy_revision);blob(p.bootstrap_sha256);ids(p.managers);
+  number(p.committed_topics.length,4);for(const topic of p.committed_topics)number(topic,4);number(p.following.length,4);for(const row of p.following){number(row.topic,4);ids(row.followees);}
+  for(const n of [p.stake_e8s,p.lock_seconds,p.cycle_reserve])number(n,8);blob(p.return_account);out.push(p.metadata.length?1:0);if(p.metadata.length){const m=p.metadata[0];text(m.name);text(m.description);number(m.links.length,4);for(const link of m.links)text(link);}return sha256Hex(Uint8Array.from(out));
+}
+export function bootstrapReadinessMarker(s){const id=s.controller.toUint8Array(),phase=["AwaitingStake","Configuring","AwaitingLock","AwaitingRegistration","RecoverableTestReady","Rehearsing","Sealed","Recovering","Recovered"].indexOf(variant(s.phase));
+  if(s.plan_digest.length!==32||phase<0||s.sequence<0n||s.sequence>0xffffffffffffffffn)throw Error("Malformed bootstrap readiness marker.");
+  const out=[...utf8.encode("dendrite-bootstrap-readiness-v1"),id.length,...id,...s.plan_digest];const number=n=>{for(let i=0;i<8;i++){out.push(Number(n&255n));n>>=8n;}};
+  number(s.sequence);out.push(phase,s.pending.length?1:0,s.neuron_id.length?1:0);if(s.neuron_id.length)number(s.neuron_id[0]);out.push(s.external_proposal?.[0]?.proposal_id.length===0?1:0);return sha256Hex(Uint8Array.from(out));
+}
+const immutableRevisionFields=["version","profile","owner","network","dendrite_service","origin","api_host","funding_budget_e8s","icp_fee_e8s","provision_cycles","policy_version","creation_id","nonce","policy_revision","bootstrap_sha256","lock_seconds","return_account"];
+export function validateCreationRevision(previous,next){const before=planJson(previous),after=planJson(next);
+  if(next.revision!==previous.revision+1n||immutableRevisionFields.some(k=>JSON.stringify(before[k])!==JSON.stringify(after[k])))throw Error("A plan revision cannot change profile, creator, funding, controller derivation, return account or artifact bindings.");return next;}
+export function createCreationRevision(previous,input,bindings,bootstrap){
+  const candidate=createCreationPlan({...input,ledgerFeeE8s:previous.icp_fee_e8s},previous.owner,bindings,bootstrap),before=planJson(previous),after=planJson(candidate);
+  if(input.profile!==before.profile)throw Error("A profile change requires a fresh creation; it cannot revise this receipt.");
+  for(const key of immutableRevisionFields)after[key]=before[key];after.revision=String(previous.revision+1n);
+  return validateCreationRevision(previous,parseCreationPlan(after,bindings));
+}
 export function createCreationPlan(input,owner,bindings,bootstrap) {
-  const creationId=crypto.getRandomValues(new Uint8Array(32)),nonceBytes=crypto.getRandomValues(new Uint8Array(8));
+  const creationId=crypto.getRandomValues(new Uint8Array(32)),nonce=BigInt(Date.now())*1_000_000n;
   const managers=input.managers.map(String),production=input.profile==="ProductionCandidate",committed=production?input.committedTopics:[];
   const following=production?RECOGNISED_TOPICS.map(topic=>({topic,followees:topic===1?managers:committed.includes(topic)?input.delegates[String(topic)].map(String):[input.defaultNeuronId]})):[{topic:1,followees:managers}];
   return parseCreationPlan({version:policy.version,profile:input.profile,owner:owner.toText(),network:bindings.local?"Local":"Ic",dendrite_service:bindings.canisterId,origin:bindings.origin,api_host:bindings.host,
-    funding_budget_e8s:parseIcpToE8s(input.provisionIcp).toString(),provision_cycles:String(input.provisionCycles),policy_version:STANDARD_VERSION,creation_id:bytesHex(creationId),nonce:new DataView(nonceBytes.buffer).getBigUint64(0).toString(),revision:"1",policy_revision:SOURCE_REVISION,bootstrap_sha256:bootstrap.sha256,
+    funding_budget_e8s:parseIcpToE8s(input.provisionIcp).toString(),icp_fee_e8s:String(input.ledgerFeeE8s),provision_cycles:String(input.provisionCycles),policy_version:STANDARD_VERSION,creation_id:bytesHex(creationId),nonce:nonce.toString(),revision:"1",policy_revision:SOURCE_REVISION,bootstrap_sha256:bootstrap.sha256,
     managers,committed_topics:committed,following,stake_e8s:parseIcpToE8s(input.stakeIcp).toString(),lock_seconds:production?policy.production_lock_seconds:policy.initial_claim_lock_seconds,cycle_reserve:policy.minimum_cycle_reserve,
     return_account:input.returnAccount?bytesHex(validateLegacyAccount(input.returnAccount)):bytesHex(legacyAccount(owner)),metadata:input.metadata??null},bindings);
 }
 
-export async function creationPreflight(plan,{actor,readSystem,now=BigInt(Math.floor(Date.now()/1000))}) {
+export async function creationPreflight(plan,{actor,readSystem,targetId,now=BigInt(Math.floor(Date.now()/1000))}) {
   const economics=await actor.get_network_economics_parameters();
   for(const field of ["neuron_minimum_stake_e8s","reject_cost_e8s","transaction_fee_e8s","neuron_management_fee_per_proposal_e8s"])if(typeof economics?.[field]!=="bigint"||economics[field]<0n)throw Error("Current network economics are unavailable.");
   if(plan.stake_e8s<economics.neuron_minimum_stake_e8s)throw Error("Reviewed stake is below the current network minimum; funding is blocked.");
   for(const [canister,hash] of Object.entries(protocolPins.modules)){const state=await readSystem(canister);if(!state.moduleHash||bytesHex(state.moduleHash)!==hash)throw Error(`Unreviewed deployed protocol module ${canister}; creation is blocked before spending.`);}
+  const votingMinimumSeconds=creationVotingMinimum(economics,protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"]);
+  if(variant(plan.profile)==="ProductionCandidate"&&plan.lock_seconds<votingMinimumSeconds)throw Error("Current network voting minimum exceeds the pinned Standard lock. Creation is blocked before spending; the Standard lock is unchanged.");
+  if(plan.metadata.length){const known=await actor.list_known_neurons();
+    if(!Array.isArray(known?.known_neurons)||known.known_neurons.length>5000||new Set(known.known_neurons.map(n=>String(n.id?.[0]?.id))).size!==known.known_neurons.length||known.known_neurons.some(n=>!n.id?.[0]?.id||!n.known_neuron_data?.[0]))throw Error("Known-neuron catalogue is incomplete, malformed or exceeds the reviewed preflight bound.");
+    if(known.known_neurons.some(n=>n.known_neuron_data[0].name===plan.metadata[0].name&&n.id[0].id!==targetId))throw Error("Proposed known-neuron name already belongs to another neuron. No funding or proposal submission was made.");}
   const response=await actor.list_neurons({neuron_ids:plan.managers,include_neurons_readable_by_caller:false,include_empty_neurons_readable_by_caller:[false],include_public_neurons_in_full_neurons:[true],page_number:[0n],page_size:[15n],neuron_subaccounts:[]});
   if(!Array.isArray(response?.full_neurons)||response.full_neurons.length!==plan.managers.length||response.total_pages_available?.[0]!==1n)throw Error("Required manager evidence is missing, oversized or unavailable.");
   const seen=new Set(),managers=[];
@@ -91,5 +123,5 @@ export async function creationPreflight(plan,{actor,readSystem,now=BigInt(Math.f
     managers.push({id,full,scalar,role});
   }
   if(!managers.some(m=>m.role!=="No authority"))throw Error("Creator has no observed authority on a proposed manager. Listing a known neuron is not its owner's consent.");
-  return {economics,managers,observedAt:now};
+  return {economics,managers,votingMinimumSeconds,observedAt:now};
 }

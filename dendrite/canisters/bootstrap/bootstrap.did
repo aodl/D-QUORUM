@@ -8,6 +8,16 @@ type Effect = variant {
   Claim;
   Disburse;
 };
+type ExternalProposal = record {
+  kind : ProposalKind;
+  dispatched : bool;
+  created_at : nat64;
+  proposal_id : opt nat64;
+  proposer : nat64;
+  request_digest : blob;
+  revision : nat64;
+  intent_id : blob;
+};
 type Following = record { topic : int32; followees : vec nat64 };
 type Metadata = record { name : text; description : text; links : vec text };
 type Network = variant { Ic; Local };
@@ -16,6 +26,7 @@ type Pending = record {
   expected_return_e8s : opt nat64;
   step : Step;
   effect : opt Effect;
+  expected_return_fee_e8s : opt nat64;
   revision : nat64;
   sequence : nat64;
 };
@@ -32,6 +43,7 @@ type Phase = variant {
 };
 type Plan = record {
   return_account : blob;
+  icp_fee_e8s : nat64;
   dendrite_service : principal;
   managers : vec nat64;
   owner : principal;
@@ -56,6 +68,7 @@ type Plan = record {
   profile : Profile;
 };
 type Profile = variant { ProductionCandidate; RecoverableTest };
+type ProposalKind = variant { Registration; Rehearsal };
 type Result = variant { Ok : State; Err : text };
 type State = record {
   controller : principal;
@@ -64,7 +77,9 @@ type State = record {
   plan_digest : blob;
   pending : opt Pending;
   plan : Plan;
+  public_visibility_confirmed : bool;
   version : nat16;
+  external_proposal : opt ExternalProposal;
   staking_subaccount : blob;
   phase : Phase;
   rehearsal_proposal : opt nat64;
@@ -73,16 +88,20 @@ type State = record {
   neuron_id : opt nat64;
 };
 type Step = variant {
+  MarkProposalDispatched : blob;
+  ResolveProposal : nat64;
+  CancelReservedProposal : blob;
   BeginRehearsal;
   Seal : nat64;
   Configure;
   StartDissolving;
+  ReserveProposal : ExternalProposal;
   Unseal;
   Refresh;
   ReconcileDisbursement : nat64;
   CommitLock;
   Claim;
-  Disburse;
+  Disburse : record { expected_fee_e8s : nat64; expected_amount_e8s : nat64 };
 };
 service : (Plan) -> {
   advance : (Advance) -> (Result);

@@ -3,8 +3,11 @@
 ## Mission
 
 Build Dendrite as the smallest credible anonymous verifier of the NNS Dendrite
-Standard. This tranche is one certified Rust canister, one live verification update
-method, and no application data storage. Read `DENDRITE_BUILD_SPEC.md` completely
+Standard. The long-lived verifier is one certified Rust canister, one live verification update
+method, and no application data storage. Creation additionally permits one temporary,
+owner-authenticated bootstrap per neuron, as specified in `DENDRITE_BUILD_SPEC.md`
+and `canisters/bootstrap/README.md`; it is not a shared service or custodian.
+Read `DENDRITE_BUILD_SPEC.md` completely
 before changing files and do not weaken a MUST requirement silently.
 
 ## Working method
@@ -32,7 +35,8 @@ before changing files and do not weaken a MUST requirement silently.
 
 ## Architecture constraints
 
-- Exactly one production canister named `dendrite`.
+- Exactly one long-lived production service named `dendrite`; the narrowly scoped
+  temporary bootstrap is a separate component type in this nested workspace.
 - Public application methods are only update `check_neuron : (nat64) ->
   (CheckResult)` and certified static-asset query `http_request`.
 - Every check is live and consensus-backed. Store no result, history, configuration,
@@ -43,12 +47,15 @@ before changing files and do not weaken a MUST requirement silently.
   canister `canister_info` only.
 - The frontend is embedded and served with HTTP certification v2.
 - A tiny heap-only global abuse guard may reset on upgrade and has no public counters.
-- Future privileged operations are browser-to-NNS and never relay a delegation through
-  Dendrite. Authentication and governance controls are deliberately out of scope now.
+- Ordinary privileged management remains browser-to-NNS with its Governance-only
+  child identity. Creation uses separately consented short-lived named scopes.
+  Neither service nor bootstrap receives a delegation or private signing material.
 
 ## Verification rules
 
-- Use `Neuron.known_neuron_data`; do not call a known-neuron catalogue or economics API.
+- Verifier report collection retains its reviewed metadata repair and evaluator
+  semantics. Creation planning/registration may read catalogue/economics through the
+  browser; those reads do not fabricate observed target fields or weaken evaluation.
 - Preserve raw following vectors and detect duplicate IDs and duplicate topic-map keys
   before constructing maps or sets.
 - Batch dependency `list_neurons` requests at 50 IDs or fewer and enforce the hard

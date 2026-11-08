@@ -5,7 +5,7 @@ import { runtimeConfiguration } from "./actor.js";
 import { ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID, validateProvisioningDelegation } from "./auth.js";
 import { idlFactory as bootstrapFactory, init as bootstrapInit } from "../../../../src/declarations/bootstrap/bootstrap.did.js";
 import { idlFactory as nnsFactory } from "../../../../src/declarations/nns-governance/nns-governance.did.js";
-import { bytesHex, hexBytes } from "./creation-accounts.js";
+import { bytesHex, hexBytes, stakingSubaccount } from "./creation-accounts.js";
 import { normalizeCertifiedCanisterState } from "./certified-canister-state.js";
 
 const opt = (value) => IDL.Opt(value), blob = IDL.Vec(IDL.Nat8), empty = IDL.Record({});
@@ -59,7 +59,7 @@ const updateSettingsArgs = IDL.Record({ canister_id: IDL.Principal, settings, se
 const managementFactory = () => IDL.Service({
   canister_status: IDL.Func([canisterArg], [IDL.Record({ status: IDL.Variant({ running: IDL.Null, stopping: IDL.Null, stopped: IDL.Null }),
     settings: IDL.Record({ controllers: IDL.Vec(IDL.Principal), compute_allocation: IDL.Nat, memory_allocation: IDL.Nat, freezing_threshold: IDL.Nat }),
-    module_hash: opt(blob), cycles: IDL.Nat })], []),
+    module_hash: opt(blob), cycles: IDL.Nat, version: IDL.Nat64 })], []),
   install_code: IDL.Func([installArgs], [], []), stop_canister: IDL.Func([canisterArg], [], []), start_canister: IDL.Func([canisterArg], [], []),
   uninstall_code: IDL.Func([uninstallArgs], [], []), update_settings: IDL.Func([updateSettingsArgs], [], []),
 });
@@ -68,8 +68,12 @@ const managementFactory = () => IDL.Service({
 // digest to the same Candid encoding sent by the supported actors.
 export const creationArgumentTypes = Object.freeze({ transfer: transferArgs, mint: mintArgs, create: createArgs, install: installArgs, uninstall: uninstallArgs, updateSettings: updateSettingsArgs, canister: canisterArg,
   legacyTransfer:legacyTransferArgs,
+  bootstrapAdvance:bootstrapFactory({IDL})._fields.find(([name])=>name==="advance")[1].argTypes[0],
   nns:nnsFactory({IDL})._fields.find(([name])=>name==="manage_neuron")[1].argTypes[0] });
+const proposalType=creationArgumentTypes.nns.getType()._fields.find(([name])=>name==="command")[1]._type._fields.find(([name])=>name==="MakeProposal")[1];
+export const encodeCreationRegistrationProposal=proposal=>IDL.encode([proposalType],[proposal]);
 export const encodeBootstrapPlan = (plan) => IDL.encode(bootstrapInit({ IDL }), [plan]);
+export const decodeBootstrapPlan = bytes => IDL.decode(bootstrapInit({IDL}),bytes)[0];
 
 const utf8 = new TextEncoder();
 const requestPath = (id, field) => [utf8.encode("request_status"), id, utf8.encode(field)];
@@ -96,7 +100,7 @@ async function witnessedUpdate(actor, methodName, args, includeSystemState) {
   let certificate = result.rawCertificate;
   if (includeSystemState) {
     certificate = (await agent.readState(canisterId, { paths: [requestPath(requestId, "status"), requestPath(requestId, "reply"),
-      systemPath(canisterId, "module_hash"), systemPath(canisterId, "controllers"), [utf8.encode("time")]] })).certificate;
+      systemPath(canisterId, "module_hash"), systemPath(canisterId, "controllers"),systemPath(canisterId,"certified_data"), [utf8.encode("time")]] })).certificate;
   }
   const witness = { request, request_id: bytesHex(requestId), certificate: bytesHex(certificate) };
   await verifyCreationWitness(witness, { agent, canisterId, owner: result.requestDetails.sender, methodName, includeSystemState, historical: false });
@@ -164,4 +168,10 @@ export async function readCreationLedgerBlock(index, options = {}) {
   const result = await archive.get_blocks({ start: BigInt(index), length: 1n });
   if (!result.Ok || result.Ok.blocks.length !== 1) throw new Error("Original archive block is unavailable.");
   return result.Ok.blocks[0];
+}
+
+export async function readCreationStakeBalance(controller,nonce,options={}){
+  const config=runtimeConfiguration(options),agent=await HttpAgent.create({host:config.host,shouldFetchRootKey:config.shouldFetchRootKey,verifyQuerySignatures:true,retryTimes:0});
+  const ledger=Actor.createActor(ledgerFactory,{agent,canisterId:ICP_LEDGER_CANISTER_ID});
+  return ledger.icrc1_balance_of({owner:Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),subaccount:[stakingSubaccount(controller,nonce)]});
 }

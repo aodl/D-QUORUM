@@ -14,6 +14,61 @@ struct Advance {
     revision: u64,
     step: bootstrap_model::Step,
 }
+// Permission probes use the actual Governance decoder, separate from the
+// automation client's deliberately narrower public command subset.
+#[derive(CandidType)]
+struct SetupRequest {
+    neuron_id_or_subaccount: Option<quorum_ic_clients::governance::Id>,
+    command: Option<SetupCommand>,
+}
+#[derive(CandidType)]
+enum SetupCommand {
+    Configure(SetupConfiguration),
+}
+#[derive(CandidType)]
+struct SetupConfiguration {
+    operation: Option<SetupOperation>,
+}
+#[derive(CandidType)]
+enum SetupOperation {
+    IncreaseDissolveDelay {
+        additional_dissolve_delay_seconds: u32,
+    },
+    SetVisibility {
+        visibility: Option<i32>,
+    },
+    StartDissolving(quorum_ic_clients::governance::Empty),
+}
+#[derive(CandidType)]
+struct SetupProposal {
+    title: Option<String>,
+    summary: String,
+    url: String,
+    action: Option<SetupAction>,
+}
+#[derive(CandidType)]
+enum SetupAction {
+    ManageNeuron(SetupRequest),
+}
+#[derive(CandidType)]
+enum SetupProposalCommand {
+    MakeProposal(SetupProposal),
+}
+#[derive(CandidType)]
+struct SetupProposalRequest {
+    neuron_id_or_subaccount: Option<quorum_ic_clients::governance::Id>,
+    command: Option<SetupProposalCommand>,
+}
+fn setup_request(id: u64, operation: SetupOperation) -> SetupRequest {
+    SetupRequest {
+        neuron_id_or_subaccount: Some(quorum_ic_clients::governance::Id::NeuronId(
+            quorum_ic_clients::governance::NeuronId { id },
+        )),
+        command: Some(SetupCommand::Configure(SetupConfiguration {
+            operation: Some(operation),
+        })),
+    }
+}
 fn advance(
     pic: &pocket_ic::PocketIc,
     c: candid::Principal,
@@ -46,7 +101,10 @@ fn transfer(
     );
     l::nat(result.unwrap()).unwrap()
 }
-fn provisional(pic: &pocket_ic::PocketIc, owner: candid::Principal) -> candid::Principal {
+fn create_through_cycles_ledger(
+    pic: &pocket_ic::PocketIc,
+    owner: candid::Principal,
+) -> candid::Principal {
     let block = transfer(
         pic,
         owner,
@@ -236,7 +294,7 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
         candid::encode_args(()).unwrap(),
         None,
     );
-    let c = provisional(&pic, owner);
+    let c = create_through_cycles_ledger(&pic, owner);
     let bytes = bootstrap_bytes();
     let plan = Plan {
         version: 1,
@@ -247,6 +305,7 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
         origin: "http://pi33i-pt777-77776-aaaaa-cai.localhost:4943".into(),
         api_host: "http://127.0.0.1:4943".into(),
         funding_budget_e8s: 200_010_000,
+        icp_fee_e8s: 10_000,
         provision_cycles: 2_000_000_000_000,
         policy_version: dendrite_types::STANDARD_VERSION.into(),
         creation_id: vec![42; 32],
@@ -488,9 +547,11 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     let at = now(&pic);
     let mut manager = seed(11, owner, at);
     manager.known_neuron_data = Some(known(11));
+    let mut permission_probe = seed(99, user(97), at);
+    permission_probe.hot_keys = vec![owner];
     install_real(
         &pic,
-        vec![manager],
+        vec![manager, permission_probe],
         vec![(
             l::Account {
                 owner,
@@ -502,7 +563,27 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
         artifact("ledger-canister"),
     );
     install_provisioning(&pic);
-    let c = provisional(&pic, owner);
+    for operation in [
+        SetupOperation::SetVisibility {
+            visibility: Some(2),
+        },
+        SetupOperation::IncreaseDissolveDelay {
+            additional_dissolve_delay_seconds: 1,
+        },
+    ] {
+        let denied: g::ManageResponse = update(
+            &pic,
+            GOVERNANCE,
+            owner,
+            "manage_neuron",
+            setup_request(99, operation),
+        );
+        assert!(
+            matches!(denied.command, Some(g::ResponseCommand::Error(_))),
+            "a real hotkey must not replace controller authority for creation setup"
+        );
+    }
+    let c = create_through_cycles_ledger(&pic, owner);
     let bytes = std::fs::read(
         root().join("dendrite/target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm"),
     )
@@ -516,6 +597,7 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
         origin: "http://pi33i-pt777-77776-aaaaa-cai.localhost:4943".into(),
         api_host: "http://127.0.0.1:4943".into(),
         funding_budget_e8s: 200_010_000,
+        icp_fee_e8s: 10_000,
         provision_cycles: 2_000_000_000_000,
         policy_version: dendrite_types::STANDARD_VERSION.into(),
         creation_id: vec![41; 32],
@@ -547,8 +629,13 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     let initial: Result<bootstrap_model::State, String> = update(&pic, c, owner, "status", 1u64);
     let initial = initial.unwrap();
     assert_eq!(initial.plan_digest, plan.digest());
-    pic.upgrade_canister(c, bytes, candid::encode_args(()).unwrap(), Some(owner))
-        .unwrap();
+    pic.upgrade_canister(
+        c,
+        bytes.clone(),
+        candid::encode_args(()).unwrap(),
+        Some(owner),
+    )
+    .unwrap();
     let restored: Result<bootstrap_model::State, String> = update(&pic, c, owner, "status", 1u64);
     assert_eq!(restored.unwrap(), initial);
     let sub = bootstrap_model::staking_subaccount(c, plan.nonce);
@@ -618,30 +705,65 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     assert_eq!(actual.full_neurons[0].followees, vec![fs(1, &[11])]);
     // A genuine Governance management proposal can operate the new target even
     // while C remains provisional. The full browser gate must exercise its UI.
-    let response: g::ManageResponse = update(
-        &pic,
-        GOVERNANCE,
-        owner,
-        "manage_neuron",
-        g::request(
-            11,
-            g::Command::MakeProposal(Box::new(g::MakeProposal {
-                url: String::new(),
-                title: Some("Refresh the provisional test neuron".into()),
-                summary:
-                    "Benign exact-target management rehearsal; creator still controls the bootstrap"
-                        .into(),
-                action: Some(g::ActionRequest::ManageNeuron(Box::new(g::request(
-                    t,
-                    g::Command::RefreshVotingPower(g::Empty {}),
-                )))),
-            })),
-        ),
+    let intent_id = vec![77u8; 32];
+    let marker = format!(
+        "Dendrite creation {} operation {}",
+        hex::encode(&plan.creation_id),
+        hex::encode(&intent_id)
     );
+    let proposal_request = g::request(
+        11,
+        g::Command::MakeProposal(Box::new(g::MakeProposal {
+            url: String::new(),
+            title: Some("Refresh the provisional test neuron".into()),
+            summary: marker,
+            action: Some(g::ActionRequest::ManageNeuron(Box::new(g::request(
+                t,
+                g::Command::RefreshVotingPower(g::Empty {}),
+            )))),
+        })),
+    );
+    let reservation = bootstrap_model::ExternalProposal {
+        kind: bootstrap_model::ProposalKind::Rehearsal,
+        intent_id: intent_id.clone(),
+        request_digest: Sha256::digest(candid::encode_one(&proposal_request).unwrap()).to_vec(),
+        proposer: 11,
+        revision: 1,
+        created_at: 0,
+        proposal_id: None,
+        dispatched: false,
+    };
+    advance(&pic, c, owner, Step::ReserveProposal(reservation)).unwrap();
+    advance(
+        &pic,
+        c,
+        owner,
+        Step::MarkProposalDispatched(intent_id.clone()),
+    )
+    .unwrap();
+    pic.upgrade_canister(c, bytes.clone(), encode_one(()).unwrap(), Some(owner))
+        .unwrap();
+    assert!(
+        advance(
+            &pic,
+            c,
+            owner,
+            Step::MarkProposalDispatched(intent_id.clone())
+        )
+        .is_err()
+    );
+    assert!(advance(&pic, c, owner, Step::CancelReservedProposal(intent_id)).is_err());
+    let response: g::ManageResponse =
+        update(&pic, GOVERNANCE, owner, "manage_neuron", proposal_request);
     let proposal = match response.command {
         Some(g::ResponseCommand::MakeProposal(p)) => p.proposal_id.unwrap().id,
         other => panic!("proposal was not created: {other:?}"),
     };
+    let resolved = advance(&pic, c, owner, Step::ResolveProposal(proposal)).unwrap();
+    assert_eq!(
+        resolved.external_proposal.unwrap().proposal_id,
+        Some(proposal)
+    );
     let oracle: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, owner, "get_proposal_info", proposal);
     let oracle = oracle.unwrap();
@@ -651,11 +773,46 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     assert_eq!(oracle.ballots.len(), 1);
     assert_eq!(oracle.ballots[0].0, 11);
     assert_eq!(oracle.ballots[0].1.vote, 1);
-    assert!(advance(&pic, c, owner, Step::Disburse).is_err());
+    assert!(
+        advance(
+            &pic,
+            c,
+            owner,
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000
+            }
+        )
+        .is_err()
+    );
+    let dissolution: g::ManageResponse = update(&pic, GOVERNANCE, owner, "manage_neuron", SetupProposalRequest {
+        neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: 11 })),
+        command: Some(SetupProposalCommand::MakeProposal(SetupProposal { title: Some("Explicit test recovery dissolution".into()), summary: "Verify the executable permits manager-proposed StartDissolving with not_for_profit=false. This is separately reviewed test recovery, not a Standard guarantee.".into(), url: String::new(), action: Some(SetupAction::ManageNeuron(setup_request(t, SetupOperation::StartDissolving(g::Empty {})))) })),
+    });
+    let dissolution_id = match dissolution.command {
+        Some(g::ResponseCommand::MakeProposal(p)) => p.proposal_id.unwrap().id,
+        other => panic!("real manager dissolution proposal failed: {other:?}"),
+    };
+    let executed: Option<ProposalOracle> =
+        update(&pic, GOVERNANCE, owner, "get_proposal_info", dissolution_id);
+    assert_eq!(
+        executed.unwrap().status,
+        4,
+        "not_for_profit=false does not disable manager-proposed dissolution"
+    );
     advance(&pic, c, owner, Step::StartDissolving).unwrap();
     pic.advance_time(std::time::Duration::from_secs(plan.lock_seconds + 1));
     pic.tick();
-    let recovered = advance(&pic, c, owner, Step::Disburse).unwrap();
+    let recovered = advance(
+        &pic,
+        c,
+        owner,
+        Step::Disburse {
+            expected_amount_e8s: 199_990_000,
+            expected_fee_e8s: 10_000,
+        },
+    )
+    .unwrap();
     assert_eq!(recovered.phase, Phase::Recovered);
     let h: l::History = query(
         &pic,

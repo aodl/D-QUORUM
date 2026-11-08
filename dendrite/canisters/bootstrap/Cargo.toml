@@ -23,3 +23,7 @@ path = "examples/interface.rs"
 [[example]]
 name = "bootstrap-policy"
 path = "examples/policy.rs"
+
+[[example]]
+name = "bootstrap-plan-digest"
+path = "examples/plan_digest.rs"

@@ -89,6 +89,68 @@ ordinary SDK certificate freshness checks independently. Local qualification may
 bind loopback port 4944 when another workspace owns 4943; origin, API and port must
 match in the reviewed plan and II fixture configuration.
 
+First installation additionally requires management `canister_status.version = 0`,
+an absent module, sole P control and the original certified Cycles Ledger creation
+reply. The pinned management response calls this field `version`, not
+`canister_version` (source `rs/types/management_canister_types/src/lib.rs`, SHA-256
+`929c3330996802635006b50ce71ccfadf63109fd112133c4b33e6de36c71a37b`). Installation
+or code removal changes that version. An old pre-install receipt is therefore not
+enough to authorise installing into a previously emptied controller. This check
+uses replicated controller-authorised status; management `canister_info` is not
+accepted as an ingress update. Every read/write pair still has a non-atomic gap.
+
+The receipt retains every reviewed plan revision and binds each financial/proposal
+intent to its original plan digest. A proposed replacement is exported before
+dispatch and reconciled by a replicated read at its exact revision after a lost
+reply. Profile, P, network/origin, provisioning amounts/fee, deterministic account
+inputs, bootstrap digest and fixed return account cannot change. A changed manager,
+metadata or reviewed stake invalidates old readiness approvals. Open/adopted or
+unresolved external proposals block replacement. A profile change starts a separate
+creation and cannot turn a test receipt into finalisation authority.
+
+The plan digest is SHA-256 over the domain `dendrite-creation-plan-v1` and an
+explicit ordered binary encoding of every Plan field. Integers use fixed-width
+little endian; blobs/UTF-8 strings and vectors carry a 32-bit length; profile,
+network and metadata presence use one-byte tags. The implementation and
+Rust-generated cross-language vectors define the exact order. It is not a hash of
+Candid bytes: equivalent Rust/SDK Candid type tables may produce different bytes.
+The monetary request digest, in contrast, binds the exact original wire argument
+that was reviewed and sent. Candid-decoded integer vectors are normalised to plain
+JSON arrays in receipts.
+
+Proposal submission reserves one exact operation in C before the browser sends
+Governance its separately reviewed request. C grants dispatch once, persists that
+grant across upgrades and resolves the exact proposer, creation/operation marker,
+target and action through Governance. A grant whose reply is lost before the browser
+can send, or a MakeProposal response lost without any discoverable proposal ID, can
+remain unresolved. Time passing does not release that grant. This deliberate
+fail-closed boundary can require external investigation; receipts cannot prove a
+negative or confer a force-clear privilege. An external proposer can instead export
+the exact typed registration payload/Candid, review their own eligibility and fee,
+and submit independently. Registration remains pending until actual metadata agrees.
+
+Pinned Governance filters management ballots by the reader's controller/hotkey
+authority. This first automatic finalisation verifier requires P to read the whole
+manager electorate. If any selected manager lacks that authority for P, the UI
+discloses the limitation and blocks the irreversible long-lock commitment. It never
+adds manager hotkeys or modifies their following as part of creation. This is a
+workflow proof limitation, not a new Standard rule or evidence of independent humans.
+
+Unused workflow ICP returns only to the reviewed legacy account, with its own exact
+intent, fee, timestamp and ledger history anchor. Unknown replies are reconciled
+against direct or Ledger-endorsed archived blocks. Dissolved-stake recovery similarly
+binds the exact amount and current Governance fee in C's typed command; changed
+amounts/fees fail before dispatch. C retains an ambiguous disbursement and accepts
+only its matching fixed-destination block, including time and amount/fee checks.
+Converted/spent cycles are never counted as returned ICP. Locked stake must wait;
+there is no promise that all provisioning costs can be recovered.
+
+Anyone can call the pinned `ClaimOrRefresh(MemoAndController)` for an explicitly
+named controller. This does not transfer neuron control to the payer or caller.
+The bootstrap refuses an externally pre-existing neuron unless its own durable
+claim intent or existing binding proves continuity. Such interference is a visible
+conflict, not permission to adopt a different neuron, nonce or creation canister.
+
 ```text
 Public route report:
 Browser -> anonymous signed Governance list_neurons and get_neuron_info queries

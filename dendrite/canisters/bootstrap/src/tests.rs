@@ -66,6 +66,7 @@ fn plan(production: bool) -> Plan {
         origin: "http://pi33i-pt777-77776-aaaaa-cai.localhost:4943".into(),
         api_host: "http://127.0.0.1:4943".into(),
         funding_budget_e8s: 200_010_000,
+        icp_fee_e8s: 10_000,
         provision_cycles: 2_000_000_000_000,
         policy_version: dendrite_types::STANDARD_VERSION.into(),
         creation_id: vec![3; 32],
@@ -185,6 +186,7 @@ impl CreationClient for Recording {
         Ok(Economics {
             neuron_minimum_stake_e8s: 100_000_000,
             transaction_fee_e8s: 10_000,
+            voting_power_economics: None,
         })
     }
     async fn managers(&self, _: &State) -> Result<(), String> {
@@ -325,6 +327,13 @@ impl CreationClient for Recording {
             Err("wrong return block".into())
         }
     }
+    async fn verify_external_proposal(&self, _: &State, id: u64, _: bool) -> Result<(), String> {
+        if id == 51 {
+            Ok(())
+        } else {
+            Err("unrelated recorded proposal".into())
+        }
+    }
 }
 fn run(c: &Recording, s: &mut State, step: Step) -> Result<(), String> {
     let sequence = s.begin(step.clone(), c.now() * 1_000_000_000)?;
@@ -459,6 +468,86 @@ fn lost_claim_reply_and_upgrade_recover_exact_account_without_second_claim() {
     assert_eq!(c.count("claim"), 1);
 }
 #[test]
+fn fresh_bootstrap_cannot_adopt_an_existing_neuron_without_its_original_claim_intent() {
+    let mut s = state(false);
+    let c = Recording::new(&s);
+    c.neuron.replace(Some(c.seed()));
+    assert!(run(&c, &mut s, Step::Claim).is_err());
+    assert_eq!(s.neuron_id, None);
+    assert_eq!(c.count("claim"), 0);
+}
+#[test]
+fn proposal_reservation_survives_upgrade_and_grants_only_one_financial_dispatch() {
+    let mut s = state(false);
+    let c = Recording::new(&s);
+    setup(&c, &mut s);
+    let proposal = ExternalProposal {
+        kind: ProposalKind::Rehearsal,
+        intent_id: vec![5; 32],
+        request_digest: vec![6; 32],
+        proposer: 11,
+        revision: 1,
+        created_at: 0,
+        proposal_id: None,
+        dispatched: false,
+    };
+    run(&c, &mut s, Step::ReserveProposal(proposal.clone())).unwrap();
+    let mut competing = proposal.clone();
+    competing.intent_id = vec![7; 32];
+    assert!(run(&c, &mut s, Step::ReserveProposal(competing)).is_err());
+    let mut next = s.plan.clone();
+    next.revision = 2;
+    assert!(s.replace(next).is_err());
+    run(
+        &c,
+        &mut s,
+        Step::MarkProposalDispatched(proposal.intent_id.clone()),
+    )
+    .unwrap();
+    let mut restored = c.restored();
+    restored.validate_restored(s.controller).unwrap();
+    assert!(restored.external_proposal.as_ref().unwrap().dispatched);
+    assert!(
+        run(
+            &c,
+            &mut restored,
+            Step::MarkProposalDispatched(proposal.intent_id.clone())
+        )
+        .is_err()
+    );
+    assert!(
+        run(
+            &c,
+            &mut restored,
+            Step::CancelReservedProposal(proposal.intent_id.clone())
+        )
+        .is_err()
+    );
+    assert!(run(&c, &mut restored, Step::ResolveProposal(52)).is_err());
+    run(&c, &mut restored, Step::ResolveProposal(51)).unwrap();
+    assert_eq!(restored.external_proposal.unwrap().proposal_id, Some(51));
+}
+#[test]
+fn only_a_reservation_proven_undispatched_can_be_cancelled() {
+    let mut s = state(false);
+    let c = Recording::new(&s);
+    setup(&c, &mut s);
+    let proposal = ExternalProposal {
+        kind: ProposalKind::Rehearsal,
+        intent_id: vec![5; 32],
+        request_digest: vec![6; 32],
+        proposer: 11,
+        revision: 1,
+        created_at: 0,
+        proposal_id: None,
+        dispatched: false,
+    };
+    run(&c, &mut s, Step::ReserveProposal(proposal.clone())).unwrap();
+    assert!(run(&c, &mut s, Step::CancelReservedProposal(vec![7; 32])).is_err());
+    run(&c, &mut s, Step::CancelReservedProposal(proposal.intent_id)).unwrap();
+    assert!(s.external_proposal.is_none());
+}
+#[test]
 fn lost_following_reply_keeps_original_effect_and_reconciles() {
     let mut s = state(false);
     let c = Recording::new(&s);
@@ -526,9 +615,29 @@ fn recoverable_test_has_no_sealing_path_and_real_return_intent_is_fixed() {
     c.clock.set(c.now() + s.plan.lock_seconds + 1);
     assert!(s.begin(Step::Seal(9), 1).is_err());
     c.lose.set(true);
-    assert!(run(&c, &mut s, Step::Disburse).is_err());
+    assert!(
+        run(
+            &c,
+            &mut s,
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000
+            }
+        )
+        .is_err()
+    );
     assert_eq!(c.count("disburse"), 1);
-    assert!(run(&c, &mut s, Step::Disburse).is_err());
+    assert!(
+        run(
+            &c,
+            &mut s,
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000
+            }
+        )
+        .is_err()
+    );
     assert!(run(&c, &mut s, Step::ReconcileDisbursement(78)).is_err());
     run(&c, &mut s, Step::ReconcileDisbursement(77)).unwrap();
     assert_eq!(s.phase, Phase::Recovered);
@@ -539,12 +648,40 @@ fn locked_recovery_requires_separate_dissolution_and_actual_wait() {
     let mut s = state(true);
     let c = Recording::new(&s);
     setup(&c, &mut s);
-    assert!(run(&c, &mut s, Step::Disburse).is_err());
+    assert!(
+        run(
+            &c,
+            &mut s,
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000
+            }
+        )
+        .is_err()
+    );
     run(&c, &mut s, Step::StartDissolving).unwrap();
     assert_eq!(c.count("dissolve"), 1);
-    assert!(run(&c, &mut s, Step::Disburse).is_err());
+    assert!(
+        run(
+            &c,
+            &mut s,
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000
+            }
+        )
+        .is_err()
+    );
     c.clock.set(c.now() + s.plan.lock_seconds + 1);
-    run(&c, &mut s, Step::Disburse).unwrap();
+    run(
+        &c,
+        &mut s,
+        Step::Disburse {
+            expected_amount_e8s: 199_990_000,
+            expected_fee_e8s: 10_000,
+        },
+    )
+    .unwrap();
     assert_eq!(s.phase, Phase::Recovered);
 }
 #[test]

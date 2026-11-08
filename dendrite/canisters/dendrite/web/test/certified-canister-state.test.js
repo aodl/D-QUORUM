@@ -112,7 +112,7 @@ test("reader binds one anonymous read_state to the exact controller and evicts r
   assert.equal(state.moduleHash, undefined);
   assert.equal(seen.length, 2);
   assert.ok(seen.every(({ effective }) => effective.toText() === controller.toText()));
-  assert.ok(seen.every(({ options }) => options.paths.length === 3));
+  assert.ok(seen.every(({ options }) => options.paths.length === 4));
 });
 
 test("production root-key policy cannot be weakened", () => {

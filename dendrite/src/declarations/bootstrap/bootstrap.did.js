@@ -15,6 +15,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const Plan = IDL.Record({
     'return_account' : IDL.Vec(IDL.Nat8),
+    'icp_fee_e8s' : IDL.Nat64,
     'dendrite_service' : IDL.Principal,
     'managers' : IDL.Vec(IDL.Nat64),
     'owner' : IDL.Principal,
@@ -38,17 +39,38 @@ export const idlFactory = ({ IDL }) => {
     'bootstrap_sha256' : IDL.Vec(IDL.Nat8),
     'profile' : Profile,
   });
+  const ProposalKind = IDL.Variant({
+    'Registration' : IDL.Null,
+    'Rehearsal' : IDL.Null,
+  });
+  const ExternalProposal = IDL.Record({
+    'kind' : ProposalKind,
+    'dispatched' : IDL.Bool,
+    'created_at' : IDL.Nat64,
+    'proposal_id' : IDL.Opt(IDL.Nat64),
+    'proposer' : IDL.Nat64,
+    'request_digest' : IDL.Vec(IDL.Nat8),
+    'revision' : IDL.Nat64,
+    'intent_id' : IDL.Vec(IDL.Nat8),
+  });
   const Step = IDL.Variant({
+    'MarkProposalDispatched' : IDL.Vec(IDL.Nat8),
+    'ResolveProposal' : IDL.Nat64,
+    'CancelReservedProposal' : IDL.Vec(IDL.Nat8),
     'BeginRehearsal' : IDL.Null,
     'Seal' : IDL.Nat64,
     'Configure' : IDL.Null,
     'StartDissolving' : IDL.Null,
+    'ReserveProposal' : ExternalProposal,
     'Unseal' : IDL.Null,
     'Refresh' : IDL.Null,
     'ReconcileDisbursement' : IDL.Nat64,
     'CommitLock' : IDL.Null,
     'Claim' : IDL.Null,
-    'Disburse' : IDL.Null,
+    'Disburse' : IDL.Record({
+      'expected_fee_e8s' : IDL.Nat64,
+      'expected_amount_e8s' : IDL.Nat64,
+    }),
   });
   const Advance = IDL.Record({ 'step' : Step, 'revision' : IDL.Nat64 });
   const Effect = IDL.Variant({
@@ -65,6 +87,7 @@ export const idlFactory = ({ IDL }) => {
     'expected_return_e8s' : IDL.Opt(IDL.Nat64),
     'step' : Step,
     'effect' : IDL.Opt(Effect),
+    'expected_return_fee_e8s' : IDL.Opt(IDL.Nat64),
     'revision' : IDL.Nat64,
     'sequence' : IDL.Nat64,
   });
@@ -86,7 +109,9 @@ export const idlFactory = ({ IDL }) => {
     'plan_digest' : IDL.Vec(IDL.Nat8),
     'pending' : IDL.Opt(Pending),
     'plan' : Plan,
+    'public_visibility_confirmed' : IDL.Bool,
     'version' : IDL.Nat16,
+    'external_proposal' : IDL.Opt(ExternalProposal),
     'staking_subaccount' : IDL.Vec(IDL.Nat8),
     'phase' : Phase,
     'rehearsal_proposal' : IDL.Opt(IDL.Nat64),
@@ -118,6 +143,7 @@ export const init = ({ IDL }) => {
   });
   const Plan = IDL.Record({
     'return_account' : IDL.Vec(IDL.Nat8),
+    'icp_fee_e8s' : IDL.Nat64,
     'dendrite_service' : IDL.Principal,
     'managers' : IDL.Vec(IDL.Nat64),
     'owner' : IDL.Principal,
