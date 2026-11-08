@@ -89,6 +89,12 @@ and navbar authentication are directly available. Status filtering never expands
 counts are right aligned. Proposal-based dissolution is described through the
 security consequence of `not_for_profit = false`.
 
+Creation-tranche correction: the preceding paragraph records historical presentation,
+not a protocol security guarantee. `not_for_profit = false` is the unchanged Standard
+predicate. It does not prevent every dissolution or economic operation; the pinned
+executable Governance authorises commands individually, including management-proposal
+`StartDissolving`. New candidate presentation uses this narrower, verified description.
+
 Two clean local builds were byte-identical. Two forced-clean `--no-cache`
 `linux/amd64` Docker exports had identical file sets, byte-identical files, and
 identical deterministic manifests.

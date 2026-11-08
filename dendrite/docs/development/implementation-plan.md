@@ -12,8 +12,8 @@ Starting boundary: `84bb21d4a0fe7c583cdcc69639a7f5e63a457618`.
 - [x] Use 24 direct rules, 38 compliant-fixture evaluations, and six explicit groups.
 - [x] Stop adding default-reference neurons solely as metadata dependencies; derive
   the 960-neuron graph bound from 64 bounded following entries and 15 followees.
-- [x] Present proposal-based dissolution through the security effect of
-  `not_for_profit = false`.
+- [x] Correct the presentation of `not_for_profit = false`: it is a required
+  setting, while actual Governance permissions remain command specific.
 - [x] Start every normal report disclosure collapsed; filters never expand groups.
 - [x] Right-align section summaries and rule-group counts.
 - [x] Regenerate the candidate assets and complete all release, reproducibility,
