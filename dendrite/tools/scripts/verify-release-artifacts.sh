@@ -2,16 +2,17 @@
 set -eu
 
 [ -f icp.yaml ] && [ -f Cargo.lock ] || { echo "run from the repository root" >&2; exit 1; }
-release=dist/release
+release=${DENDRITE_RELEASE_DIRECTORY:-dist/release}
+recipe=${DENDRITE_RECIPE_FILE:-icp.yaml}
 wasm=$release/dendrite.wasm
 sums=$release/SHA256SUMS
 [ -f "$wasm" ] || { echo "missing $wasm" >&2; exit 1; }
 [ -f "$sums" ] || { echo "missing $sums" >&2; exit 1; }
 
-grep -Eq '^[[:space:]]+type: "@dfinity/prebuilt@v2\.0\.0"$' icp.yaml ||
+grep -Eq '^[[:space:]]+type: "@dfinity/prebuilt@v2\.0\.0"$' "$recipe" ||
   { echo "icp.yaml must use the pinned prebuilt recipe" >&2; exit 1; }
-manifest_path=$(sed -n 's/^[[:space:]]*path:[[:space:]]*//p' icp.yaml)
-manifest_hash=$(sed -n 's/^[[:space:]]*sha256:[[:space:]]*//p' icp.yaml)
+manifest_path=$(sed -n 's/^[[:space:]]*path:[[:space:]]*//p' "$recipe")
+manifest_hash=$(sed -n 's/^[[:space:]]*sha256:[[:space:]]*//p' "$recipe")
 [ "$manifest_path" = "$wasm" ] || { echo "icp.yaml path must be $wasm" >&2; exit 1; }
 printf '%s\n' "$manifest_hash" | grep -Eq '^[0-9a-f]{64}$' ||
   { echo "icp.yaml sha256 must be lowercase hexadecimal SHA-256" >&2; exit 1; }

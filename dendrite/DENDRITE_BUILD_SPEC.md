@@ -29,8 +29,10 @@ principal. The creation workflow may provision one temporary bootstrap canister 
 new neuron, retaining bounded state until its code and controllers are removed. It
 is not a shared factory, wallet, treasury, signing proxy, or application database.
 Dendrite itself remains stateless and D-QUORUM's independent automation is unchanged.
-Proposal history, new reward policy, timers, indexers, analytics, and background work
-remain out of scope.
+General proposal-history browsing, new reward policy, timers, indexers, analytics,
+and background work remain out of scope. Creation recovery may explicitly search
+one bounded page of actual Governance proposals for its original marked request;
+a possible match is not authority, proof of execution, or permission to resubmit.
 
 ## 2. Fixed standard constants
 
@@ -379,10 +381,11 @@ decode failure, target/dependency omission, controller Wasm/controllers, hotkeys
 `u64` round trip. Collector tests use one recording fake and assert exact calls, batches,
 early exit, and the absence of a generic destination/method boundary.
 
-PocketIC covers one compliant and one non-compliant end-to-end check with a minimal
+The verifier's PocketIC suite covers one compliant and one non-compliant end-to-end check with a minimal
 fixed-principal Governance mock, upstream rejection, real empty controller inspection
-where supported, certified landing response, and certified assets after upgrade. No
-browser automation framework is required.
+where supported, certified landing response, and certified assets after upgrade.
+Creation additionally requires the consolidated real-artifact and genuinely
+signed local-II browser lanes, including recovery and interrupted finalisation.
 
 Frontend tests cover ID parsing, the actual application bootstrap and routes, loading,
 live success/error/retry, every overall status and public error, controller evidence,
@@ -395,8 +398,9 @@ well-known bytes and certified headers, popup-compatible COOP, session restorati
 failures, exact principal display/copy, local authority roles and duplicate raw manager
 entries, recomputation on new reports, inert untrusted names, and proof that the
 Dendrite actor and request remain anonymous. Rust and PocketIC tests cover every manager
-evidence state and propagation without adding an outbound call. No browser automation
-framework is introduced.
+evidence state and propagation without adding an outbound call to the existing
+report collector. The consolidated browser harness supplies the creation acceptance
+journeys without adding a frontend framework or production automation dependency.
 
 Whole-workspace Rust line coverage must exceed 85%; frontend thresholds remain at 85%.
 Do not split modules merely to manipulate coverage.
@@ -428,11 +432,15 @@ reproducible-build, deployment, upgrade, and operator documents; do not add docu
 They must state that every check is a live update, no result/history/timer exists, no
 delegation reaches the canister, and privileged calls go browser-to-NNS Governance.
 
-Completion requires one canister, one live verification update method, no cache/stable
+Verifier completion requires one long-lived service, one live verification update method,
+the bounded stateless controller observation, no cache/stable
 application state/digest/catalogue/economics call, batches of at most 50, correct
 omission/failure/unknown semantics, official HTTP certification v2, live-only frontend,
 production dependency isolation, passing coverage/scans/PocketIC/frontend tests, and
-byte-identical clean builds.
+byte-identical clean builds. Creation completion additionally requires the temporary
+bootstrap's independently qualified artifact, stable recovery and complete signed
+journeys described in the creation contract; the verifier's prior completion does
+not qualify those new paths.
 
 The final report records commits; line/file deltas; Candid API; exact outbound methods,
 destinations, and source revision; command results and coverage; PocketIC and dependency

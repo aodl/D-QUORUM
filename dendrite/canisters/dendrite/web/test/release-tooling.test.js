@@ -349,6 +349,7 @@ test("documentation set is consolidated and links resolve", () => {
     "docs/architecture.md",
     "docs/development/implementation-plan.md",
     "docs/development/testing.md",
+    "docs/operations/creation.md",
     "docs/operations/deployment.md",
     "docs/operations/operator-gates.md",
     "docs/operations/production-record.md",

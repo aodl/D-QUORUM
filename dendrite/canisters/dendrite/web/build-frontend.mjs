@@ -1,9 +1,11 @@
 import { build } from "esbuild";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolveBuildConfiguration } from "./build-config.mjs";
 import { prepareBootstrap } from "./build-bootstrap.mjs";
 
+export async function buildFrontend({ plugins = [] } = {}) {
 const root = "canisters/dendrite";
 const configuration = resolveBuildConfiguration();
 const output = process.env.DENDRITE_FRONTEND_OUTPUT_DIR ?? `${root}/public`;
@@ -20,7 +22,7 @@ const bootstrapMetadataName = `bootstrap-manifest.${digest(bootstrapMetadata)}.j
 const bootstrapCandidName = `bootstrap.${digest(bootstrap.candid)}.did`;
 await writeFile(`${generated}/${bootstrapMetadataName}`,bootstrapMetadata);
 await writeFile(`${generated}/${bootstrapCandidName}`,bootstrap.candid);
-const result = await build({ entryPoints: [`${root}/web/src/main.js`], bundle: true, minify: true, sourcemap: false, write: false, target: "es2022", legalComments: "none", format: "esm", define: {
+const result = await build({ entryPoints: [`${root}/web/src/main.js`], bundle: true, minify: true, sourcemap: false, write: false, target: "es2022", legalComments: "none", format: "esm", plugins, define: {
   __DENDRITE_CANISTER_ID__: JSON.stringify(configuration.canisterId),
   __DENDRITE_API_HOST__: JSON.stringify(configuration.apiHost),
   __DENDRITE_FETCH_ROOT_KEY__: JSON.stringify(configuration.fetchRootKey),
@@ -45,3 +47,5 @@ await writeFile(
 const manifest = { "app.js": `/generated/${jsName}`, "styles.css": `/generated/${cssName}`, "bootstrap.wasm":bootstrapManifest.wasm_path,
   "bootstrap-manifest.json":`/generated/${bootstrapMetadataName}`, "bootstrap.did":`/generated/${bootstrapCandidName}` };
 await writeFile(`${output}/asset-manifest.json`, `${JSON.stringify(manifest, Object.keys(manifest).sort(), 2)}\n`);
+}
+if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) await buildFrontend();

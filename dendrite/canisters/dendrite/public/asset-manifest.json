@@ -1,4 +1,7 @@
 {
-  "app.js": "/generated/app.eb36d22b3c1a1093.js",
-  "styles.css": "/generated/styles.008b98904943b9ca.css"
+  "app.js": "/generated/app.c3672028bfe5fbe6.js",
+  "bootstrap-manifest.json": "/generated/bootstrap-manifest.3a7b91f2584bf228.json",
+  "bootstrap.did": "/generated/bootstrap.5337880b780d1bfd.did",
+  "bootstrap.wasm": "/generated/bootstrap.e0493f0f3b805f6e.wasm",
+  "styles.css": "/generated/styles.7b2188f014be364a.css"
 }

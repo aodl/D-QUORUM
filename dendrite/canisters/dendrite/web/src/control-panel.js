@@ -48,7 +48,7 @@ export function directImpact(operation) {
   return undefined;
 }
 
-function reviewNode(pipeline, review, onSettlement, setControlsDisabled = () => {}) {
+export function renderExactNnsReview(pipeline, review, onSettlement, setControlsDisabled = () => {}) {
   const root = document.createElement("section"); root.className = "transaction-review";
   root.append(
     element("h3", "Exact NNS request review"),
@@ -140,7 +140,7 @@ export function renderControlPanel(root, { report, session, nnsActor, pipeline, 
   if (!managers.children?.length) { panel.append(element("p", "This principal has no authority over a Found target manager.")); root.append(panel); return; }
   panel.append(element("label", "Proposer manager "), managers);
   const setControlsDisabled = (disabled) => { const visit = (node) => { if (node.tagName === "BUTTON" || node.tag === "button") node.disabled = disabled; for (const child of node.children ?? []) visit(child); }; visit(panel); };
-  const showReview = (review) => output.replaceChildren(reviewNode(pipeline, review, onSettlement, setControlsDisabled));
+  const showReview = (review) => output.replaceChildren(renderExactNnsReview(pipeline, review, onSettlement, setControlsDisabled));
   const fail = (error) => output.replaceChildren(element("p", String(error?.message ?? error).slice(0, 512), "error"));
 
   const follow = document.createElement("fieldset");

@@ -37,14 +37,20 @@ before changing files and do not weaken a MUST requirement silently.
 
 - Exactly one long-lived production service named `dendrite`; the narrowly scoped
   temporary bootstrap is a separate component type in this nested workspace.
-- Public application methods are only update `check_neuron : (nat64) ->
-  (CheckResult)` and certified static-asset query `http_request`.
+- Public application methods are update `check_neuron : (nat64) ->
+  (CheckResult)`, the bounded read-only update `controller_observation : (nat64)`
+  described in `DENDRITE_BUILD_SPEC.md`, and certified static-asset query
+  `http_request`. The additional read is necessary for creation's stopped-canister
+  proof: the pinned replica forbids direct certified-data reads and ordinary
+  application calls advance `canister_version`. Existing verifier contracts and
+  Standard predicates remain unchanged.
 - Every check is live and consensus-backed. Store no result, history, configuration,
   counter, cache, or other application data in stable memory.
 - No timer, heartbeat, indexer, background job, off-chain service, analytics, remote
   font, arbitrary outbound call, or generic transport exists.
-- Canister outbound calls are fixed to NNS Governance `list_neurons` and management
-  canister `canister_info` only.
+- Long-lived service outbound calls are fixed to NNS Governance `list_neurons`,
+  `get_neuron_info`, and management canister `canister_info` only. Bootstrap calls
+  obey its separate fixed-operation contract; this is not a service proxy.
 - The frontend is embedded and served with HTTP certification v2.
 - A tiny heap-only global abuse guard may reset on upgrade and has no public counters.
 - Ordinary privileged management remains browser-to-NNS with its Governance-only

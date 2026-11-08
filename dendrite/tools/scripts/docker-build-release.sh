@@ -77,6 +77,7 @@ fi
 mkdir -p "$output_dir"
 cp "$export_dir/dendrite.wasm" "$export_dir/asset-manifest.json" "$export_dir/build-configuration.txt" "$output_dir/"
 cp -R "$export_dir/frontend" "$output_dir/frontend"
+cp -R "$export_dir/bootstrap" "$output_dir/bootstrap"
 (
   cd "$output_dir"
   find . -type f ! -name SHA256SUMS -printf '%P\0' |

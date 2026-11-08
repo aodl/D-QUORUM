@@ -175,3 +175,9 @@ export async function readCreationStakeBalance(controller,nonce,options={}){
   const ledger=Actor.createActor(ledgerFactory,{agent,canisterId:ICP_LEDGER_CANISTER_ID});
   return ledger.icrc1_balance_of({owner:Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai"),subaccount:[stakingSubaccount(controller,nonce)]});
 }
+
+export async function readCreationControllerIcpBalance(controller,options={}){
+  const config=runtimeConfiguration(options),agent=await HttpAgent.create({host:config.host,shouldFetchRootKey:config.shouldFetchRootKey,verifyQuerySignatures:true,retryTimes:0});
+  const ledger=Actor.createActor(ledgerFactory,{agent,canisterId:ICP_LEDGER_CANISTER_ID});
+  return ledger.icrc1_balance_of({owner:Principal.from(controller),subaccount:[]});
+}

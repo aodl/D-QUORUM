@@ -17,6 +17,8 @@ export async function prepareBootstrap(){
     return {bytes,manifest,candid:await readFile(resolve(external,"bootstrap.did"))};}
   const compiled=process.env.DENDRITE_BOOTSTRAP_COMPILED_DIR;
   if(!compiled)run(["build","--locked","--release","--target","wasm32-unknown-unknown","-p","dendrite-bootstrap"]);
+  if(!compiled){const vectors=run(["run","--locked","--quiet","-p","dendrite-bootstrap","--example","bootstrap-plan-digest"]).trim().split("\n").map(line=>JSON.parse(line));
+    if(JSON.stringify(vectors)!==JSON.stringify(JSON.parse(await readFile("canisters/dendrite/web/test/fixtures/creation-plan-digest.json","utf8"))))throw Error("Rust/browser plan-digest vectors are stale.");}
   const bytes=await readFile(compiled?resolve(compiled,"bootstrap.wasm"):"target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm");
   const candid=compiled?await readFile(resolve(compiled,"bootstrap.did")):Buffer.from(run(["run","--locked","--quiet","-p","dendrite-bootstrap","--example","bootstrap-interface"]));
   const reviewed=await readFile("canisters/bootstrap/bootstrap.did");if(!candid.equals(reviewed))throw Error("Bootstrap Candid is stale; regenerate and review before building.");

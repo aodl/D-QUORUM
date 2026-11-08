@@ -101,6 +101,23 @@ controller/hotkey set invalidates the review.
 
 ## Dependency exceptions
 
+Creation's additional trust boundary is the provisional controller P: P can replace
+C's reviewed code until all canister controllers are removed. A module checksum
+does not constrain its controller's future actions. The bootstrap authenticates P,
+fixes its one plan/neuron/return account, and retains dispatched effects across
+upgrades; the service stores no onboarding state. Separately consented creation
+delegations use named short-lived targets and memory-only keys. Management target
+scoping does not restrict arguments or prevent another P-owned canister being
+addressed. Exact request review and replica controller checks remain essential.
+
+Receipts contain public operation identities and certified transition evidence,
+never credentials. Imported JSON is bounded, schema checked and independently
+verified; a checksum supplies no authority. Registration and rehearsal are observed
+Governance decisions, not creator-supplied flags. Readiness uses current evaluator
+results and replicated controller history. Uninstall precedes empty controllers,
+with fresh checks at both steps and an unavoidable non-atomic gap. See
+[creation and recovery](operations/creation.md) for the financial and restart limits.
+
 | Package/version | Reachability | Exception and removal condition |
 | --- | --- | --- |
 | `paste 1.0.15` | Transitive Candid compile-time macro | RUSTSEC-2024-0436 abandonment; review on Candid update or 2026-12-04 |
