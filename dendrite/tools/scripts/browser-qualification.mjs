@@ -30,7 +30,8 @@ for (const logical of ["app.js", "styles.css"]) {
 const browser = await puppeteer.launch({
   executablePath: process.env.DENDRITE_CHROMIUM_BIN ?? "/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome",
   headless: true,
-  args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking", "--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
+  args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking",
+    ...(localWorld ? ["--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"] : [])],
 });
 const deniedOrigins=[];
 if(localWorld){const {containBrowserNetwork}=await import('/integration/tests/browser/local-network-guard.mjs');await containBrowserNetwork(browser,deniedOrigins);}
@@ -65,7 +66,7 @@ try {
     page.on("console", (message) => {
       if(message.type()==="error"){
         const location=message.location().url??"";
-        if(localWorld&&location===`${baseUrl}/favicon.ico`&&message.text().includes("404"))automaticFavicon404.push({url:location,error:message.text()});
+        if(location===`${baseUrl}/favicon.ico`&&message.text().includes("404"))automaticFavicon404.push({url:location,error:message.text()});
         else consoleErrors.push(`${message.text()} [${location}]`);
       }
     });

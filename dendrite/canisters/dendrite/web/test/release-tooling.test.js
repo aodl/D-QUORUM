@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { runInNewContext } from "node:vm";
 
 const root = resolve(".");
 const productionId = "hp4av-oiaaa-aaaar-qcaha-cai";
@@ -67,6 +68,41 @@ test("browser qualification derives the reviewed Dendrite ID from the production
   assert.match(qualification, /productionMapping\.dendrite/);
   assert.match(qualification, new RegExp(productionId));
   assert.doesNotMatch(qualification, /k7w4r-zaaaa-aaaao-qkb2a-cai/);
+});
+
+test("browser qualification confines DNS containment to local worlds", () => {
+  const qualification = readFileSync("tools/scripts/browser-qualification.mjs", "utf8");
+  const launch = qualification.match(/const browser = await puppeteer\.launch\((\{[\s\S]*?\})\);/);
+  assert.ok(launch, "actual browser launch configuration is available");
+  const options = (localWorld) => runInNewContext(`(${launch[1]})`, {
+    localWorld, process: { env: {} },
+  });
+  const dnsRules = (localWorld) => options(localWorld).args.filter((arg) => arg.startsWith("--host-resolver-rules="));
+  assert.equal(dnsRules(false).length, 0, "production smoke must reach the public IC API");
+  assert.equal(dnsRules(true).length, 1, "local browser worlds retain DNS containment");
+  assert.match(dnsRules(true)[0], /MAP \* ~NOTFOUND/);
+  assert.match(dnsRules(true)[0], /MAP \*\.localhost 127\.0\.0\.1/);
+});
+
+test("browser qualification records only the automatic favicon 404 as expected", () => {
+  const qualification = readFileSync("tools/scripts/browser-qualification.mjs", "utf8");
+  const listener = qualification.match(/page\.on\("console", (\(message\) => \{[\s\S]*?\n    \})\);/);
+  assert.ok(listener, "actual console listener is available");
+  for (const localWorld of [false, true]) {
+    const automaticFavicon404 = [], consoleErrors = [];
+    const baseUrl = "http://127.0.0.1:4173";
+    const onConsole = runInNewContext(`(${listener[1]})`, {
+      localWorld, baseUrl, automaticFavicon404, consoleErrors,
+    });
+    const emit = (path, text) => onConsole({
+      type: () => "error", location: () => ({ url: baseUrl + path }), text: () => text,
+    });
+    emit("/favicon.ico", "Failed to load resource: 404");
+    emit("/app.js", "Failed to load resource: 404");
+    emit("/favicon.ico", "Failed to load resource: 500");
+    assert.equal(automaticFavicon404.length, 1);
+    assert.equal(consoleErrors.length, 2);
+  }
 });
 
 test("repository contains no dfx project configuration", () => {
