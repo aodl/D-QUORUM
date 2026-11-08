@@ -112,6 +112,7 @@ struct Recording {
     controllers_valid: Cell<bool>,
     return_block: Cell<Option<u64>>,
     clock: Cell<u64>,
+    changes: Cell<u64>,
 }
 impl Recording {
     fn new(s: &State) -> Self {
@@ -128,6 +129,7 @@ impl Recording {
             controllers_valid: Cell::new(true),
             return_block: Cell::new(None),
             clock: Cell::new(1_800_000_000),
+            changes: Cell::new(2),
         }
     }
     fn seed(&self) -> Neuron {
@@ -300,7 +302,7 @@ impl CreationClient for Recording {
     }
     async fn system(&self, _: Principal) -> Result<CanisterInfoResponse, String> {
         Ok(CanisterInfoResponse {
-            total_num_changes: 1,
+            total_num_changes: self.changes.get(),
             recent_changes: vec![],
             module_hash: Some(self.s.plan.bootstrap_sha256.clone()),
             controllers: if self.controllers_valid.get() {
@@ -602,8 +604,19 @@ fn registration_rehearsal_and_controller_readback_gate_sealing() {
     c.controllers_valid.set(true);
     run(&c, &mut s, Step::Seal(9)).unwrap();
     assert_eq!(s.phase, Phase::Sealed);
+    let sealed_marker = s.readiness_marker();
+    assert_eq!(c.restored().readiness_marker(), sealed_marker);
     assert!(s.begin(Step::Configure, 2).is_err());
+    assert!(run(&c, &mut s, Step::Unseal).is_err());
+    assert_eq!(s.sealed_controller_changes, Some(2));
+    c.changes.set(3); // Explicit management upgrade, not an application flag.
     run(&c, &mut s, Step::Unseal).unwrap();
+    assert_eq!(s.sealed_controller_changes, None);
+    assert_ne!(
+        s.readiness_marker(),
+        sealed_marker,
+        "an old sealed receipt cannot authorise teardown after unsealing"
+    );
     assert!(s.rehearsal_started_at.is_none());
 }
 #[test]

@@ -53,7 +53,7 @@ const cmcFactory = () => IDL.Service({
   }) })], []),
 });
 const canisterArg = IDL.Record({ canister_id: IDL.Principal });
-const installArgs = IDL.Record({ mode: IDL.Variant({ install: IDL.Null }), canister_id: IDL.Principal, wasm_module: blob, arg: blob, sender_canister_version: opt(IDL.Nat64) });
+const installArgs = IDL.Record({ mode: IDL.Variant({ install: IDL.Null, upgrade:opt(empty) }), canister_id: IDL.Principal, wasm_module: blob, arg: blob, sender_canister_version: opt(IDL.Nat64) });
 const uninstallArgs = IDL.Record({ canister_id: IDL.Principal, sender_canister_version: opt(IDL.Nat64) });
 const updateSettingsArgs = IDL.Record({ canister_id: IDL.Principal, settings, sender_canister_version: opt(IDL.Nat64) });
 const managementFactory = () => IDL.Service({
@@ -100,7 +100,7 @@ async function witnessedUpdate(actor, methodName, args, includeSystemState) {
   let certificate = result.rawCertificate;
   if (includeSystemState) {
     certificate = (await agent.readState(canisterId, { paths: [requestPath(requestId, "status"), requestPath(requestId, "reply"),
-      systemPath(canisterId, "module_hash"), systemPath(canisterId, "controllers"),systemPath(canisterId,"certified_data"), [utf8.encode("time")]] })).certificate;
+      systemPath(canisterId, "module_hash"), systemPath(canisterId, "controllers"), [utf8.encode("time")]] })).certificate;
   }
   const witness = { request, request_id: bytesHex(requestId), certificate: bytesHex(certificate) };
   await verifyCreationWitness(witness, { agent, canisterId, owner: result.requestDetails.sender, methodName, includeSystemState, historical: false });

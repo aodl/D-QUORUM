@@ -201,13 +201,16 @@ Its application API is exactly:
 ```candid
 service : () -> {
   check_neuron : (nat64) -> (CheckResult);
+  controller_observation : (nat64) -> (variant { Ok : ControllerObservation; Err : DendriteError });
   http_request : (HttpRequest) -> (HttpResponse) query;
 }
 ```
 
 Generated Candid support methods do not count as application APIs. There is no cached,
-refresh, status, configuration, history, proposal, authentication, or generic outbound
+refresh, configuration, proposal, authentication, stored-history or generic outbound
 method. `check_neuron` is an update call and its response is the trusted live result.
+`controller_observation` is the bounded replicated read described below; it exposes
+the actual public T-to-C binding and management-history counter without storing it.
 Dynamic compliance certification and client-side Merkle proofs do not exist.
 
 The canister has no stable application state. It stores no report, digest, configuration,
@@ -287,8 +290,9 @@ principal C remains T's controller after code and controller removal. Initially 
 exact controller list is `[P]`; P can replace its provisional code. The bootstrap
 receives no browser credentials and has no arbitrary command, recipient, target,
 upload, forwarding, factory or timer endpoint. Its bounded versioned stable state
-preserves dispatched intents across upgrades. Dendrite and D-QUORUM public APIs and
-D-QUORUM stable V3 remain unchanged.
+preserves dispatched intents across upgrades. Existing Dendrite methods/results and
+the D-QUORUM API and stable V3 remain unchanged. The additive stateless controller
+observation is required for creation's stopped-canister readiness proof.
 
 Production candidates require registration first and verified manager rehearsal,
 then explicit uninstall followed by a separate explicit empty-controller update.
@@ -438,3 +442,23 @@ limitations; operator gates; and the exact browser-to-NNS capability policy.
 The anonymous-verifier tranche remains complete. The browser management tranche is
 complete only after all automated and reproducibility gates pass; popup and controlled
 transaction smoke tests remain explicit operator gates unless actually recorded.
+
+
+### Replicated controller-history observation
+
+Creation adds one read-only update, `controller_observation(neuron_id)`, to the
+stateless verifier. It derives the exact public neuron's controller through fixed
+Governance reads and returns bounded management `canister_info` observations,
+including `total_num_changes`. No arbitrary canister argument, command, credential,
+custody, creation registry or permanent onboarding state is introduced. Existing
+`check_neuron` arguments/results and all Standard predicates are preserved. The
+pre-creation Candid remains a required compatibility fixture.
+
+This extension is necessary because the pinned replica rejects direct
+`certified_data` read-state paths and `canister_version` advances during ordinary
+execution. The management history counter instead binds the sealed provenance
+across stop/code removal, and invalidates it after another controller operation.
+The browser obtains the helper's replicated, IC-certified reply, separately checks
+current certified module/controllers and reads current Governance/evaluator state.
+The helper has a separate bounded two-call operational budget; it neither consumes
+nor expands the existing full-report rate/concurrency/cycle limits.

@@ -9,6 +9,11 @@ import {bytesHex,hexBytes,sha256Hex,legacyAccount,validateLegacyAccount} from ".
 
 export const CREATION_POLICY=Object.freeze(policy);
 export const CREATION_PROTOCOL_PINS=Object.freeze(protocolPins);
+export function verifySealedControllerChanges(state,status,{codeRemoved=false}={}){
+  const changes=state?.sealed_controller_changes?.[0];
+  if(variant(state?.phase)!=="Sealed"||state.pending.length||typeof changes!=="bigint"||changes<1n||changes>0xffffffffffffffffn||status?.total_num_changes!==changes+(codeRemoved?1n:0n))throw Error("The sealed controller history changed or is unavailable. Another upgrade, unseal or controller operation invalidated readiness.");
+  return changes;
+}
 export function creationVotingMinimum(economics,qualifiedModule){
   if(qualifiedModule!==protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"])throw Error("Voting defaults require the exact qualified Governance executable.");
   const outer=economics.voting_power_economics;if(!Array.isArray(outer)||outer.length>1)throw Error("Current voting economics are unavailable.");
@@ -104,7 +109,7 @@ export async function creationPreflight(plan,{actor,readSystem,targetId,now=BigI
   const economics=await actor.get_network_economics_parameters();
   for(const field of ["neuron_minimum_stake_e8s","reject_cost_e8s","transaction_fee_e8s","neuron_management_fee_per_proposal_e8s"])if(typeof economics?.[field]!=="bigint"||economics[field]<0n)throw Error("Current network economics are unavailable.");
   if(plan.stake_e8s<economics.neuron_minimum_stake_e8s)throw Error("Reviewed stake is below the current network minimum; funding is blocked.");
-  for(const [canister,hash] of Object.entries(protocolPins.modules)){const state=await readSystem(canister);if(!state.moduleHash||bytesHex(state.moduleHash)!==hash)throw Error(`Unreviewed deployed protocol module ${canister}; creation is blocked before spending.`);}
+  for(const [canister,hash] of Object.entries(protocolPins.modules)){let state;try{state=await readSystem(canister);}catch(error){throw Error(`Required certified protocol state ${canister} is unavailable: ${error.message}`);}if(!state.moduleHash||bytesHex(state.moduleHash)!==hash)throw Error(`Unreviewed deployed protocol module ${canister}; creation is blocked before spending.`);}
   const votingMinimumSeconds=creationVotingMinimum(economics,protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"]);
   if(variant(plan.profile)==="ProductionCandidate"&&plan.lock_seconds<votingMinimumSeconds)throw Error("Current network voting minimum exceeds the pinned Standard lock. Creation is blocked before spending; the Standard lock is unchanged.");
   if(plan.metadata.length){const known=await actor.list_known_neurons();

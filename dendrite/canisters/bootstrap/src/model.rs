@@ -400,6 +400,7 @@ pub struct State {
     pub last_error: Option<String>,
     pub external_proposal: Option<ExternalProposal>,
     pub public_visibility_confirmed: bool,
+    pub sealed_controller_changes: Option<u64>,
 }
 impl State {
     pub fn readiness_marker(&self) -> Vec<u8> {
@@ -450,6 +451,7 @@ impl State {
                     || p.intent_id.len() != 32
                     || p.request_digest.len() != 32
             })
+            || (self.phase == Phase::Sealed && self.sealed_controller_changes.is_none())
             || candid::encode_one(self)
                 .map_err(|_| "Invalid state encoding")?
                 .len()
@@ -477,6 +479,7 @@ impl State {
             last_error: None,
             external_proposal: None,
             public_visibility_confirmed: false,
+            sealed_controller_changes: None,
         })
     }
     pub fn authorize(&self, caller: Principal, revision: u64) -> Result<(), String> {
@@ -507,6 +510,7 @@ impl State {
         self.plan = next;
         self.rehearsal_started_at = None;
         self.rehearsal_proposal = None;
+        self.sealed_controller_changes = None;
         self.external_proposal = None;
         self.phase = if self.neuron_id.is_some() {
             Phase::Configuring

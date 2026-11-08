@@ -80,6 +80,7 @@ type State = record {
   public_visibility_confirmed : bool;
   version : nat16;
   external_proposal : opt ExternalProposal;
+  sealed_controller_changes : opt nat64;
   staking_subaccount : blob;
   phase : Phase;
   rehearsal_proposal : opt nat64;

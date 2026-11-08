@@ -18,7 +18,10 @@ mod assets;
 mod rate_limit;
 use rate_limit::{CheckGuard, Rejection};
 
-thread_local! { static CHECK_GUARD: RefCell<CheckGuard> = RefCell::new(CheckGuard::default()); }
+thread_local! {
+    static CHECK_GUARD: RefCell<CheckGuard> = RefCell::new(CheckGuard::default());
+    static OBSERVATION_GUARD: RefCell<CheckGuard> = RefCell::new(CheckGuard::default());
+}
 
 fn mutate_check_guard<T>(mutate: impl FnOnce(&mut CheckGuard) -> T) -> T {
     CHECK_GUARD.with_borrow_mut(mutate)
@@ -31,6 +34,7 @@ fn init() {
 #[ic_cdk::post_upgrade]
 fn post_upgrade() {
     CHECK_GUARD.with_borrow_mut(|guard| *guard = CheckGuard::default());
+    OBSERVATION_GUARD.with_borrow_mut(|guard| *guard = CheckGuard::default());
     assets::certify_assets();
 }
 #[ic_cdk::query]
@@ -48,8 +52,7 @@ pub enum DendriteError {
     LowCycles,
 }
 
-#[ic_cdk::update]
-async fn check_neuron(neuron_id: u64) -> Result<ComplianceReport, DendriteError> {
+fn admit_guard(guard: &RefCell<CheckGuard>, neuron_id: u64) -> Result<(), DendriteError> {
     if neuron_id == 0 {
         return Err(DendriteError::InvalidNeuronId(
             "neuron ID must be non-zero".into(),
@@ -57,19 +60,96 @@ async fn check_neuron(neuron_id: u64) -> Result<ComplianceReport, DendriteError>
     }
     let now = ic_cdk::api::time() / 1_000_000_000;
     let cycles = ic_cdk::api::canister_liquid_cycle_balance();
-    mutate_check_guard(|guard| guard.begin(neuron_id, now, cycles)).map_err(|rejection| {
-        match rejection {
+    guard
+        .borrow_mut()
+        .begin(neuron_id, now, cycles)
+        .map_err(|rejection| match rejection {
             Rejection::GlobalRate(retry_after_seconds) => DendriteError::GlobalRateLimit {
                 retry_after_seconds,
             },
             Rejection::Concurrency => DendriteError::ConcurrencyLimit,
             Rejection::Duplicate => DendriteError::DuplicateInFlight,
             Rejection::LowCycles => DendriteError::LowCycles,
-        }
-    })?;
+        })
+}
+
+#[ic_cdk::update]
+async fn check_neuron(neuron_id: u64) -> Result<ComplianceReport, DendriteError> {
+    CHECK_GUARD.with(|guard| admit_guard(guard, neuron_id))?;
     let result = collect_live(neuron_id).await;
     mutate_check_guard(|guard| guard.finish(neuron_id));
     result
+}
+
+/// A bounded replicated observation, with C derived from Governance's actual T.
+/// This exposes no command/proxy and retains no creation or user state. Existing
+/// check_neuron arguments/results and the pure evaluator remain unchanged.
+#[derive(Clone, Debug, CandidType, Deserialize)]
+pub struct ControllerObservation {
+    pub neuron_id: u64,
+    pub controller: Principal,
+    pub total_num_changes: u64,
+    pub module_hash: Option<Vec<u8>>,
+    pub controllers: Vec<Principal>,
+    pub checked_at_timestamp_seconds: u64,
+}
+
+#[ic_cdk::update]
+async fn controller_observation(neuron_id: u64) -> Result<ControllerObservation, DendriteError> {
+    // This two-call observation has its own bounded operational budget. It
+    // cannot consume or enlarge the existing full-report admission budget.
+    OBSERVATION_GUARD.with(|guard| admit_guard(guard, neuron_id))?;
+    let result = collect_controller_observation(&ProductionEvidenceClient, neuron_id).await;
+    OBSERVATION_GUARD.with_borrow_mut(|guard| guard.finish(neuron_id));
+    result
+}
+
+async fn collect_controller_observation(
+    client: &impl EvidenceClient,
+    neuron_id: u64,
+) -> Result<ControllerObservation, DendriteError> {
+    let failure =
+        |message: String| DendriteError::AnalysisFailed(message.chars().take(400).collect());
+    let mut neurons = client
+        .list_neurons(vec![neuron_id])
+        .await
+        .map_err(|e| failure(e.message))?;
+    let observed_at = neurons
+        .neuron_infos
+        .iter()
+        .find(|(id, _)| *id == neuron_id)
+        .map(|(_, info)| info.retrieved_at_timestamp_seconds)
+        .filter(|time| *time > 0)
+        .ok_or_else(|| failure("Neuron observation timestamp unavailable".into()))?;
+    if neurons.full_neurons.len() != 1
+        || neurons.full_neurons[0].id.as_ref().map(|id| id.id) != Some(neuron_id)
+        || neurons.full_neurons[0].visibility != Some(2)
+    {
+        return Err(failure(
+            "Exact public neuron/controller binding unavailable".into(),
+        ));
+    }
+    let neuron = neurons.full_neurons.pop().unwrap();
+    let controller = neuron
+        .controller
+        .ok_or_else(|| failure("Neuron controller absent".into()))?;
+    if controller.as_slice().last() != Some(&1) {
+        return Err(failure(
+            "Neuron controller is not a canister principal".into(),
+        ));
+    }
+    let info = client
+        .canister_info(controller)
+        .await
+        .map_err(|e| failure(e.message))?;
+    Ok(ControllerObservation {
+        neuron_id,
+        controller,
+        total_num_changes: info.total_num_changes,
+        module_hash: info.module_hash,
+        controllers: info.controllers,
+        checked_at_timestamp_seconds: observed_at,
+    })
 }
 
 fn known_data(data: &KnownNeuronData, id: u64) -> KnownNeuron {
@@ -752,11 +832,70 @@ mod tests {
             .arg(checked)
             .status()
             .expect("run didc");
+        let predecessor = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/interface-fixtures/dendrite-pre-creation.did");
+        let compatibility = std::process::Command::new("didc")
+            .arg("check")
+            .arg(&path)
+            .arg(predecessor)
+            .status()
+            .expect("check predecessor Candid compatibility");
         let _ = std::fs::remove_file(path);
         assert!(
             status.success(),
             "Rust Candid export drifted from dendrite.did:\n{exported}"
         );
+        assert!(
+            compatibility.success(),
+            "existing pre-creation method signatures must remain compatible"
+        );
+    }
+    #[test]
+    fn controller_observation_derives_exact_public_binding_and_rejects_unavailable_or_private_targets()
+     {
+        let c = Principal::from_text("pi33i-pt777-77776-aaaaa-cai").unwrap();
+        let mut n = raw_neuron(100, vec![]);
+        n.controller = Some(c);
+        let fixture = |result| FakeClient {
+            neurons: TestRefCell::new(VecDeque::from([result])),
+            calls: TestRefCell::new(vec![]),
+        };
+        let client = fixture(Ok(response(vec![n.clone()])));
+        let observation = block_on(collect_controller_observation(&client, 100)).unwrap();
+        assert_eq!(observation.neuron_id, 100);
+        assert_eq!(observation.controller, c);
+        assert_eq!(observation.checked_at_timestamp_seconds, 1_000_000);
+        assert_eq!(observation.total_num_changes, 0);
+        assert_eq!(
+            *client.calls.borrow(),
+            vec![RecordedCall::List(vec![100]), RecordedCall::CanisterInfo(c)]
+        );
+        for mode in 0..6 {
+            let mut raw = n.clone();
+            match mode {
+                0 => raw.id = Some(NeuronId { id: 101 }),
+                1 => raw.visibility = Some(1),
+                2 => raw.controller = None,
+                3 => raw.controller = Some(Principal::anonymous()),
+                _ => {}
+            }
+            let mut result = response(vec![raw]);
+            if mode == 4 {
+                result.neuron_infos.clear();
+            }
+            if mode == 5 {
+                result.full_neurons.push(n.clone());
+            }
+            let client = fixture(Ok(result));
+            assert!(block_on(collect_controller_observation(&client, 100)).is_err());
+            assert_eq!(
+                *client.calls.borrow(),
+                vec![RecordedCall::List(vec![100])],
+                "a rejected binding must not become an arbitrary management read"
+            );
+        }
+        let client = fixture(Err(source_error("recorded Governance read unavailable")));
+        assert!(block_on(collect_controller_observation(&client, 100)).is_err());
     }
     #[test]
     fn dependency_batches_are_never_larger_than_fifty() {

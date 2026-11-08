@@ -112,6 +112,7 @@ export const idlFactory = ({ IDL }) => {
     'public_visibility_confirmed' : IDL.Bool,
     'version' : IDL.Nat16,
     'external_proposal' : IDL.Opt(ExternalProposal),
+    'sealed_controller_changes' : IDL.Opt(IDL.Nat64),
     'staking_subaccount' : IDL.Vec(IDL.Nat8),
     'phase' : Phase,
     'rehearsal_proposal' : IDL.Opt(IDL.Nat64),

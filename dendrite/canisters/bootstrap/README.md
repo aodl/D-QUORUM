@@ -44,8 +44,9 @@ The build emits raw Wasm, Candid, shared policy and a source/checksum manifest t
 `target/bootstrap-release/`. Frontend builds consume these bytes before bundling;
 the service then certifies their content-addressed asset paths. Docker uses the
 same one-way dependency through a separate bootstrap build stage. Raw Wasm SHA-256
-is both the reviewed installation digest and expected module hash. Nothing is
-downloaded as executable bootstrap code at application runtime.
+is both the reviewed installation digest and expected module hash. The browser
+fetches only that certified content-addressed asset; arbitrary runtime Wasm URLs
+and user-supplied modules are unsupported.
 
 Development evidence lives in the consolidated root creation lanes. It is distinct
 from the final unchanged-source qualification, canonical repeats and mainnet

@@ -158,8 +158,17 @@ pub(crate) async fn perform(
         if s.phase != Phase::Sealed {
             return Err("Only a sealed, still-installed bootstrap may unseal".into());
         }
+        let system = client.system(s.controller).await?;
+        if s.sealed_controller_changes
+            .is_none_or(|changes| system.total_num_changes <= changes)
+            || system.module_hash.as_deref() != Some(s.plan.bootstrap_sha256.as_slice())
+            || system.controllers != [s.plan.owner]
+        {
+            return Err("Explicit controller history change required before unsealing; the approved same-code upgrade invalidates old sealed provenance".into());
+        }
         s.rehearsal_started_at = None;
         s.rehearsal_proposal = None;
+        s.sealed_controller_changes = None;
         s.phase = Phase::AwaitingRegistration;
         return Ok(());
     }
@@ -549,6 +558,7 @@ pub(crate) async fn perform(
             if let Step::Seal(proposal) = step {
                 client.rehearsal(s, proposal).await?;
                 s.rehearsal_proposal = Some(proposal);
+                s.sealed_controller_changes = Some(system.total_num_changes);
                 s.phase = Phase::Sealed;
             } else {
                 s.rehearsal_started_at = Some(client.now());

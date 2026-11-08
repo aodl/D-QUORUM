@@ -128,7 +128,6 @@ export function createCertifiedCanisterStateReader(options = {}) {
           PATH_TIME,
           path(principal, "controllers"),
           path(principal, "module_hash"),
-          path(principal, "certified_data"),
         ];
         const response = await agent.readState(principal, { paths: requestedPaths });
         const certificate = await createCertificate({

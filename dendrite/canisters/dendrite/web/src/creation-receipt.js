@@ -109,23 +109,25 @@ export function importCreationReceipt(json,bindings) {
   receipt.checksum=checksum(receipt);return {receipt,plan};
 }
 export function addCreationIntent(receipt,{kind,destination,argument,createdAtTime,id=bytesHex(crypto.getRandomValues(new Uint8Array(32)))}) {
-  if(receipt.intents.some(i=>i.state==="Prepared"||i.state==="Unknown"))throw Error("Resolve the original outstanding intent before another non-idempotent request.");
+  if(receipt.intents.some(i=>["Prepared","Unknown"].includes(i.state)&&!(kind==="ReturnIcp"&&i.kind==="CreateCanister"&&i.state==="Unknown")))throw Error("Resolve the original outstanding intent before another non-idempotent request.");
   if(!kinds.has(kind))throw Error("Unsupported creation operation.");
   const intent={id,kind,plan_digest:receipt.plan_digest,destination:principal(destination),argument:bytesHex(argument),argument_digest:sha256Hex(argument),
     created_at_time:BigInt(createdAtTime).toString(),state:"Prepared",references:{},reviewed_amount_e8s:null,reviewed_fee_e8s:null,reviewed_cycles_fee:null,reviewed_conversion_rate:null,reviewed_quote_timestamp:null};
-  receipt.intents.push(intent);receipt.checksum=checksum(receipt);try{validateCreationReceipt(receipt);}catch(error){receipt.intents.pop();receipt.checksum=checksum(receipt);throw error;}return intent;
+  receipt.intents.push(intent);receipt.checksum=checksum(receipt);try{exportCreationReceipt(receipt);}catch(error){receipt.intents.pop();receipt.checksum=checksum(receipt);throw error;}return intent;
 }
 export function settleCreationIntent(receipt,id,state,references={}) {
   const intent=receipt.intents.find(i=>i.id===id);if(!intent||!["Prepared","Unknown"].includes(intent.state)||!["Unknown","Confirmed","Rejected"].includes(state))throw Error("Stale recovery intent settlement.");
   const previous={...intent};intent.state=state;intent.references={...intent.references,...references};receipt.checksum=checksum(receipt);
-  try{validateCreationReceipt(receipt);}catch(error){Object.assign(intent,previous);receipt.checksum=checksum(receipt);throw error;}
+  try{exportCreationReceipt(receipt);}catch(error){Object.assign(intent,previous);receipt.checksum=checksum(receipt);throw error;}
 }
 export function checkpointCreation(receipt,kind,evidence,now=BigInt(Date.now())*1_000_000n) {
-  receipt.checkpoints.push({kind,observed_at:now.toString(),evidence_digest:digest(evidence)});receipt.checksum=checksum(receipt);validateCreationReceipt(receipt);
+  receipt.checkpoints.push({kind,observed_at:now.toString(),evidence_digest:digest(evidence)});receipt.checksum=checksum(receipt);
+  try{exportCreationReceipt(receipt);}catch(error){receipt.checkpoints.pop();receipt.checksum=checksum(receipt);throw error;}
 }
 export const receiptContentDigest=receipt=>checksum(receipt);
 export function applyCreationRevision(receipt,next){validateCreationRevision(parseCreationPlan(receipt.plan),next);
   if(receipt.plan_history.length>=16)throw Error("Creation revision history is full; preserve its existing recovery provenance.");
   if(receipt.intents.some(i=>["Prepared","Unknown"].includes(i.state)))throw Error("Resolve the original monetary intent before revising the plan.");
-  receipt.plan_history.push(receipt.plan);receipt.plan=planJson(next);receipt.plan_digest=creationPlanDigest(next);receipt.proposed_plan=null;receipt.sealed_witness=null;receipt.checksum=checksum(receipt);validateCreationReceipt(receipt);
+  const previous={...receipt,plan_history:[...receipt.plan_history]};receipt.plan_history.push(receipt.plan);receipt.plan=planJson(next);receipt.plan_digest=creationPlanDigest(next);receipt.proposed_plan=null;receipt.sealed_witness=null;receipt.checksum=checksum(receipt);
+  try{exportCreationReceipt(receipt);}catch(error){Object.assign(receipt,previous);throw error;}
 }

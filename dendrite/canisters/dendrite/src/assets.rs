@@ -198,11 +198,14 @@ mod tests {
     #[test]
     fn policies_cover_html_well_known_and_hashed_assets() {
         let configs = configs();
-        assert_eq!(configs.len(), 6);
+        assert_eq!(configs.len(), 9);
         let rendered = format!("{configs:?}");
         for expected in [
             "no-cache",
             "immutable",
+            "application/wasm",
+            "generated/*.json",
+            "generated/*.did",
             "Content-Security-Policy",
             "X-Content-Type-Options",
             "frame-ancestors 'none'",

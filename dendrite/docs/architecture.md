@@ -50,6 +50,34 @@ effective-canister routing gate must pass before enabling those capabilities. Fr
 preflight cannot make separate Governance and management calls atomic or lock out
 concurrent legitimate managers.
 
+Sealing records management `canister_info.total_num_changes` in replicated state
+and its certified reply. Ordinary canister execution advances `canister_version`,
+so that execution counter is unsuitable for a persistent seal. Approved bootstrap
+code rejects every sealed mutation except unseal; unseal requires an independently
+observable controller-history change. The browser's explicit unseal path upgrades
+only the same approved module, compares the stable checkpoint, then calls unseal.
+Old sealed provenance is invalid after that history change. Native protocol gates
+must establish that stop preserves the history count and uninstall advances it.
+
+The additive anonymous update `controller_observation(neuron_id)` is the narrowly
+required backwards-compatible API extension. Pinned management `canister_info`
+cannot be called by browser ingress, and direct certified-data reads are forbidden.
+The stateless verifier already performs this management read for its reports. This
+helper returns the same replicated history counter with the exact public T-to-C
+binding, module/controllers and Governance observation time. It accepts no caller-
+supplied canister, command, credentials, payment or success flag and stores no
+creation/user data. Its two calls use a separate bounded operational guard with
+the same limits; the existing report budget and `check_neuron` interface/results
+remain unchanged. A retained predecessor Candid verifies compatibility. No Standard
+predicate, evaluator status, D-QUORUM API, state version or policy changes.
+
+The pinned HTTP endpoint implementation rejects direct requests for the
+`canister/C/certified_data` path with 404. It permits controllers, module hash and
+time, which remain independently certified. Source contract SHA-256 is in root
+`protocol-pins.json` (`read_state.rs`, revision `83f29e…`). Readiness does not
+request or trust an unsupported certified-data path. Failed browser attempts and
+the disproved legacy-route diagnostic are retained separately from qualification.
+
 The initial native real-protocol probe
 `real_cmc_conversion_and_cycles_ledger_creation_deduplicate` passed the pinned
 conversion/creation path, transfer/conversion/creation duplicates, a real failed
