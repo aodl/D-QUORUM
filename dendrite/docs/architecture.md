@@ -27,6 +27,17 @@ Artifact checksums are in root `protocol-pins.json`; none assert current mainnet
 deployment. The separate Standard policy pin remains `d55a0f…`. Execution evidence
 must distinguish actual signed-browser calls, native real-protocol probes and mocks.
 
+An installed module hash binds the exact `install_code.wasm_module` bytes, including
+gzip packaging when used. The bootstrap is installed as raw Wasm, so its file and
+installed-module hashes coincide. System fixtures install the reviewed raw protocol
+modules; the ICP Ledger itself uploads its pinned gzip archive, whose observed
+module hash therefore matches the compressed pin (`sha256`), while `wasm_sha256`
+records the decompressed executable. The real archive-recovery gate checks both
+identities. Source/artifact equivalence does not establish a live deployed module;
+the browser requires its exact reviewed observed protocol hashes before spending.
+See the [interface specification](https://docs.internetcomputer.org/references/ic-interface-spec/abstract-behavior/)
+for the module-hash contract.
+
 | Operation | Actual caller, destination and exact argument | Charges, deduplication and readback | Authority or irreversible effect |
 | --- | --- | --- | --- |
 | ICP payment | P -> ICP Ledger `icrc1_transfer(TransferArg { from_subaccount; to: Account; fee; amount; memo; created_at_time })` | Fresh `icrc1_fee`; save exact intent before signing. Reuse all fields; Duplicate names the original block. Exact block proves execution; TooOld alone proves no absence. | Only workflow-bound CMC, stake or return accounts. External-wallet sender is not assumed to be P. |

@@ -13,8 +13,8 @@ candid.workspace = true
 serde.workspace = true
 sha2.workspace = true
 ic-cdk.workspace = true
-ic-clients = { path = "../../crates/ic-clients" }
-dendrite-types = { path = "../../crates/dendrite-types" }
+ic-clients = { version = "=0.1.0", path = "../../crates/ic-clients" }
+dendrite-types = { version = "=0.1.0", path = "../../crates/dendrite-types" }
 
 [[example]]
 name = "bootstrap-interface"

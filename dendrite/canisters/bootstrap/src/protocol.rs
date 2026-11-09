@@ -42,16 +42,24 @@ pub async fn neuron(s: &State) -> Result<Option<Neuron>, String> {
             subaccount: s.staking_subaccount.clone(),
         }]),
     };
-    let mut response: Neurons = Call::unbounded_wait(NNS_GOVERNANCE, "list_neurons")
+    let response: Neurons = Call::unbounded_wait(NNS_GOVERNANCE, "list_neurons")
         .with_arg(request)
         .await
         .map_err(bounded)?
         .candid()
         .map_err(bounded)?;
-    if response.full_neurons.len() > 1 {
+    validate_neuron_response(s, response.full_neurons)
+}
+
+/// Keep untrusted wire-record validation independent of the fixed network call.
+pub(crate) fn validate_neuron_response(
+    s: &State,
+    mut neurons: Vec<Neuron>,
+) -> Result<Option<Neuron>, String> {
+    if neurons.len() > 1 {
         return Err("Conflicting neuron binding".into());
     }
-    let Some(n) = response.full_neurons.pop() else {
+    let Some(n) = neurons.pop() else {
         return Ok(None);
     };
     if n.controller != Some(s.controller)
@@ -435,6 +443,10 @@ pub async fn rehearsal(s: &State, id: u64) -> Result<(), String> {
         .map_err(bounded)?
         .candid()
         .map_err(bounded)?;
+    validate_rehearsal_response(s, p)
+}
+
+pub(crate) fn validate_rehearsal_response(s: &State, p: Option<Rehearsal>) -> Result<(), String> {
     let p = p.ok_or("Rehearsal proposal unavailable")?;
     let tally = p.latest_tally.ok_or("Rehearsal tally unavailable")?;
     let Some(Action::ManageNeuron(m)) = p.proposal.and_then(|p| p.action) else {
@@ -455,6 +467,8 @@ pub async fn rehearsal(s: &State, id: u64) -> Result<(), String> {
         || tally.total != s.plan.managers.len() as u64
         || tally.yes <= tally.total / 2
         || tally.no > tally.total
+        || tally.yes > tally.total
+        || tally.yes.saturating_add(tally.no) > tally.total
     {
         return Err(
             "Rehearsal target, command, execution, freshness or quorum does not match creation"

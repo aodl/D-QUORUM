@@ -83,13 +83,16 @@ the narrow bootstrap has no general payment endpoint to spend it. Preserve P's
 recoverable canister authority while resolving a mistaken deposit; do not treat
 removing code/controllers as financial recovery.
 
-While C exists, inspect its fresh cycle balance/settings through the separately
+While P still controls C, inspect its fresh cycle balance/settings through the separately
 consented management capability. Maintain at least the reviewed reserve and enough
 for retries and teardown. If external maintenance is necessary, the exact C
 principal is the destination; independently review the external cycle provider's
 method and fees. The application does not silently convert more ICP or expand a
 saved provisioning budget. Empty immutable controllers retain only system state;
 this workflow does not promise infinite retention or an emergency recovery key.
+After P's controller authority is removed, its management credential cannot read
+the private cycle balance. The handover's balance is the last observation before
+that boundary, rather than continuing public balance monitoring.
 
 ## Consent, signing and browser lifetime
 
@@ -147,8 +150,13 @@ A callback trap can leave the in-memory execution guard held while its original
 durable effect remains pending. The explicit same-code recovery upgrade uses only
 the certified original Wasm, sole P authority, saved receipt and existing stable
 checkpoint. It neither reinstalls an empty canister nor dispatches a Governance
-command. The replica must permit the upgrade; the whole replicated checkpoint is
-compared afterwards, then the original effect still needs reconciliation. Sealed
+command. It first stops C and waits for its original unbounded remote calls to
+drain, restarts only the approved code to read the settled checkpoint, and skips
+the upgrade if that operation has already completed. A still-pending checkpoint
+is stopped again before the same-code upgrade; after restart the whole replicated
+checkpoint is compared. Concurrent progress causes a mismatch and needs fresh
+readback. If quiescence cannot be established, no upgrade is sent. The replica
+must permit the upgrade, then the original effect still needs reconciliation. Sealed
 or unknown modules cannot use this path. An upgrade is not cancellation of a remote
 effect and does not prove that an ambiguous financial call did not execute.
 

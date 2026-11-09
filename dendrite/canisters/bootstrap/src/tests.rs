@@ -113,6 +113,10 @@ struct Recording {
     return_block: Cell<Option<u64>>,
     clock: Cell<u64>,
     changes: Cell<u64>,
+    next_response: RefCell<Option<Response>>,
+    suppress_effect: Cell<bool>,
+    voting_minimum: Cell<u64>,
+    balance_override: Cell<Option<u64>>,
 }
 impl Recording {
     fn new(s: &State) -> Self {
@@ -130,6 +134,10 @@ impl Recording {
             return_block: Cell::new(None),
             clock: Cell::new(1_800_000_000),
             changes: Cell::new(2),
+            next_response: RefCell::new(None),
+            suppress_effect: Cell::new(false),
+            voting_minimum: Cell::new(15_778_800),
+            balance_override: Cell::new(None),
         }
     }
     fn seed(&self) -> Neuron {
@@ -178,17 +186,20 @@ impl CreationClient for Recording {
         }
     }
     async fn stake_balance(&self, _: Vec<u8>) -> Result<u64, String> {
-        Ok(self
-            .neuron
-            .borrow()
-            .as_ref()
-            .map_or(self.s.plan.stake_e8s, |n| n.cached_neuron_stake_e8s))
+        Ok(self.balance_override.get().unwrap_or_else(|| {
+            self.neuron
+                .borrow()
+                .as_ref()
+                .map_or(self.s.plan.stake_e8s, |n| n.cached_neuron_stake_e8s)
+        }))
     }
     async fn economics(&self) -> Result<Economics, String> {
         Ok(Economics {
             neuron_minimum_stake_e8s: 100_000_000,
             transaction_fee_e8s: 10_000,
-            voting_power_economics: None,
+            voting_power_economics: Some(VotingEconomics {
+                neuron_minimum_dissolve_delay_to_vote_seconds: Some(self.voting_minimum.get()),
+            }),
         })
     }
     async fn managers(&self, _: &State) -> Result<(), String> {
@@ -202,6 +213,7 @@ impl CreationClient for Recording {
         if self.reject.replace(false) {
             return Err(Failure::Known("not executed".into()));
         }
+        let prior = self.neuron.borrow().clone();
         let result = match command {
             Command::ClaimOrRefresh(_) => {
                 self.calls.borrow_mut().push("claim".into());
@@ -278,6 +290,12 @@ impl CreationClient for Recording {
                 })
             }
         };
+        if self.suppress_effect.replace(false) {
+            *self.neuron.borrow_mut() = prior;
+        }
+        if let Some(response) = self.next_response.borrow_mut().take() {
+            return Ok(response);
+        }
         if self.lose.replace(false) {
             Err(Failure::Unknown(
                 "scripted lost reply after real effect in recording client".into(),
@@ -719,4 +737,319 @@ fn changed_self_manager_hotkeys_and_stake_cannot_advance() {
         .unwrap()
         .cached_neuron_stake_e8s += 1;
     assert!(run(&c, &mut s, Step::Configure).is_err());
+}
+
+#[test]
+fn neuron_wire_records_reject_conflicting_bindings_and_collection_shapes() {
+    let s = state(false);
+    let c = Recording::new(&s);
+    let n = c.seed();
+    assert!(validate_neuron_response(&s, vec![]).unwrap().is_none());
+    assert_eq!(
+        validate_neuron_response(&s, vec![n.clone()])
+            .unwrap()
+            .unwrap()
+            .id
+            .unwrap()
+            .id,
+        600
+    );
+    assert!(validate_neuron_response(&s, vec![n.clone(), n.clone()]).is_err());
+    let mutations: [fn(&mut Neuron); 8] = [
+        |n| n.controller = Some(Principal::anonymous()),
+        |n| n.account[0] ^= 1,
+        |n| n.id = None,
+        |n| n.id = Some(NeuronId { id: 0 }),
+        |n| n.hot_keys = vec![Principal::anonymous(); 11],
+        |n| {
+            n.followees = (0..65)
+                .map(|topic| (topic, Followees { followees: vec![] }))
+                .collect()
+        },
+        |n| {
+            n.followees = vec![(
+                1,
+                Followees {
+                    followees: vec![NeuronId { id: 11 }; 16],
+                },
+            )]
+        },
+        |n| {
+            n.followees = vec![
+                (1, Followees { followees: vec![] }),
+                (1, Followees { followees: vec![] }),
+            ]
+        },
+    ];
+    for mutate in mutations {
+        let mut bad = n.clone();
+        mutate(&mut bad);
+        assert!(validate_neuron_response(&s, vec![bad]).is_err());
+    }
+    let mut bound = s;
+    bound.neuron_id = Some(601);
+    assert!(validate_neuron_response(&bound, vec![n]).is_err());
+}
+
+fn operation_fixture(operation: &str) -> (State, Recording, Step) {
+    let mut s = state(operation == "lock");
+    let c = Recording::new(&s);
+    let step = match operation {
+        "claim" => Step::Claim,
+        "visibility" => {
+            run(&c, &mut s, Step::Claim).unwrap();
+            Step::Configure
+        }
+        "following" => {
+            run(&c, &mut s, Step::Claim).unwrap();
+            run(&c, &mut s, Step::Configure).unwrap();
+            Step::Configure
+        }
+        "lock" => {
+            run(&c, &mut s, Step::Claim).unwrap();
+            while s.phase == Phase::Configuring {
+                run(&c, &mut s, Step::Configure).unwrap();
+            }
+            Step::CommitLock
+        }
+        "refresh" => {
+            setup(&c, &mut s);
+            c.clock.set(c.now() + 100);
+            Step::Refresh
+        }
+        "dissolution" => {
+            setup(&c, &mut s);
+            Step::StartDissolving
+        }
+        "disbursement" => {
+            setup(&c, &mut s);
+            run(&c, &mut s, Step::StartDissolving).unwrap();
+            c.clock.set(c.now() + s.plan.lock_seconds + 1);
+            Step::Disburse {
+                expected_amount_e8s: 199_990_000,
+                expected_fee_e8s: 10_000,
+            }
+        }
+        _ => panic!("unknown recording scenario"),
+    };
+    (s, c, step)
+}
+
+#[test]
+fn unexpected_governance_reply_variants_preserve_the_dispatched_effect() {
+    for operation in [
+        "claim",
+        "visibility",
+        "following",
+        "lock",
+        "refresh",
+        "dissolution",
+        "disbursement",
+    ] {
+        let (mut s, c, step) = operation_fixture(operation);
+        *c.next_response.borrow_mut() =
+            Some(if operation == "claim" || operation == "disbursement" {
+                Response::Follow(Reserved)
+            } else {
+                Response::ClaimOrRefresh(ClaimResponse {
+                    refreshed_neuron_id: None,
+                })
+            });
+        let before = c.calls.borrow().len();
+        let error = run(&c, &mut s, step.clone()).unwrap_err();
+        assert!(error.contains("Unexpected"), "{operation}: {error}");
+        assert!(s.pending.as_ref().unwrap().effect.is_some());
+        assert_eq!(c.calls.borrow().len(), before + 1);
+        if operation == "disbursement" {
+            assert!(run(&c, &mut s, step).is_err());
+            run(&c, &mut s, Step::ReconcileDisbursement(77)).unwrap();
+            assert_eq!(c.count("disburse"), 1);
+        } else {
+            run(&c, &mut s, step).unwrap();
+            if operation != "refresh" {
+                assert_eq!(c.calls.borrow().len(), before + 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn success_without_matching_configuration_readback_cannot_advance() {
+    for operation in ["visibility", "following", "lock", "refresh", "dissolution"] {
+        let (mut s, c, step) = operation_fixture(operation);
+        c.suppress_effect.set(true);
+        let error = run(&c, &mut s, step).unwrap_err();
+        assert!(
+            error.contains("readback") || error.contains("not confirmed"),
+            "{operation}: {error}"
+        );
+        assert!(s.pending.as_ref().unwrap().effect.is_some());
+        assert_ne!(s.phase, Phase::Sealed);
+        assert_ne!(s.phase, Phase::Recovered);
+    }
+}
+
+#[test]
+fn typed_rejection_proves_no_execution_and_does_not_poison_a_later_claim() {
+    let mut s = state(false);
+    let c = Recording::new(&s);
+    c.reject.set(true);
+    assert!(
+        run(&c, &mut s, Step::Claim)
+            .unwrap_err()
+            .contains("rejected")
+    );
+    assert!(s.pending.is_none());
+    assert_eq!(c.count("claim"), 0);
+    run(&c, &mut s, Step::Claim).unwrap();
+    assert_eq!(c.count("claim"), 1);
+}
+
+#[test]
+fn unavailable_bound_neuron_and_stake_mismatch_never_create_a_replacement() {
+    for amount in [199_999_999, 200_000_001] {
+        let mut s = state(false);
+        let c = Recording::new(&s);
+        c.balance_override.set(Some(amount));
+        assert!(run(&c, &mut s, Step::Claim).is_err());
+        assert_eq!(c.count("claim"), 0);
+        assert!(s.neuron_id.is_none());
+    }
+    let mut s = state(false);
+    let c = Recording::new(&s);
+    run(&c, &mut s, Step::Claim).unwrap();
+    *c.neuron.borrow_mut() = None;
+    assert!(
+        run(&c, &mut s, Step::Claim)
+            .unwrap_err()
+            .contains("never claim a replacement")
+    );
+    assert_eq!(c.count("claim"), 1);
+}
+
+#[test]
+fn network_voting_minimum_is_separate_from_the_fixed_standard_lock() {
+    let economic = |value| Economics {
+        neuron_minimum_stake_e8s: 1,
+        transaction_fee_e8s: 1,
+        voting_power_economics: value,
+    };
+    assert_eq!(economic(None).minimum_voting_delay(), 15_778_800);
+    assert_eq!(
+        economic(Some(VotingEconomics {
+            neuron_minimum_dissolve_delay_to_vote_seconds: None
+        }))
+        .minimum_voting_delay(),
+        1_209_600
+    );
+    let (mut s, c, step) = operation_fixture("lock");
+    c.voting_minimum.set(s.plan.lock_seconds + 1);
+    assert!(
+        run(&c, &mut s, step)
+            .unwrap_err()
+            .contains("exceeds the fixed Standard")
+    );
+    assert_eq!(c.count("lock"), 0);
+    assert_eq!(s.plan.lock_seconds, 63_115_200);
+}
+
+#[test]
+fn configuration_repairs_reviewed_extra_topics_but_refuses_unknown_ones() {
+    for topic in [4, 99] {
+        let mut s = state(false);
+        let c = Recording::new(&s);
+        setup(&c, &mut s);
+        c.neuron.borrow_mut().as_mut().unwrap().followees.push((
+            topic,
+            Followees {
+                followees: vec![NeuronId { id: 11 }],
+            },
+        ));
+        let result = run(&c, &mut s, Step::Configure);
+        if topic == 4 {
+            result.unwrap();
+            assert_eq!(c.count("follow:4"), 1);
+        } else {
+            assert!(result.unwrap_err().contains("unsupported following"));
+            assert_eq!(c.count("follow:99"), 0);
+        }
+    }
+}
+
+fn executed_rehearsal() -> Rehearsal {
+    Rehearsal {
+        status: 4,
+        topic: 1,
+        proposal_timestamp_seconds: 100,
+        executed_timestamp_seconds: 101,
+        latest_tally: Some(Tally {
+            yes: 3,
+            no: 2,
+            total: 5,
+        }),
+        proposal: Some(Proposal {
+            action: Some(Action::ManageNeuron(Managed {
+                id: None,
+                neuron_id_or_subaccount: Some(ReadId::NeuronId(NeuronId { id: 600 })),
+                command: Some(RehearsalCommand::RefreshVotingPower(Reserved)),
+            })),
+        }),
+    }
+}
+
+fn rehearsal_management(p: &mut Rehearsal) -> &mut Managed {
+    let Some(Action::ManageNeuron(m)) = p.proposal.as_mut().unwrap().action.as_mut() else {
+        panic!("invalid test fixture");
+    };
+    m
+}
+
+#[test]
+fn rehearsal_requires_exact_executed_refresh_freshness_and_consistent_quorum() {
+    let mut s = state(true);
+    s.neuron_id = Some(600);
+    s.rehearsal_started_at = Some(100);
+    validate_rehearsal_response(&s, Some(executed_rehearsal())).unwrap();
+    let mut legacy = executed_rehearsal();
+    let m = rehearsal_management(&mut legacy);
+    m.neuron_id_or_subaccount = None;
+    m.id = Some(NeuronId { id: 600 });
+    validate_rehearsal_response(&s, Some(legacy)).unwrap();
+    assert!(validate_rehearsal_response(&s, None).is_err());
+    let mutations: [fn(&mut Rehearsal); 20] = [
+        |p| p.latest_tally = None,
+        |p| p.proposal = None,
+        |p| p.proposal.as_mut().unwrap().action = None,
+        |p| p.proposal.as_mut().unwrap().action = Some(Action::Motion(Reserved)),
+        |p| p.proposal.as_mut().unwrap().action = Some(Action::RegisterKnownNeuron(Reserved)),
+        |p| {
+            rehearsal_management(p).neuron_id_or_subaccount =
+                Some(ReadId::NeuronId(NeuronId { id: 601 }))
+        },
+        |p| rehearsal_management(p).neuron_id_or_subaccount = Some(ReadId::Subaccount(vec![0; 32])),
+        |p| rehearsal_management(p).command = None,
+        |p| rehearsal_management(p).command = Some(RehearsalCommand::Follow(Reserved)),
+        |p| rehearsal_management(p).command = Some(RehearsalCommand::Configure(Reserved)),
+        |p| p.status = 3,
+        |p| p.topic = 4,
+        |p| p.executed_timestamp_seconds = 0,
+        |p| p.proposal_timestamp_seconds = 99,
+        |p| p.latest_tally.as_mut().unwrap().total = 6,
+        |p| p.latest_tally.as_mut().unwrap().yes = 2,
+        |p| p.latest_tally.as_mut().unwrap().no = 6,
+        |p| p.latest_tally.as_mut().unwrap().yes = 6,
+        |p| p.latest_tally.as_mut().unwrap().no = 3,
+        |p| {
+            let m = rehearsal_management(p);
+            m.neuron_id_or_subaccount = None;
+            m.id = None;
+        },
+    ];
+    for mutate in mutations {
+        let mut p = executed_rehearsal();
+        mutate(&mut p);
+        assert!(validate_rehearsal_response(&s, Some(p)).is_err());
+    }
+    s.rehearsal_started_at = None;
+    assert!(validate_rehearsal_response(&s, Some(executed_rehearsal())).is_err());
 }
