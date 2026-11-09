@@ -5,7 +5,8 @@ use super::{
 };
 use candid::{Principal, Reserved};
 use ic_clients::{
-    CanisterInfoResponse, DissolveState, Followees, KnownNeuronData, NeuronId, NeuronInfo,
+    CanisterInfoResponse, DissolveState, Followees, GovernanceError, KnownNeuronData, NeuronId,
+    NeuronInfo,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -294,7 +295,9 @@ impl CreationClient for Recording {
             *self.neuron.borrow_mut() = prior;
         }
         if let Some(response) = self.next_response.borrow_mut().take() {
-            return Ok(response);
+            return decode_mutation_response(ManageResponse {
+                command: Some(response),
+            });
         }
         if self.lose.replace(false) {
             Err(Failure::Unknown(
@@ -890,7 +893,7 @@ fn success_without_matching_configuration_readback_cannot_advance() {
 }
 
 #[test]
-fn typed_rejection_proves_no_execution_and_does_not_poison_a_later_claim() {
+fn reviewed_pre_dispatch_rejection_does_not_poison_a_later_claim() {
     let mut s = state(false);
     let c = Recording::new(&s);
     c.reject.set(true);
@@ -903,6 +906,57 @@ fn typed_rejection_proves_no_execution_and_does_not_poison_a_later_claim() {
     assert_eq!(c.count("claim"), 0);
     run(&c, &mut s, Step::Claim).unwrap();
     assert_eq!(c.count("claim"), 1);
+}
+
+#[test]
+fn only_reviewed_pre_dispatch_governance_errors_prove_non_execution() {
+    for code in [3, 4, 5, 6, 7, 8, 11, 13, 14] {
+        assert!(matches!(
+            decode_mutation_response(ManageResponse {
+                command: Some(Response::Error(GovernanceError {
+                    error_type: code,
+                    error_message: "rejected before dispatch".into()
+                }))
+            }),
+            Err(Failure::Known(_))
+        ));
+    }
+    for code in [0, 1, 2, 9, 10, 12, 15, 16, 99] {
+        assert!(matches!(
+            decode_mutation_response(ManageResponse {
+                command: Some(Response::Error(GovernanceError {
+                    error_type: code,
+                    error_message: "not execution evidence".into()
+                }))
+            }),
+            Err(Failure::Unknown(_))
+        ));
+    }
+    assert!(matches!(
+        decode_mutation_response(ManageResponse { command: None }),
+        Err(Failure::Unknown(_))
+    ));
+}
+
+#[test]
+fn a_typed_external_error_after_disbursement_retains_its_original_effect() {
+    let (mut s, c, step) = operation_fixture("disbursement");
+    *c.next_response.borrow_mut() = Some(Response::Error(GovernanceError {
+        error_type: 12,
+        error_message: "Ledger response unavailable after transfer".into(),
+    }));
+    assert!(
+        run(&c, &mut s, step.clone())
+            .unwrap_err()
+            .contains("not proof of non-execution")
+    );
+    assert_eq!(c.count("disburse"), 1);
+    assert!(s.pending.as_ref().unwrap().effect == Some(Effect::Disburse));
+    assert!(run(&c, &mut s, step).is_err());
+    assert_eq!(c.count("disburse"), 1);
+    run(&c, &mut s, Step::ReconcileDisbursement(77)).unwrap();
+    assert_eq!(s.phase, Phase::Recovered);
+    assert_eq!(c.count("disburse"), 1);
 }
 
 #[test]

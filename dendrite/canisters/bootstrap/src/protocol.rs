@@ -238,8 +238,22 @@ pub async fn mutate(id: Option<u64>, command: Command) -> Result<Response, Failu
         .map_err(|e| Failure::Unknown(bounded(e)))?
         .candid()
         .map_err(|e| Failure::Unknown(bounded(e)))?;
+    decode_mutation_response(reply)
+}
+
+pub(crate) fn decode_mutation_response(reply: ManageResponse) -> Result<Response, Failure> {
     match reply.command {
-        Some(Response::Error(e)) => Err(Failure::Known(bounded(e.error_message))),
+        // Audited pre-dispatch guards for this component's narrow commands.
+        // External (12) can wrap a Ledger call after a financial effect; neither
+        // it nor an unknown/future code is proof that nothing executed.
+        Some(Response::Error(e)) if matches!(e.error_type, 3..=8 | 11 | 13 | 14) => {
+            Err(Failure::Known(bounded(e.error_message)))
+        }
+        Some(Response::Error(e)) => Err(Failure::Unknown(format!(
+            "Governance error {} is not proof of non-execution: {}",
+            e.error_type,
+            bounded(e.error_message)
+        ))),
         Some(r) => Ok(r),
         None => Err(Failure::Unknown(
             "Governance response has no command".into(),

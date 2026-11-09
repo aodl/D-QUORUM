@@ -179,6 +179,7 @@
       "tests": [
         "real_cmc_conversion_and_cycles_ledger_creation_deduplicate",
         "real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return",
+        "real_bootstrap_external_disbursement_error_retains_its_financial_intent",
         "real_production_creation_registration_rehearsal_teardown_and_post_final_management",
         "real_premature_controller_removal_retains_executable_neuron_authority_and_fails_evaluation"
       ],

@@ -61,6 +61,16 @@ effective-canister routing gate must pass before enabling those capabilities. Fr
 preflight cannot make separate Governance and management calls atomic or lock out
 concurrent legitimate managers.
 
+For the bootstrap's fixed Governance commands, only the audited pre-dispatch
+codes 3–8, 11, 13 and 14 establish a rejection without execution. Governance's
+`From<NervousSystemError>` converts Ledger errors to External (12), including a
+failure after an earlier fee burn or an uncertain remote call. External, unknown
+codes and malformed replies retain the original durable effect; a typed error is
+not a universal no-execution certificate. The executable implementation and error
+enum are checksum-bound in `protocol-pins.json`. Recording tests cover an effect
+followed by External; the real-protocol negative gate forces a Ledger refusal and
+requires C to retain its disbursement intent without a second financial dispatch.
+
 Sealing records management `canister_info.total_num_changes` in replicated state
 and its certified reply. Ordinary canister execution advances `canister_version`,
 so that execution counter is unsuitable for a persistent seal. Approved bootstrap

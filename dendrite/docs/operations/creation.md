@@ -222,7 +222,13 @@ disbursement. A production two-year lock cannot be reduced or immediately refund
 
 The bootstrap disburses only a proven dissolved neuron, binding the reviewed
 amount/fee and fixed destination. A lost reply is reconciled through the original
-ledger block rather than a second disbursement. After code removal, bootstrap state
+ledger block rather than a second disbursement. Only the pinned, audited
+pre-dispatch Governance error codes prove a
+rejection without execution. External errors (including Ledger failures), unknown
+codes and malformed replies retain the original effect and cannot authorise a
+replacement disbursement. Even an actual Ledger refusal may require external
+investigation when the public response does not prove its financial outcome.
+After code removal, bootstrap state
 is gone; after controller removal, routine creator recovery is gone. No developer
 or service recovery controller remains.
 

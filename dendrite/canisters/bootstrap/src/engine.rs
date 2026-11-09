@@ -92,7 +92,7 @@ async fn send(
     match client.mutate(s.neuron_id, cmd).await {
         Ok(reply) => Ok(reply),
         Err(Failure::Known(message)) => {
-            // Governance's typed rejection proves this dispatch had no effect.
+            // Only the adapter's audited pre-dispatch errors prove no effect.
             s.pending.as_mut().expect("admitted operation").effect = None;
             Err(format!("Governance rejected the exact request: {message}"))
         }

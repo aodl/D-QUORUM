@@ -836,6 +836,16 @@ fn production_creation(case: CreationCase) {
 #[test]
 #[ignore = "creation_protocol real bootstrap, Governance and Ledger qualification"]
 fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return() {
+    recoverable_creation(false);
+}
+
+#[test]
+#[ignore = "creation_protocol real Governance external-error financial uncertainty"]
+fn real_bootstrap_external_disbursement_error_retains_its_financial_intent() {
+    recoverable_creation(true);
+}
+
+fn recoverable_creation(external_disbursement_error: bool) {
     use bootstrap_model::{Following, Network, Phase, Plan, Profile, Step};
     use quorum_ic_clients::{GOVERNANCE, governance as g};
     use sha2::{Digest, Sha256};
@@ -1124,6 +1134,77 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     advance(&pic, c, owner, Step::StartDissolving).unwrap();
     pic.advance_time(std::time::Duration::from_secs(plan.lock_seconds + 1));
     pic.tick();
+    if external_disbursement_error {
+        // Negative economic fault only: the fixture withdraws the real Ledger
+        // backing without changing Governance's cache. This is not the positive
+        // provisioning/claim path or evidence of a delegated caller's authority.
+        let drained: Result<Nat, l::TransferError> = update(
+            &pic,
+            LEDGER,
+            GOVERNANCE,
+            "icrc1_transfer",
+            l::TransferArg {
+                from_subaccount: Some(sub.clone()),
+                to: l::Account {
+                    owner: user(42),
+                    subaccount: None,
+                },
+                amount: 199_990_000u64.into(),
+                fee: Some(10_000u64.into()),
+                memo: None,
+                created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+            },
+        );
+        let unrelated_block: u64 = drained.unwrap().0.try_into().unwrap();
+        let step = Step::Disburse {
+            expected_amount_e8s: 199_990_000,
+            expected_fee_e8s: 10_000,
+        };
+        let error = advance(&pic, c, owner, step.clone()).unwrap_err();
+        assert!(
+            error.contains("Governance error 12 is not proof of non-execution"),
+            "{error}"
+        );
+        let status: Result<bootstrap_model::State, String> = update(&pic, c, owner, "status", 1u64);
+        let status = status.unwrap();
+        assert!(matches!(
+            status.pending.unwrap().effect,
+            Some(bootstrap_model::Effect::Disburse)
+        ));
+        let head = || -> l::History {
+            query(
+                &pic,
+                LEDGER,
+                "query_blocks",
+                l::BlocksArgs {
+                    start: 0,
+                    length: 0,
+                },
+            )
+        };
+        let before = head().chain_length;
+        assert!(advance(&pic, c, owner, step).is_err());
+        assert!(advance(&pic, c, owner, Step::ReconcileDisbursement(unrelated_block)).is_err());
+        assert_eq!(
+            head().chain_length,
+            before,
+            "no replacement disbursement or unrelated-return adoption is authorised"
+        );
+        assert_eq!(pic.get_controllers(c), vec![owner]);
+        let evidence = root().join("dist/evidence");
+        std::fs::create_dir_all(&evidence).unwrap();
+        std::fs::write(evidence.join("creation-external-error-protocol.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "classification":"Real pinned Governance/Ledger negative fault; fixture-only debit without Governance-cache update; not positive browser authority evidence",
+            "controller":c.to_text(),"neuron":t,"owner":owner.to_text(),"bootstrap_sha256":hex::encode(Sha256::digest(&bytes)),
+            "governance_error_type":12,"dispatched_effect_retained":"Disburse","replacement_ledger_blocks":head().chain_length-before,
+            "unrelated_fixture_block":unrelated_block,"fixture_debit_e8s":200_000_000u64,"unrelated_recipient_e8s":199_990_000u64,"ledger_fee_e8s":10_000u64,
+            "reconciliation":"unrelated destination rejected; typed External alone cannot establish no execution; original intent remains unresolved and sole P authority is retained"
+        })).unwrap()).unwrap();
+        println!(
+            "actual Governance External(12) after real Ledger refusal remains unresolved; a second financial dispatch and unrelated payment adoption are refused; P retains C"
+        );
+        return;
+    }
     let recovered = checkpoint_fault(
         &pic,
         c,
