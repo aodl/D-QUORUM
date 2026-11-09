@@ -55,12 +55,15 @@ test("production mapping, cache exclusion, manifest, and release sums are strict
 test("canonical Docker context excludes ignored operator files using committed source", () => {
   const temporary=mkdtempSync(join(tmpdir(),"dendrite-canonical-context-"));
   try {
-    const fixture=join(temporary,"source"),bin=join(temporary,"bin"),output=join(temporary,"release"),context=join(temporary,"context.json");
+    for (const nested of [false, true]) {
+    const layout=nested?"consolidated":"standalone",repository=join(temporary,layout);
+    const fixture=nested?join(repository,"dendrite"):repository,bin=join(temporary,`bin-${layout}`),output=join(temporary,`release-${layout}`),context=join(temporary,`context-${layout}.json`);
     mkdirSync(join(fixture,"tools/scripts"),{recursive:true});mkdirSync(bin);
     cpSync("tools/scripts/docker-build-release.sh",join(fixture,"tools/scripts/docker-build-release.sh"));
     for(const file of ["Cargo.lock","Dockerfile.repro","icp.yaml"])writeFileSync(join(fixture,file),"public committed fixture\n");
     writeFileSync(join(fixture,".gitignore"),"operator-state.skip\n");
-    const git=(args)=>{const result=spawnSync("git",args,{cwd:fixture,encoding:"utf8"});assert.equal(result.status,0,result.stderr);};
+    if(nested)writeFileSync(join(repository,"consolidated-root-only.txt"),"public root fixture; not a Dendrite build input\n");
+    const git=(args)=>{const result=spawnSync("git",args,{cwd:repository,encoding:"utf8"});assert.equal(result.status,0,result.stderr);};
     git(["init","--quiet"]);git(["add","."]);git(["-c","user.name=Qualification fixture","-c","user.email=fixture@example.invalid","commit","--quiet","-m","Public source fixture"]);
     writeFileSync(join(fixture,"operator-state.skip"),"non-secret operator marker; never a Docker input\n");
     const docker=join(bin,"docker");writeFileSync(docker,`#!/usr/bin/env python3
@@ -82,8 +85,10 @@ else:raise SystemExit('unexpected Docker command')
     const result=spawnSync(join(fixture,"tools/scripts/docker-build-release.sh"),[],{cwd:fixture,encoding:"utf8",env:{...process.env,...productionEnvironment,PATH:`${bin}:${process.env.PATH}`,DENDRITE_RELEASE_OUTPUT_DIR:output,CONTEXT_LOG:context}});
     assert.equal(result.status,0,result.stderr);
     const names=JSON.parse(readFileSync(context,"utf8"));assert.ok(names.includes("Cargo.lock"));assert.ok(names.includes("tools/scripts/docker-build-release.sh"));assert.ok(!names.includes("operator-state.skip"));
+    assert.ok(!names.includes("consolidated-root-only.txt"));assert.ok(!names.includes("dendrite/Cargo.lock"));
     assert.equal(readFileSync(join(fixture,"operator-state.skip"),"utf8"),"non-secret operator marker; never a Docker input\n");
     assert.ok(existsSync(join(output,"bootstrap/bootstrap.wasm")));
+    }
   } finally {rmSync(temporary,{recursive:true,force:true});}
 });
 

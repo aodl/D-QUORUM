@@ -55,9 +55,10 @@ trap 'find "$export_dir" -type f -delete; find "$export_dir" -depth -type d -emp
 # build context, regardless of a future ignore-pattern omission.
 [ -z "$(git status --porcelain)" ] || { echo "canonical build requires a clean source revision" >&2; exit 1; }
 source_prefix=$(git rev-parse --show-prefix)
+repository_root=$(git rev-parse --show-toplevel)
 source_tree=HEAD
 if [ -n "$source_prefix" ]; then source_tree="HEAD:${source_prefix%/}"; fi
-git archive --format=tar --output "$export_dir/source.tar" "$source_tree"
+git -C "$repository_root" archive --format=tar --output "$export_dir/source.tar" "$source_tree"
 
 docker --context "$docker_context" buildx build \
   --builder "$buildx_builder" \
