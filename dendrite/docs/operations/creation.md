@@ -101,6 +101,10 @@ separate named, memory-only capabilities with a maximum 15-minute lifetime:
 Ledger/CMC/Cycles Ledger funding, management plus exact C, and exact C application
 calls. Each derives from genuine II authentication, preserves P, inherits parent
 restrictions and is discarded on cancellation, sign-out or route changes.
+The ordinary application login owns the SDK's shared idle manager; disposing one
+creation capability does not exit that singleton or reload the receipt handover.
+Application inactivity still clears the browser heap through the existing reload,
+and each provisioning child independently retains its short expiry.
 
 A management target `aaaaa-aa` does not constrain method or `canister_id`/amount
 arguments. Real replica controller checks and exact reviewed requests remain

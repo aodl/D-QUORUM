@@ -196,6 +196,26 @@ test("actual SDK idle teardown never recursively signs out or reloads on manual 
   } finally { for(const [key,value] of Object.entries(previous)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;} }
 });
 
+test("disposing provisioning capabilities preserves the application's actual SDK idle session", async () => {
+  const previous={window:globalThis.window,document:globalThis.document,location:globalThis.location};
+  let idleCallback,reloads=0;
+  globalThis.window={addEventListener(){},removeEventListener(){},clearTimeout(){},setTimeout(fn){idleCallback=fn;return 1;}};
+  globalThis.document={addEventListener(){},removeEventListener(){}};
+  globalThis.location={reload(){reloads++;}};
+  let application;
+  try {
+    application=session();const manager=await application.signIn(),originalIdle=idleCallback;
+    for(const profile of ['FundProvisioning','ManageBootstrap','CallBootstrap']){
+      const auth=createBrowserProvisioningSession(profile,profile==='FundProvisioning'?undefined:'pi33i-pt777-77776-aaaaa-cai',{...configuration,currentOrigin:canonical,AuthClientClass:FakeAuthClient});
+      const capability=await auth.signIn();await auth.signOut();
+      assert.throws(capability.validate,/signed out/);assert.equal(await auth.restore(),null);
+      assert.equal(reloads,0);assert.equal(idleCallback,originalIdle);assert.equal(manager.validate(),true);
+    }
+    // Application inactivity still invokes the real SDK lifecycle and reloads.
+    idleCallback();assert.equal(reloads,1);assert.throws(manager.validate,/signed out/);
+  } finally { await application?.signOut();for(const [key,value] of Object.entries(previous)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;} }
+});
+
 const manager = (status, controller = [], hotKeys = []) => ({
   neuron_id: 100n,
   evidence_status: { [status]: null },

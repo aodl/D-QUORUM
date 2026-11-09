@@ -152,10 +152,13 @@ export function createBrowserAuthSession(options = {}) {
 
 export function createBrowserProvisioningSession(profile, bootstrapCanisterId, options = {}) {
   provisioningTargets(profile, bootstrapCanisterId);
-  return browserSession(options, (bootstrap, key) => deriveProvisioningSession(bootstrap, key, profile, bootstrapCanisterId), PROVISIONING_DELEGATION_TTL_NS);
+  // The application's ordinary login owns the SDK's singleton idle lifecycle.
+  // A capability's explicit disposal must not exit that shared manager: exit()
+  // fires every registered callback, including the application's reload handler.
+  return browserSession(options, (bootstrap, key) => deriveProvisioningSession(bootstrap, key, profile, bootstrapCanisterId), PROVISIONING_DELEGATION_TTL_NS, false);
 }
 
-function browserSession(options, deriveSession, maximumTtl) {
+function browserSession(options, deriveSession, maximumTtl, managesApplicationIdle = true) {
   const configuration = identityConfiguration(options);
   const currentOrigin = options.currentOrigin ?? globalThis.location?.origin;
   let originError;
@@ -206,7 +209,7 @@ function browserSession(options, deriveSession, maximumTtl) {
         if (token !== generation) throw new Error("Authentication session has been signed out.");
         return session.validate();
       } });
-      if (globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => {
+      if (managesApplicationIdle && globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => {
         // SDK exit() invokes callbacks even during manual teardown. Clear the
         // reference first, and never recursively exit an already exiting manager.
         if (!idle) return;
