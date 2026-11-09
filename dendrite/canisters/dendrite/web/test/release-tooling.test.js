@@ -52,6 +52,41 @@ test("production mapping, cache exclusion, manifest, and release sums are strict
   assert.doesNotMatch(yaml, /\b(reinstall|build:|source:)\b/);
 });
 
+test("canonical Docker context excludes ignored operator files using committed source", () => {
+  const temporary=mkdtempSync(join(tmpdir(),"dendrite-canonical-context-"));
+  try {
+    const fixture=join(temporary,"source"),bin=join(temporary,"bin"),output=join(temporary,"release"),context=join(temporary,"context.json");
+    mkdirSync(join(fixture,"tools/scripts"),{recursive:true});mkdirSync(bin);
+    cpSync("tools/scripts/docker-build-release.sh",join(fixture,"tools/scripts/docker-build-release.sh"));
+    for(const file of ["Cargo.lock","Dockerfile.repro","icp.yaml"])writeFileSync(join(fixture,file),"public committed fixture\n");
+    writeFileSync(join(fixture,".gitignore"),"operator-state.skip\n");
+    const git=(args)=>{const result=spawnSync("git",args,{cwd:fixture,encoding:"utf8"});assert.equal(result.status,0,result.stderr);};
+    git(["init","--quiet"]);git(["add","."]);git(["-c","user.name=Qualification fixture","-c","user.email=fixture@example.invalid","commit","--quiet","-m","Public source fixture"]);
+    writeFileSync(join(fixture,"operator-state.skip"),"non-secret operator marker; never a Docker input\n");
+    const docker=join(bin,"docker");writeFileSync(docker,`#!/usr/bin/env python3
+import sys,os,json,tarfile,pathlib
+a=sys.argv[1:]
+if a[:1]==['--context']:a=a[2:]
+if a[:1]==['version']:print('Server: Docker Engine')
+elif a[:2]==['context','inspect']:print('unix:///unused-fixture')
+elif a[:2]==['buildx','inspect']:print('Driver: docker-container\\nStatus: running')
+elif a[:2]==['buildx','build']:
+ assert a[-1]=='-', 'a filesystem context could include ignored operator files'
+ with tarfile.open(fileobj=sys.stdin.buffer,mode='r|') as t:names=[m.name for m in t]
+ pathlib.Path(os.environ['CONTEXT_LOG']).write_text(json.dumps(names))
+ out=pathlib.Path(a[a.index('--output')+1].split('dest=',1)[1]);out.mkdir(exist_ok=True)
+ for name in ['frontend','bootstrap']:(out/name).mkdir()
+ for name in ['dendrite.wasm','asset-manifest.json','build-configuration.txt','frontend/index.html','bootstrap/bootstrap.wasm']:(out/name).write_bytes(b'public recording fixture')
+else:raise SystemExit('unexpected Docker command')
+`);chmodSync(docker,0o755);
+    const result=spawnSync(join(fixture,"tools/scripts/docker-build-release.sh"),[],{cwd:fixture,encoding:"utf8",env:{...process.env,...productionEnvironment,PATH:`${bin}:${process.env.PATH}`,DENDRITE_RELEASE_OUTPUT_DIR:output,CONTEXT_LOG:context}});
+    assert.equal(result.status,0,result.stderr);
+    const names=JSON.parse(readFileSync(context,"utf8"));assert.ok(names.includes("Cargo.lock"));assert.ok(names.includes("tools/scripts/docker-build-release.sh"));assert.ok(!names.includes("operator-state.skip"));
+    assert.equal(readFileSync(join(fixture,"operator-state.skip"),"utf8"),"non-secret operator marker; never a Docker input\n");
+    assert.ok(existsSync(join(output,"bootstrap/bootstrap.wasm")));
+  } finally {rmSync(temporary,{recursive:true,force:true});}
+});
+
 test("navbar SVG and document icon handling are CSP-safe in real browsers", () => {
   const app = readFileSync("canisters/dendrite/web/src/app.js", "utf8");
   const template = readFileSync("canisters/dendrite/web/index.template.html", "utf8");

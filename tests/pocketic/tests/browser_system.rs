@@ -1,3 +1,5 @@
+#[path = "support/browser_creation.rs"]
+mod browser_creation;
 #[path = "support/creation.rs"]
 mod creation;
 mod support;
@@ -230,6 +232,7 @@ fn local_frontend(
     alternate_assets: bool,
     identity_provider: &str,
     tamper_http: bool,
+    retain_ii_device: bool,
 ) -> Vec<u8> {
     let source = directory.join("source");
     fs::create_dir_all(&source).unwrap();
@@ -279,10 +282,21 @@ fn local_frontend(
     }
     let origin = format!("http://{id}.localhost:{}", browser_port());
     let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":format!("http://127.0.0.1:{}",browser_port()),"DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
-    let mut build = Command::new("npm");
-    build.args(["run", "build"]).current_dir(&source).env(
+    let mut build = if retain_ii_device {
+        let mut cmd = Command::new("node");
+        cmd.arg(root().join("tests/browser/build-creation-fixture.mjs"))
+            .arg(&source);
+        cmd
+    } else {
+        let mut cmd = Command::new("npm");
+        cmd.args(["run", "build"]);
+        cmd
+    };
+    build.current_dir(&source).env(
         "DENDRITE_BOOTSTRAP_RELEASE_DIR",
-        root().join("dendrite/target/bootstrap-release"),
+        std::env::var_os("DENDRITE_BOOTSTRAP_RELEASE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root().join("dendrite/target/bootstrap-release")),
     );
     for (key, value) in config.as_object().unwrap() {
         build.env(key, value.as_str().unwrap());
@@ -378,6 +392,18 @@ fn real_ii_compiled_frontend_known_managers_and_signed_governance() {
 fn real_ii_scoped_child_is_enforced_by_replica() {
     browser_world("scoped-signing");
 }
+
+#[test]
+#[ignore = "creation_browser signed real-II recoverable creation journey"]
+fn real_ii_recoverable_creation_and_ledger_recovery() {
+    browser_world("creation-recoverable");
+}
+
+#[test]
+#[ignore = "creation_browser signed real-II registration-first finalisation journey"]
+fn real_ii_production_creation_finalisation_and_subsequent_management() {
+    browser_world("creation-production");
+}
 #[test]
 #[ignore = "xtask system_browser uses the real SDK channel-establishment timeout"]
 fn real_ii_closed_popup_does_not_publish_session() {
@@ -465,13 +491,21 @@ fn browser_world(scenario: &str) {
     } else {
         format!("http://id.ai.localhost:{}/authorize", browser_port())
     };
-    let local = local_frontend(&directory, expected_verifier, false, &provider, false);
+    let local = local_frontend(
+        &directory,
+        expected_verifier,
+        false,
+        &provider,
+        false,
+        scenario.starts_with("creation-"),
+    );
     let upgraded_local = if scenario == "team-management" {
         Some(local_frontend(
             &directory.join("upgrade"),
             expected_verifier,
             true,
             &provider,
+            false,
             false,
         ))
     } else {
@@ -484,6 +518,7 @@ fn browser_world(scenario: &str) {
             false,
             &provider,
             true,
+            false,
         ))
     } else {
         None
@@ -681,6 +716,11 @@ fn browser_world(scenario: &str) {
                 ),
                 vec![principal]
             );
+            assert!(child.wait().unwrap().success());
+            return;
+        }
+        if scenario.starts_with("creation-") {
+            browser_creation::coordinate(&pic, verifier, &directory, scenario, &mut child);
             assert!(child.wait().unwrap().success());
             return;
         }
@@ -1413,6 +1453,21 @@ fn browser_world(scenario: &str) {
         "submitted.json",
         "voted.json",
         "scope-probe.json",
+        "sdk-window-policy.json",
+        "creation-principal.json",
+        "creation-plan.json",
+        "creation-controller-installed.json",
+        "creation-configured.json",
+        "creation-rehearsal.json",
+        "creation-dissolving.json",
+        "creation-recovered.json",
+        "creation-code-removed.json",
+        "creation-finalised.json",
+        "creation-post-final-management.json",
+        "creation-resources.json",
+        "creation-accessibility.json",
+        "creation-mobile.png",
+        "creation-recoverable.png",
         "principals.json",
         "verified.json",
         "proposal-evidence.json",

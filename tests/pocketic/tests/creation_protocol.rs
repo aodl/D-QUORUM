@@ -3,6 +3,8 @@
 mod bootstrap_model;
 #[path = "support/creation.rs"]
 mod creation;
+#[path = "support/creation_automation.rs"]
+mod creation_automation;
 mod support;
 use candid::{CandidType, Deserialize, Nat, encode_one};
 use creation::*;
@@ -77,6 +79,73 @@ fn advance(
 ) -> Result<bootstrap_model::State, String> {
     update(pic, c, owner, "advance", Advance { revision: 1, step })
 }
+
+fn checkpoint_fault(
+    pic: &pocket_ic::PocketIc,
+    c: candid::Principal,
+    owner: candid::Principal,
+    step: bootstrap_model::Step,
+    bytes: &[u8],
+) -> bootstrap_model::State {
+    let call = pic
+        .submit_call(
+            c,
+            owner,
+            "advance",
+            encode_one(Advance { revision: 1, step }).unwrap(),
+        )
+        .unwrap();
+    let mut checkpoint = None;
+    for _ in 0..200 {
+        pic.tick();
+        let image = pic.get_stable_memory(c);
+        let mut decoder = candid::de::IDLDeserialize::new(&image).unwrap();
+        let (state,): (bootstrap_model::State,) =
+            candid::utils::ArgumentDecoder::decode(&mut decoder).unwrap();
+        if state.pending.as_ref().is_some_and(|p| p.effect.is_some()) {
+            checkpoint = Some((image, state));
+            break;
+        }
+        assert!(
+            pic.ingress_status(call.clone()).is_none(),
+            "missed the required actual pre-await checkpoint; this fault gate did not execute"
+        );
+    }
+    let (image, original) =
+        checkpoint.expect("actual dispatched bootstrap effect checkpoint required");
+    // Reuse the existing financial-hardening fixture pattern: stop drains the
+    // real successful callback, then restore its observed pre-await image to
+    // model a lost callback. Governance/Ledger effects are never rolled back.
+    pic.stop_canister(c, Some(owner)).unwrap();
+    let completed: Result<bootstrap_model::State, String> =
+        candid::decode_one(&pic.await_call(call).unwrap()).unwrap();
+    let completed = completed.unwrap();
+    pic.set_stable_memory(
+        c,
+        image,
+        pocket_ic::common::rest::BlobCompression::NoCompression,
+    );
+    pic.upgrade_canister(
+        c,
+        bytes.to_vec(),
+        candid::encode_args(()).unwrap(),
+        Some(owner),
+    )
+    .unwrap();
+    pic.start_canister(c, Some(owner)).unwrap();
+    let restored: Result<bootstrap_model::State, String> = update(pic, c, owner, "status", 1u64);
+    assert_eq!(
+        restored.unwrap(),
+        original,
+        "same-code upgrade must retain the exact observed outstanding intent and binding"
+    );
+    println!(
+        "restored actual pre-await checkpoint C={c}, sequence={}, effect={:?}; remote effect retained",
+        original.sequence,
+        original.pending.as_ref().unwrap().effect
+    );
+    completed
+}
 fn transfer(
     pic: &pocket_ic::PocketIc,
     owner: candid::Principal,
@@ -141,12 +210,46 @@ struct ProposalOracle {
     status: i32,
     topic: i32,
     executed_timestamp_seconds: u64,
+    deadline_timestamp_seconds: Option<u64>,
     ballots: Vec<(u64, BallotOracle)>,
 }
 #[derive(CandidType, Deserialize)]
 struct BallotOracle {
     vote: i32,
     voting_power: u64,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct ControllerOracle {
+    neuron_id: u64,
+    controller: candid::Principal,
+    total_num_changes: u64,
+    module_hash: Option<Vec<u8>>,
+    controllers: Vec<candid::Principal>,
+}
+fn controller_oracle(
+    pic: &pocket_ic::PocketIc,
+    service: candid::Principal,
+    t: u64,
+) -> ControllerOracle {
+    let result: Result<ControllerOracle, candid::Reserved> = update(
+        pic,
+        service,
+        candid::Principal::anonymous(),
+        "controller_observation",
+        t,
+    );
+    let result = result.unwrap();
+    assert_eq!(result.neuron_id, t);
+    assert_eq!(result.controller.as_slice().last(), Some(&1));
+    assert!(result.controllers.len() <= 10);
+    assert!(
+        result
+            .module_hash
+            .as_ref()
+            .is_none_or(|hash| hash.len() == 32)
+    );
+    result
 }
 
 fn bootstrap_bytes() -> Vec<u8> {
@@ -197,6 +300,15 @@ struct RegistrationRequest {
     command: Option<RegistrationCommand>,
 }
 fn vote_yes(pic: &pocket_ic::PocketIc, owner: candid::Principal, manager: u64, proposal: u64) {
+    cast_vote(pic, owner, manager, proposal, 1);
+}
+fn cast_vote(
+    pic: &pocket_ic::PocketIc,
+    owner: candid::Principal,
+    manager: u64,
+    proposal: u64,
+    vote: i32,
+) {
     use quorum_ic_clients::{GOVERNANCE, governance as g};
     let r: g::ManageResponse = update(
         pic,
@@ -206,7 +318,7 @@ fn vote_yes(pic: &pocket_ic::PocketIc, owner: candid::Principal, manager: u64, p
         VoteRequest {
             neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: manager })),
             command: Some(VoteCommand::RegisterVote(Vote {
-                vote: 1,
+                vote,
                 proposal: Some(g::NeuronId { id: proposal }),
             })),
         },
@@ -251,6 +363,29 @@ fn propose_refresh(
 #[test]
 #[ignore = "creation_protocol real registration-first production candidate and teardown"]
 fn real_production_creation_registration_rehearsal_teardown_and_post_final_management() {
+    production_creation(CreationCase::Production);
+}
+
+#[test]
+#[ignore = "creation_protocol new real creation, unchanged direct-only selection and actual reward transfer"]
+fn newly_created_dendrite_enters_direct_only_election_and_receives_reward() {
+    production_creation(CreationCase::Automation);
+}
+
+#[test]
+#[ignore = "creation_protocol irreversible-order negative control on a separate synthetic creation"]
+fn real_premature_controller_removal_retains_executable_neuron_authority_and_fails_evaluation() {
+    production_creation(CreationCase::PrematureRemoval);
+}
+
+enum CreationCase {
+    Production,
+    Automation,
+    PrematureRemoval,
+}
+
+fn production_creation(case: CreationCase) {
+    let with_automation = matches!(case, CreationCase::Automation);
     use bootstrap_model::{Following, Metadata, Network, Phase, Plan, Profile, Step};
     use quorum_ic_clients::{GOVERNANCE, governance as g};
     use sha2::{Digest, Sha256};
@@ -272,16 +407,18 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
         n.known_neuron_data = Some(known(id));
         neurons.push(n);
     }
+    let automation = with_automation.then(|| creation_automation::Fixture::new(&pic, &mut neurons));
+    let balances = vec![(
+        l::Account {
+            owner,
+            subaccount: None,
+        },
+        1_000_000_000,
+    )];
     install_real(
         &pic,
         neurons,
-        vec![(
-            l::Account {
-                owner,
-                subaccount: None,
-            },
-            1_000_000_000,
-        )],
+        balances,
         artifact("governance-canister"),
         artifact("ledger-canister"),
     );
@@ -367,35 +504,104 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
         state = advance(&pic, c, owner, Step::Configure).unwrap();
     }
     assert_eq!(state.phase, Phase::AwaitingLock);
-    state = advance(&pic, c, owner, Step::CommitLock).unwrap();
+    if matches!(case, CreationCase::Production) {
+        let committed = checkpoint_fault(&pic, c, owner, Step::CommitLock, &bytes);
+        state = advance(&pic, c, owner, Step::CommitLock).unwrap();
+        assert_eq!(
+            state.phase, committed.phase,
+            "restored additive-lock intent must read back the existing effect rather than add it again"
+        );
+        assert_eq!(state.neuron_id, committed.neuron_id);
+    } else {
+        state = advance(&pic, c, owner, Step::CommitLock).unwrap();
+    }
     assert_eq!(state.phase, Phase::AwaitingRegistration);
     advance(&pic, c, owner, Step::Refresh).unwrap();
     assert!(advance(&pic, c, owner, Step::BeginRehearsal).is_err());
     let metadata = plan.metadata.as_ref().unwrap();
+    let registration_request = |name: String| RegistrationRequest {
+        neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: 11 })),
+        command: Some(RegistrationCommand::MakeProposal(RegistrationProposal {
+            title: Some("Register a still-provisional neuron".into()),
+            summary: format!(
+                "T={t}, controller C={c}; P retains recoverable authority. Registration is not a claim of immutability or current full compliance."
+            ),
+            url: String::new(),
+            action: Some(RegistrationAction::RegisterKnownNeuron(Registration {
+                id: Some(g::NeuronId { id: t }),
+                known_neuron_data: Some(RegistrationMetadata {
+                    name,
+                    description: Some(metadata.description.clone()),
+                    links: Some(vec![]),
+                    committed_topics: Some(vec![Some(RegistrationTopic::Governance)]),
+                }),
+            })),
+        })),
+    };
+    if matches!(case, CreationCase::Production) {
+        let collision: g::ManageResponse = update(
+            &pic,
+            GOVERNANCE,
+            owner,
+            "manage_neuron",
+            registration_request(known(11).name),
+        );
+        assert!(
+            matches!(collision.command, Some(g::ResponseCommand::Error(_))),
+            "real Governance must reject an already registered name before submission"
+        );
+        for expired in [false, true] {
+            let response: g::ManageResponse = update(
+                &pic,
+                GOVERNANCE,
+                owner,
+                "manage_neuron",
+                registration_request(metadata.name.clone()),
+            );
+            let id = match response.command {
+                Some(g::ResponseCommand::MakeProposal(p)) => p.proposal_id.unwrap().id,
+                other => panic!("registration fault fixture did not submit: {other:?}"),
+            };
+            if expired {
+                cast_vote(&pic, owner, 12, id, 2);
+                let open: Option<ProposalOracle> =
+                    update(&pic, GOVERNANCE, owner, "get_proposal_info", id);
+                let open = open.unwrap();
+                assert_eq!(open.status, 1);
+                let deadline = open
+                    .deadline_timestamp_seconds
+                    .expect("actual Governance deadline required");
+                pic.advance_time(std::time::Duration::from_secs(
+                    deadline.saturating_sub(now(&pic)) + 1,
+                ));
+                for _ in 0..20 {
+                    pic.tick();
+                }
+            } else {
+                for manager in [12, 13, 14, 15] {
+                    cast_vote(&pic, owner, manager, id, 2);
+                }
+            }
+            let rejected: Option<ProposalOracle> =
+                update(&pic, GOVERNANCE, owner, "get_proposal_info", id);
+            let rejected = rejected.unwrap();
+            assert_eq!(rejected.status, 2);
+            assert_eq!(rejected.executed_timestamp_seconds, 0);
+            let info: Result<g::NeuronInfo, g::GovernanceError> =
+                update(&pic, GOVERNANCE, owner, "get_neuron_info", t);
+            assert!(info.unwrap().known_neuron_data.is_none());
+            assert!(advance(&pic, c, owner, Step::BeginRehearsal).is_err());
+        }
+        println!(
+            "real registration name collision, explicit rejection and actual-deadline expiry remain unregistered and block progression"
+        );
+    }
     let registration: g::ManageResponse = update(
         &pic,
         GOVERNANCE,
         owner,
         "manage_neuron",
-        RegistrationRequest {
-            neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId { id: 11 })),
-            command: Some(RegistrationCommand::MakeProposal(RegistrationProposal {
-                title: Some("Register a still-provisional neuron".into()),
-                summary: format!(
-                    "T={t}, controller C={c}; P retains recoverable authority. Registration is not a claim of immutability or current full compliance."
-                ),
-                url: String::new(),
-                action: Some(RegistrationAction::RegisterKnownNeuron(Registration {
-                    id: Some(g::NeuronId { id: t }),
-                    known_neuron_data: Some(RegistrationMetadata {
-                        name: metadata.name.clone(),
-                        description: Some(metadata.description.clone()),
-                        links: Some(vec![]),
-                        committed_topics: Some(vec![Some(RegistrationTopic::Governance)]),
-                    }),
-                })),
-            })),
-        },
+        registration_request(metadata.name.clone()),
     );
     let registration = match registration.command {
         Some(g::ResponseCommand::MakeProposal(p)) => p.proposal_id.unwrap().id,
@@ -406,6 +612,9 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
     assert_eq!(before.unwrap().status, 1);
     for id in [12, 13, 14] {
         vote_yes(&pic, owner, id, registration);
+    }
+    if with_automation {
+        vote_yes(&pic, owner, 15, registration);
     }
     let executed: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, owner, "get_proposal_info", registration);
@@ -458,12 +667,97 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
             .into_iter()
             .collect()
     );
+    if let Some(a) = &automation {
+        a.provisional(&pic, owner, t);
+    }
+    if matches!(case, CreationCase::PrematureRemoval) {
+        // Deliberately wrong order in this isolated negative world only. The
+        // normal production/browser path must uninstall before this call.
+        pic.set_controllers(c, Some(owner), vec![]).unwrap();
+        let observation = controller_oracle(&pic, service, t);
+        assert!(observation.controllers.is_empty());
+        assert!(observation.module_hash.is_some());
+        let report: Result<dendrite_types::ComplianceReport, candid::Reserved> = update(
+            &pic,
+            service,
+            candid::Principal::anonymous(),
+            "check_neuron",
+            t,
+        );
+        let report = report.unwrap();
+        assert_eq!(
+            report.overall_status,
+            dendrite_types::ComplianceStatus::NonCompliant
+        );
+        assert!(
+            report
+                .rules
+                .iter()
+                .any(|r| r.rule_id == "DENDRITE-CONTROL-002"
+                    && r.status == dendrite_types::RuleStatus::Fail)
+        );
+        assert!(pic.uninstall_canister(c, Some(owner)).is_err());
+        assert_eq!(
+            advance(&pic, c, owner, Step::Refresh).unwrap().neuron_id,
+            Some(t),
+            "removing canister controllers alone retains P's installed application authority over T"
+        );
+        println!(
+            "negative control: empty controllers with installed code remains NonCompliant and executable; ordinary P uninstall is denied"
+        );
+        return;
+    }
     let sealed = advance(&pic, c, owner, Step::Seal(rehearsal)).unwrap();
     assert_eq!(sealed.phase, Phase::Sealed);
+    let sealed_changes = controller_oracle(&pic, service, t).total_num_changes;
+    assert_eq!(sealed.sealed_controller_changes, Some(sealed_changes));
+    assert!(
+        advance(&pic, c, owner, Step::Unseal).is_err(),
+        "an application call alone cannot invalidate a stopped seal/version proof"
+    );
     assert!(advance(&pic, c, owner, Step::Configure).is_err());
+    // A stale receipt must not survive another tab's legitimate unseal. The
+    // application's Unseal alone was refused above; a real controller upgrade
+    // advances the independently observable management version first.
+    pic.upgrade_canister(
+        c,
+        bytes.clone(),
+        candid::encode_args(()).unwrap(),
+        Some(owner),
+    )
+    .unwrap();
+    let upgraded_changes = controller_oracle(&pic, service, t).total_num_changes;
+    assert!(upgraded_changes > sealed_changes);
+    let restored: Result<bootstrap_model::State, String> = update(&pic, c, owner, "status", 1u64);
+    assert_eq!(
+        restored.unwrap().sealed_controller_changes,
+        Some(sealed_changes)
+    );
+    assert_eq!(
+        advance(&pic, c, owner, Step::Unseal).unwrap().phase,
+        Phase::AwaitingRegistration
+    );
+    advance(&pic, c, owner, Step::BeginRehearsal).unwrap();
+    let new_rehearsal = propose_refresh(&pic, owner, 11, t);
+    for id in [12, 13] {
+        vote_yes(&pic, owner, id, new_rehearsal);
+    }
+    let resealed = advance(&pic, c, owner, Step::Seal(new_rehearsal)).unwrap();
+    assert_eq!(resealed.sealed_controller_changes, Some(upgraded_changes));
+    let sealed_changes = upgraded_changes;
     pic.stop_canister(c, Some(owner)).unwrap();
+    assert_eq!(
+        controller_oracle(&pic, service, t).total_num_changes,
+        sealed_changes,
+        "stop must preserve the bound controller history"
+    );
     pic.uninstall_canister(c, Some(owner)).unwrap();
     let empty = pic.canister_status(c, Some(owner)).unwrap();
+    assert_eq!(
+        controller_oracle(&pic, service, t).total_num_changes,
+        sealed_changes + 1,
+        "uninstall must advance controller history once"
+    );
     assert!(empty.module_hash.is_none());
     assert_eq!(pic.get_controllers(c), vec![owner]);
     // The gap is deliberate: only independent external reads survive uninstall.
@@ -531,6 +825,9 @@ fn real_production_creation_registration_rehearsal_teardown_and_post_final_manag
         )
         .is_err()
     );
+    if let Some(a) = &automation {
+        a.finalised(&pic, t, c, plan.nonce);
+    }
     println!(
         "actual registered production creation T={t}, C={c}, full planned electorate and quorum, only two bootstrap failures, code-first teardown, full compliance and post-final manager execution verified"
     );
@@ -640,6 +937,23 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     assert_eq!(restored.unwrap(), initial);
     let sub = bootstrap_model::staking_subaccount(c, plan.nonce);
     assert_eq!(sub, l::staking_subaccount(c, plan.nonce));
+    let wrong_sub = l::staking_subaccount(c, plan.nonce + 1);
+    transfer(
+        &pic,
+        owner,
+        l::Account {
+            owner: GOVERNANCE,
+            subaccount: Some(wrong_sub.clone()),
+        },
+        99_000_000,
+        None,
+    );
+    assert!(
+        advance(&pic, c, owner, Step::Claim)
+            .unwrap_err()
+            .contains("underpayment"),
+        "a real deposit at another nonce must not fund or authorise this creation"
+    );
     transfer(
         &pic,
         owner,
@@ -670,7 +984,12 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
             .unwrap_err()
             .contains("actual owner")
     );
+    let original_claim = checkpoint_fault(&pic, c, owner, Step::Claim, &bytes);
     let claimed = advance(&pic, c, owner, Step::Claim).unwrap();
+    assert_eq!(
+        claimed.neuron_id, original_claim.neuron_id,
+        "restored ambiguous claim must resolve the same actual Governance neuron"
+    );
     let t = claimed.neuron_id.unwrap();
     let repeated = advance(&pic, c, owner, Step::Claim).unwrap();
     assert_eq!(repeated.neuron_id, Some(t));
@@ -690,7 +1009,9 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     assert_eq!(before.full_neurons[0].controller, Some(c));
     assert_eq!(before.full_neurons[0].account, sub);
     assert!(!before.full_neurons[0].not_for_profit);
-    let mut configured = claimed;
+    let mut configured = advance(&pic, c, owner, Step::Configure).unwrap();
+    assert!(configured.public_visibility_confirmed);
+    checkpoint_fault(&pic, c, owner, Step::Configure, &bytes);
     for _ in 0..5 {
         configured = advance(&pic, c, owner, Step::Configure).unwrap();
         if configured.phase == Phase::RecoverableTestReady {
@@ -803,7 +1124,7 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     advance(&pic, c, owner, Step::StartDissolving).unwrap();
     pic.advance_time(std::time::Duration::from_secs(plan.lock_seconds + 1));
     pic.tick();
-    let recovered = advance(
+    let recovered = checkpoint_fault(
         &pic,
         c,
         owner,
@@ -811,8 +1132,8 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
             expected_amount_e8s: 199_990_000,
             expected_fee_e8s: 10_000,
         },
-    )
-    .unwrap();
+        &bytes,
+    );
     assert_eq!(recovered.phase, Phase::Recovered);
     let h: l::History = query(
         &pic,
@@ -826,6 +1147,82 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
     assert!(
         matches!(&h.blocks[0].transaction.operation,Some(l::Operation::Transfer {from,to,amount,..}) if *from==l::account_id(GOVERNANCE,Some(&sub)) && *to==plan.return_account && amount.e8s==199_990_000)
     );
+    for _ in 0..40 {
+        transfer(
+            &pic,
+            owner,
+            l::Account {
+                owner: user(42),
+                subaccount: None,
+            },
+            1_000_000,
+            None,
+        );
+    }
+    let archived: l::History = query(
+        &pic,
+        LEDGER,
+        "query_blocks",
+        l::BlocksArgs {
+            start: recovered.disbursement_block.unwrap(),
+            length: 1,
+        },
+    );
+    assert!(
+        archived.blocks.is_empty() && archived.archived_blocks.len() == 1,
+        "the original return must actually leave the main Ledger in this gate"
+    );
+    let archive = archived.archived_blocks[0].callback.0.principal;
+    let pins: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root().join("protocol-pins.json")).unwrap()).unwrap();
+    let archive_pin = pins["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "ledger-archive-node-canister.wasm.gz")
+        .unwrap();
+    // Ledger uploads its gzip archive. module_hash hashes the install_code
+    // input bytes, while wasm_sha256 binds the decompressed executable. The
+    // same pinned release already records both distinct identities.
+    assert_eq!(
+        hex::encode(Sha256::digest(artifact("ledger-archive-node-canister"))),
+        archive_pin["wasm_sha256"].as_str().unwrap()
+    );
+    assert_eq!(
+        pic.canister_status(archive, None).unwrap().module_hash,
+        Some(hex::decode(archive_pin["sha256"].as_str().unwrap()).unwrap()),
+        "the endorsed archive must have the exact pinned gzip upload identity"
+    );
+    let return_balance = || -> Nat {
+        query(
+            &pic,
+            LEDGER,
+            "icrc1_balance_of",
+            l::Account {
+                owner,
+                subaccount: None,
+            },
+        )
+    };
+    let before_reconcile = return_balance();
+    assert!(
+        advance(&pic, c, owner, Step::ReconcileDisbursement(0)).is_err(),
+        "an unrelated archived block must not resolve the financial intent"
+    );
+    let reconciled = advance(
+        &pic,
+        c,
+        owner,
+        Step::ReconcileDisbursement(recovered.disbursement_block.unwrap()),
+    )
+    .unwrap();
+    assert_eq!(reconciled.phase, Phase::Recovered);
+    assert_eq!(reconciled.disbursement_block, recovered.disbursement_block);
+    assert_eq!(
+        return_balance(),
+        before_reconcile,
+        "archive reconciliation is read-only and cannot pay stake twice"
+    );
     assert_eq!(pic.get_controllers(c), vec![owner]);
     assert!(
         pic.canister_status(c, Some(owner))
@@ -833,8 +1230,53 @@ fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_r
             .module_hash
             .is_some()
     );
+    let wrong_balance: Nat = query(
+        &pic,
+        LEDGER,
+        "icrc1_balance_of",
+        l::Account {
+            owner: GOVERNANCE,
+            subaccount: Some(wrong_sub.clone()),
+        },
+    );
+    assert_eq!(
+        wrong_balance,
+        Nat::from(99_000_000u64),
+        "the wrong external destination is explicitly accounted for; it is outside this plan's recovery authority"
+    );
+    let unrelated: g::ListNeuronsResponse = update(
+        &pic,
+        GOVERNANCE,
+        c,
+        "list_neurons",
+        g::ListNeurons {
+            neuron_ids: vec![],
+            include_neurons_readable_by_caller: false,
+            include_empty_neurons_readable_by_caller: Some(true),
+            include_public_neurons_in_full_neurons: Some(true),
+            page_number: Some(0),
+            page_size: Some(2),
+            neuron_subaccounts: Some(vec![g::NeuronSubaccount {
+                subaccount: wrong_sub,
+            }]),
+        },
+    );
+    assert!(
+        unrelated.full_neurons.is_empty(),
+        "the bootstrap never claimed the unrelated nonce"
+    );
+    std::fs::write(root().join("dist/evidence/creation-recovery-protocol.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "classification":"native real-artifact protocol with explicitly restored pre-await checkpoints; separate signed-browser evidence required",
+        "controller":c.to_text(),"owner":owner.to_text(),"neuron":t.to_string(),"nonce":plan.nonce.to_string(),
+        "bootstrap_sha256":hex::encode(Sha256::digest(&bytes)),"return_account":hex::encode(&plan.return_account),
+        "staking_subaccount":hex::encode(&sub),"disbursement_block":recovered.disbursement_block.unwrap().to_string(),
+        "archive":archive.to_text(),"archive_module_sha256":archive_pin["sha256"],"archive_raw_wasm_sha256":archive_pin["wasm_sha256"],
+        "returned_e8s":"199990000","fee_e8s":"10000","reconciliation_paid_again":false,
+        "wrong_nonce_unclaimed_e8s":wrong_balance.to_string(),"recoverable_controllers":[owner.to_text()],
+        "claim_following_disbursement_callbacks_reconciled_across_same_code_upgrades":true
+    })).unwrap()).unwrap();
     println!(
-        "real one-manager creation T={t}, C={c}, repeated claim, upgrade, manager execution and ledger return verified; remains recoverable and not Standard-compliant"
+        "real one-manager creation T={t}, C={c}, wrong-nonce funding refusal, repeated claim, upgrade, manager execution and ledger return verified; unrelated 99000000 e8s remains at its independently observed wrong external account, outside the plan; creation remains recoverable and not Standard-compliant"
     );
 }
 

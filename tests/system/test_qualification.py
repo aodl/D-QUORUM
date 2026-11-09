@@ -9,6 +9,7 @@ from unittest import mock
 import io
 import os
 import subprocess
+import sys
 spec=importlib.util.spec_from_file_location('existing_xtask',Path(__file__).resolve().parents[2]/'tools/scripts/xtask.py')
 xtask=importlib.util.module_from_spec(spec);spec.loader.exec_module(xtask)
 POSITIVE='real_ii_compiled_frontend_known_managers_and_signed_governance'
@@ -140,5 +141,25 @@ class FixtureServerOwnership(unittest.TestCase):
                 self.assertIsNone(xtask.FIXTURE_SERVER);self.assertIsNone(xtask.FIXTURE_LOG);self.assertIsNone(xtask.FIXTURE_PORT)
                 self.assertTrue(log.closed);self.assertFalse(port.exists());self.assertTrue(other.exists())
                 self.assertNotIn('D_QUORUM_POCKET_IC_URL',os.environ)
+
+class ExecutionAccounting(unittest.TestCase):
+    def exercise(self,output):
+        with tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp') as directory:
+            destination=Path(directory);attempt=destination/'attempt';attempt.mkdir()
+            with mock.patch.object(xtask,'OUT',destination),mock.patch.object(xtask,'ATTEMPT',attempt),mock.patch.object(xtask,'results',[]),mock.patch.object(xtask,'save'):
+                xtask.run([sys.executable,'-c','print('+repr(output)+')'],kind='behaviour',name='public execution-accounting fixture',show=False)
+                return dict(xtask.results[0])
+    def test_nested_node_cases_are_individually_accounted(self):
+        output='▶ recovery\n  ✔ pending (1.5ms)\n  ✔ changed-checkpoint (2ms)\n✔ recovery (4ms)\nℹ pass 3\nℹ fail 0\nℹ skipped 0'
+        result=self.exercise(output)
+        self.assertEqual(result['passed'],3)
+        self.assertEqual(result['executed_tests'],['pending','changed-checkpoint','recovery'])
+    def test_unaccounted_positive_summary_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError,'required gate failed'):
+            self.exercise('✔ recovery (4ms)\nℹ pass 3\nℹ fail 0\nℹ skipped 0')
+    def test_zero_execution_and_skipped_cases_cannot_qualify(self):
+        for output in ['ℹ pass 0\nℹ fail 0\nℹ skipped 0','✔ recovery (4ms)\nℹ pass 1\nℹ fail 0\nℹ skipped 1']:
+            with self.subTest(output=output),self.assertRaisesRegex(RuntimeError,'required gate failed'):
+                self.exercise(output)
 
 if __name__=='__main__':unittest.main(verbosity=2)

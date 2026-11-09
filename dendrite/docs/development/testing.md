@@ -24,13 +24,18 @@ and root-key fetching `true`; production commands require root-key fetching `fal
 | Canonical Docker | `tools/scripts/docker-build-release.sh` | Public registries | `dist/release` | Automated | Public release artifact | `SHA256SUMS` |
 | Canonical two-build | `tools/scripts/verify-docker-reproducible.sh` | Public registries | Temp only | Automated | Two no-cache builds | Tree equality |
 | Deployment dry-run | `tools/scripts/mainnet-deploy.sh dry-run` | Read-only mainnet | No | Automated/operator review | Validate exact lifecycle command | “no write performed” |
-| Local II popup | Gate 1 with labelled local origin | Local | Browser session only | Manual | Popup mechanics | Signed local evidence |
+| Local II / scoped management | Consolidated `cargo xtask system_browser` | One local II/replica world | Synthetic local only | Automated | Real passkeys, replica-verified children, allowed/denied destinations | Named test receipts |
+| Creation pure/recording | Consolidated `cargo xtask creation_pure` / `creation_recording` | None | Test fixtures only | Automated | Profiles, receipts, generations and pre-await checkpoints | Explicit positive counts; mocks labelled |
+| Creation real protocol | Consolidated `cargo xtask creation_protocol` | Pinned local system Wasms | Synthetic local only | Automated | Conversion, creation, claim, registration, callback/archive recovery, teardown and unchanged D-QUORUM discovery/rewards | Actual Governance/Ledger/system observations |
+| Creation signed browser | Consolidated `cargo xtask creation_browser` | Real local II and replica | Synthetic local only | Automated | One-manager and production journeys, receipt restarts, code-first finalisation, mobile/keyboard/page scale | Compiled UI actions and independent native oracles |
+| Canonical creation | Consolidated `cargo xtask creation_canonical` | Same local protocols | Synthetic local only | Automated | Install exact two-build canonical bootstrap in full signed journey | Canonical/bootstrap/browser manifest binding |
 | Final-origin II | Gate 1 | Mainnet HTTP/II | Browser session only | Manual | Production principal/origin | Signed gate |
 | Controlled transaction | Gate 2 | Controlled NNS context | Yes, explicitly controlled | Manual | Full browser-to-NNS flow | Signed gate |
 
 The Chromium gate uses `puppeteer-core` only as a development dependency and runs
-Chrome 144.0.7559.96 from the digest-pinned
-`ghcr.io/puppeteer/puppeteer:24.36.0` image. It serves the exact production export
+Chrome 156.0.8078.47 from the digest-pinned
+`ghcr.io/puppeteer/puppeteer:25.16.0` image recorded in root `protocol-pins.json`.
+It serves the exact production export
 and executes five independent scenarios: 1440×1000 desktop; 1440×1000 with Chrome
 DevTools Protocol `Emulation.setPageScaleFactor` set to 2 and the resulting visual
 viewport scale asserted as actual 200% page scale; a separately labelled 720×500
@@ -98,6 +103,21 @@ interaction-triggered requests. The executed Chromium evidence is bounded non-re
 output under `dist/browser-qualification`.
 
 ### Troubleshooting
+
+Creation's signed browser fixture retains Chrome's native virtual passkey window
+using supported SDK transport/window lifetime settings, recorded with original and
+fixture hashes. Each capability still receives a fresh genuine II delegation to a
+new nonextractable SDK key, verified by the replica. This local-origin build is
+distinct from canonical production assets. The harness brings the application to
+the foreground after II returns so background animation-frame suspension cannot
+masquerade as a hung import. No key export, fake session, sender substitution or
+certificate/delegation freshness bypass qualifies a signed browser gate.
+
+Fault injection may restore an observed pre-await stable image after draining the
+actual callback, preserving real remote effects while modelling lost local
+completion. Such recording/checkpoint faults are identified separately from the
+positive browser path. Unknown proposal history or a missing canister ID remains
+unresolved; a test's phase flag is never the external completion oracle.
 
 - Missing ID/origin or malformed alternative JSON: export every exact build input.
 - Wrong Node/npm: select Node 24.15.0 and npm 11.12.1.

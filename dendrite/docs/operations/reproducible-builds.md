@@ -18,8 +18,20 @@ controller query/update, `/call`, and every unexpected canister destination.
 ## Canonical Docker build
 
 The digest-pinned `Dockerfile.repro`, pinned lockfiles, and `linux/amd64` platform
-produce only `dendrite.wasm`, `frontend/`, `asset-manifest.json`,
+produce only `dendrite.wasm`, `bootstrap/`, `frontend/`, `asset-manifest.json`,
 `build-configuration.txt`, and deterministic `SHA256SUMS`. The latter excludes itself.
+
+The creation candidate builds the temporary bootstrap first, then embeds its raw
+Wasm, exact Candid and checksum manifest through the certified frontend path, then
+builds the service. Both forced-clean builds must have identical complete file
+sets and bytes, including the embedded bootstrap identity. Docker receives only a
+Git archive of the unchanged reviewed source, excluding ignored operator files.
+Consolidated qualification retains Dendrite candidates under
+`dist/dendrite-canonical/<revision>/` and D-QUORUM candidates under
+`dist/d-quorum-canonical/<revision>/`; existing production release records and
+deployment recipes remain separate. Canonical creation acceptance must install
+those exact bootstrap bytes. Local-origin browser assets and native-passkey window
+fixtures are independently recorded, never labelled identical production bundles.
 
 ## Local determinism check
 

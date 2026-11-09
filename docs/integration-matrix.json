@@ -148,6 +148,75 @@
         "actual canonical Dendrite runtime Candid extraction",
         "canonical pair and local-browser artifact source binding"
       ]
+    },
+    {
+      "id": "creation-plans-and-receipts",
+      "suite": "creation_pure",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "reviewed revisions preserve financial provenance and cannot upgrade a test profile",
+        "receipt restart preserves original identities and imports prepared calls as unknown"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-recording-financial-and-upgrade-faults",
+      "suite": "creation_recording",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "unused ICP return reconciles the original fixed-account block after losing its reply",
+        "two browser plans restored from the same receipt preserve the same monetary timestamp and explicit fee"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-pinned-real-provisioning-and-recovery",
+      "suite": "creation_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_cmc_conversion_and_cycles_ledger_creation_deduplicate",
+        "real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return",
+        "real_production_creation_registration_rehearsal_teardown_and_post_final_management",
+        "real_premature_controller_removal_retains_executable_neuron_authority_and_fails_evaluation"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-real-ii-full-journeys",
+      "suite": "creation_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_recoverable_creation_and_ledger_recovery",
+        "real_ii_production_creation_finalisation_and_subsequent_management"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-canonical-bootstrap-full-journey",
+      "suite": "creation_canonical",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_production_creation_finalisation_and_subsequent_management"
+      ],
+      "validators": [
+        "canonical bootstrap exact production exports",
+        "canonical bootstrap exact Candid compatibility"
+      ]
+    },
+    {
+      "id": "creation-new-candidate-direct-only-election-and-real-staking-reward",
+      "suite": "creation_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "newly_created_dendrite_enters_direct_only_election_and_receives_reward"
+      ],
+      "validators": []
     }
   ]
 }

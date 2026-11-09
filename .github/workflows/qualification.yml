@@ -76,7 +76,7 @@ jobs:
           if-no-files-found: error
   canonical:
     name: Canonical reproducibility
-    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii]
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, creation-logic, creation-browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -103,12 +103,13 @@ jobs:
       - run: cargo run --locked -p xtask -- reproducible
       - run: cargo run --locked -p xtask -- canonical_artifact
       - run: cargo run --locked -p xtask -- system_protocol_canonical
+      - run: cargo run --locked -p xtask -- creation_canonical
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: canonical-candidate
           path: |
-            dist/release/
+            dist/d-quorum-canonical/
             dist/evidence/
             dist/dendrite-canonical/
           if-no-files-found: error
@@ -216,9 +217,65 @@ jobs:
             dendrite/dist/
           if-no-files-found: error
 
+  creation-logic:
+    name: Creation (${{ matrix.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [creation_pure, creation_recording, creation_protocol]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: npm --prefix dendrite ci --ignore-scripts
+      - run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+      - if: matrix.suite == 'creation_recording'
+        run: |
+          cargo fmt --manifest-path dendrite/Cargo.toml --all -- --check
+          cargo clippy --locked --manifest-path dendrite/Cargo.toml -p dendrite-bootstrap --all-targets -- -D warnings
+      - run: cargo run --locked -p xtask -- ${{ matrix.suite }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: evidence-${{ matrix.suite }}
+          path: dist/evidence/
+          if-no-files-found: error
+
+  creation-browser:
+    name: Full signed creation and finalisation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+      - run: npm install --global npm@11.12.1 --ignore-scripts
+      - run: npm --prefix dendrite ci --ignore-scripts
+      - run: rustup toolchain install 1.94.1 --profile minimal --target wasm32-unknown-unknown
+      - run: cargo run --locked -p xtask -- creation_browser
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: evidence-creation-browser
+          path: |
+            dist/evidence/
+            dendrite/dist/
+          if-no-files-found: error
+
   integrated-readiness:
     name: Complete integrated requirement selection
-    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, canonical]
+    needs: [behavioral, production, security, coverage, shared-system-protocol, dendrite-component, signed-browser-ii, creation-logic, creation-browser, canonical]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

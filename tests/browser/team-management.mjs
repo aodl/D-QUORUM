@@ -2,6 +2,7 @@ import {containBrowserNetwork} from "./local-network-guard.mjs";
 // Actual compiled application + II. Only public principals and bounded UI evidence leave Chrome.
 import puppeteer from '../../dendrite/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
 import {writeFile,readFile,rename} from 'node:fs/promises';
+import {creationJourney} from './creation-journey.mjs';
 const directory=process.env.SYSTEM_BROWSER_COORDINATION;
 const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
@@ -10,7 +11,7 @@ const deadline=setTimeout(()=>{console.error('signed browser test exceeded 20 mi
 const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
 await containBrowserNetwork(browser,denied);
 const scenario=process.env.SYSTEM_BROWSER_SCENARIO;
-if(!['scoped-signing','team-management','cancellation','wrong-provider'].includes(scenario))throw Error('explicit local browser scenario required');
+if(!['scoped-signing','team-management','cancellation','wrong-provider','creation-recoverable','creation-production'].includes(scenario))throw Error('explicit local browser scenario required');
 const scopeProbeMode=scenario==='scoped-signing';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function writeEvidence(path,bytes){await writeFile(path+'.tmp',bytes);await rename(path+'.tmp',path);}
@@ -129,9 +130,13 @@ async function authenticateAttempt(index){
  const popupPromise=new Promise(resolve=>page.once('popup',resolve));
  if(!await click(page,'Sign in with Internet Identity'))throw Error('actual application sign-in missing');
  const popup=await popupPromise;await guard(popup);
- const cdp=await popup.createCDPSession();await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+ if(scenario.startsWith('creation-'))await popup.waitForFunction(()=>location.hostname==='id.ai.localhost',{timeout:45000});
+ const cdp=await popup.createCDPSession();await cdp.send('WebAuthn.enable');const {authenticatorId}=await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+ await popup.bringToFront();
+ if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'native window closed by SDK',frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed'})));}
  for(let i=0;i<120;i++){
   if(popup.isClosed())break;
+  if(scenario.startsWith('creation-')&&await page.$eval('body',el=>el.innerText.includes('Dendrite principal:')))break;
   try {
   // One guarded snapshot: the popup may close as authentication completes.
   let labels,headings;try{({labels,headings}=await popup.evaluate(()=>({labels:Array.from(document.querySelectorAll('button'),b=>b.textContent.trim()),headings:Array.from(document.querySelectorAll('h1,h2'),el=>el.textContent.trim().slice(0,160))})));}catch(error){if(popup.isClosed())break;if(String(error.message).includes('Execution context was destroyed')){await pause(500);continue;}throw error;}
@@ -176,12 +181,13 @@ async function authenticateAttempt(index){
  const storage=await page.evaluate(async()=>({expiryMarkerAbsent:!Object.hasOwn(localStorage,'ic-delegation_expiration'),legacyCredentialEntriesAbsent:!Object.hasOwn(localStorage,'ic-identity')&&!Object.hasOwn(localStorage,'ic-delegation'),authDatabaseAbsent:!(await indexedDB.databases()).some(db=>db.name==='auth-client-db')}));
  if(Object.values(storage).some(value=>!value))throw Error('fresh browser session retained SDK authentication storage');
  await writeEvidence(`${directory}/session-storage-${index}.json`,JSON.stringify(storage));
- return {context,page,principal};
+ return {context,page,principal,nativeDevice:{popup,cdp,authenticatorId}};
 }
 try{
  if(scenario==='cancellation'){await cancellation();if(denied.length||events.length)throw Error('cancelled login reached Governance or nonlocal network');console.log('Actual II popup closure terminates without a transaction signer');}
  else if(scenario==='wrong-provider'){await wrongProvider();console.log('Actual wrong-provider configuration failed without a transaction session');}
  else if(scopeProbeMode){await waitSignal('provisioned');await authenticate(0);console.log('Actual II signed child accepted for Governance and denied for a working non-Governance destination');}
+ else if(scenario.startsWith('creation-')){await creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied});}
  else {
  const users=[];for(let i=0;i<4;i++)users.push(await authenticate(i));
  await writeEvidence(`${directory}/principals.json`,JSON.stringify(users.map(u=>u.principal)));
