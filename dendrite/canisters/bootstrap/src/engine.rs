@@ -327,6 +327,7 @@ pub(crate) async fn perform(
             if let Some(existing) = &s.external_proposal {
                 if existing.intent_id == intent.intent_id
                     && existing.request_digest == intent.request_digest
+                    && existing.request_id == intent.request_id
                     && existing.proposer == intent.proposer
                     && existing.kind == intent.kind
                 {

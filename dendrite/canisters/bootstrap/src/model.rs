@@ -633,7 +633,9 @@ pub struct UpgradeBinding {
 }
 
 pub fn decode_upgrade_binding(argument: &[u8]) -> Result<Option<UpgradeBinding>, String> {
-    if argument == candid::encode_args(()).map_err(|_| "Cannot encode empty upgrade arguments")? {
+    if argument == candid::encode_args(()).map_err(|_| "Cannot encode empty upgrade arguments")?
+        || argument == candid::encode_one(()).map_err(|_| "Cannot encode unit upgrade argument")?
+    {
         return Ok(None);
     }
     candid::decode_one(argument)

@@ -516,6 +516,9 @@ fn proposal_reservation_survives_upgrade_and_grants_only_one_financial_dispatch(
         dispatched: false,
     };
     run(&c, &mut s, Step::ReserveProposal(proposal.clone())).unwrap();
+    let mut replaced_ingress = proposal.clone();
+    replaced_ingress.request_id = Some(vec![8; 32]);
+    assert!(run(&c, &mut s, Step::ReserveProposal(replaced_ingress)).is_err());
     let mut competing = proposal.clone();
     competing.intent_id = vec![7; 32];
     assert!(run(&c, &mut s, Step::ReserveProposal(competing)).is_err());
@@ -1169,5 +1172,47 @@ fn explicit_upgrade_binding_cannot_be_mistaken_for_empty_candid_arguments() {
             .unwrap()
             .is_none()
     );
+    assert!(
+        decode_upgrade_binding(&candid::encode_one(()).unwrap())
+            .unwrap()
+            .is_none()
+    );
     assert!(decode_upgrade_binding(&[1, 2, 3]).is_err());
+}
+
+#[test]
+fn genuine_reviewed_v1_image_migrates_without_replacing_pending_claim_identity() {
+    use sha2::{Digest, Sha256};
+    let image = include_bytes!("../fixtures/reviewed-v1-ambiguous-claim.bin");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(image)),
+        "25e96694cd2984f061f3781cb0bc7f3d128a36d20acf67c7851faa99b16b94a5"
+    );
+    // Match stable_restore: stable memory is page padded; decode the one value.
+    let mut decoder = candid::de::IDLDeserialize::new(image).unwrap();
+    let mut original: State = decoder.get_value().unwrap();
+    assert_eq!(original.version, 1);
+    assert_eq!(original.plan.nonce, 9041);
+    assert!(original.pending.is_some());
+    assert!(original.module_binding.is_none());
+    assert!(original.proposal_refusals.is_none());
+    let pending = original.pending.clone();
+    let mut refused = original.clone();
+    assert!(migrate_checkpoint(&mut refused, None).is_err());
+    assert_eq!(refused, original);
+    let previous = original.plan.bootstrap_sha256.clone();
+    let mut expected = original.clone();
+    expected.version = STATE_VERSION;
+    expected.module_binding = Some(vec![42; 32]);
+    migrate_checkpoint(
+        &mut original,
+        Some(UpgradeBinding {
+            previous_module_sha256: previous,
+            module_sha256: vec![42; 32],
+        }),
+    )
+    .unwrap();
+    assert_eq!(original, expected);
+    assert_eq!(original.pending, pending);
+    original.validate_restored(original.controller).unwrap();
 }
