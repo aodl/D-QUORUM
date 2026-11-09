@@ -146,7 +146,7 @@ class ExecutionAccounting(unittest.TestCase):
     def exercise(self,output):
         with tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp') as directory:
             destination=Path(directory);attempt=destination/'attempt';attempt.mkdir()
-            with mock.patch.object(xtask,'OUT',destination),mock.patch.object(xtask,'ATTEMPT',attempt),mock.patch.object(xtask,'results',[]),mock.patch.object(xtask,'save'):
+            with mock.patch.object(xtask,'OUT',destination),mock.patch.object(xtask,'ATTEMPT',attempt),mock.patch.object(xtask,'results',[]),mock.patch.object(xtask,'save'),mock.patch('builtins.print'):
                 xtask.run([sys.executable,'-c','print('+repr(output)+')'],kind='behaviour',name='public execution-accounting fixture',show=False)
                 return dict(xtask.results[0])
     def test_nested_node_cases_are_individually_accounted(self):
