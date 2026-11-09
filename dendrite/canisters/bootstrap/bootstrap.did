@@ -9,6 +9,7 @@ type Effect = variant {
   Disburse;
 };
 type ExternalProposal = record {
+  request_id : opt blob;
   kind : ProposalKind;
   dispatched : bool;
   created_at : nat64;
@@ -98,6 +99,7 @@ type State = record {
   sealed_controller_changes : opt nat64;
   staking_subaccount : blob;
   phase : Phase;
+  module_binding : opt blob;
   rehearsal_proposal : opt nat64;
   sequence : nat64;
   rehearsal_started_at : opt nat64;

@@ -15,8 +15,9 @@ Stable format 2 checkpoints the plan, nonce, neuron binding, sequence, dispatche
 effect and unresolved financial result before asynchronous mutations. An upgrade
 validates that format and binding, retaining original operation identities. The
 reviewed V1 Candid checkpoint decodes missing optional refusal history as absent
-and migrates only its stable version; plan version and all original bindings stay
-unchanged. The protocol lane must exercise the genuine reviewed V1 executable. A
+and migrates only with an explicit source-reviewed old/new module binding. The
+original plan, nonce, account and dispatched-operation identities stay unchanged.
+The active module binding is stored separately from the original creation digest. The protocol lane must exercise the genuine reviewed V1 executable. A
 possibly executed additive lock increase or disbursement is never blindly resent.
 Corrupt/unsupported state traps rather than requesting a reinstall.
 
@@ -59,7 +60,9 @@ compatibility. No production write is part of those lanes.
 
 `ResolveProposalRefusal` accepts only a bounded certified response for the original
 reserved Governance MakeProposal request. It reconstructs the request ID from P,
-fixed destination/method, original arguments, ingress expiry and nonce. Root BLS
+fixed destination/method, original arguments, ingress expiry and nonce, and requires
+that ID to equal the reservation recorded before dispatch. A legacy reservation
+without that binding cannot be force-cleared. Root BLS
 verification, the exact pinned Governance module and audited pre-insertion error
 codes are required. External/unknown/malformed outcomes remain reserved. The
 terminal audit retains the original reservation and request/certificate/reply

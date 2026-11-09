@@ -94,7 +94,11 @@ struct Error {
     error_message: String,
 }
 
-pub fn verify(s: &State, p: &ProposalRefusalProof) -> Result<ProposalRefusalAudit, String> {
+pub fn verify(
+    s: &State,
+    p: &ProposalRefusalProof,
+    now_ns: u64,
+) -> Result<ProposalRefusalAudit, String> {
     let r = s
         .external_proposal
         .as_ref()
@@ -158,11 +162,14 @@ pub fn verify(s: &State, p: &ProposalRefusalProof) -> Result<ProposalRefusalAudi
     // original request and replicated reservation, never to a replacement attempt.
     if p.ingress_expiry < r.created_at.saturating_mul(1_000_000_000)
         || time < p.ingress_expiry.saturating_sub(600_000_000_000)
-        || time > p.ingress_expiry.saturating_add(300_000_000_000)
+        || time > now_ns.saturating_add(300_000_000_000)
     {
         return Err("Refusal certificate is outside the original request window".into());
     }
     let id = request_id(s, p);
+    if r.request_id.as_deref() != Some(id.as_slice()) {
+        return Err("Refusal is not the original reserved ingress request; argument equality alone cannot exclude an earlier successful submission".into());
+    }
     if lookup(vec![b"request_status", &id, b"status"])? != b"replied" {
         return Err("Refusal has no certified reply".into());
     }

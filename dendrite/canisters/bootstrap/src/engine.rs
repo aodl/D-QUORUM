@@ -161,7 +161,7 @@ pub(crate) async fn perform(
         let system = client.system(s.controller).await?;
         if s.sealed_controller_changes
             .is_none_or(|changes| system.total_num_changes <= changes)
-            || system.module_hash.as_deref() != Some(s.plan.bootstrap_sha256.as_slice())
+            || system.module_hash.as_deref() != Some(s.bound_module())
             || system.controllers != [s.plan.owner]
         {
             return Err("Explicit controller history change required before unsealing; the approved same-code upgrade invalidates old sealed provenance".into());
@@ -211,7 +211,8 @@ pub(crate) async fn perform(
         return Ok(());
     }
     if let Step::ResolveProposalRefusal(proof) = &step {
-        let audit = crate::proposal_refusal::verify(s, proof)?;
+        let audit =
+            crate::proposal_refusal::verify(s, proof, client.now().saturating_mul(1_000_000_000))?;
         let history = s.proposal_refusals.get_or_insert_with(Vec::new);
         if history.len() == 16 {
             history.remove(0);
@@ -303,6 +304,7 @@ pub(crate) async fn perform(
                 || intent.proposer == 0
                 || intent.intent_id.len() != 32
                 || intent.request_digest.len() != 32
+                || intent.request_id.as_ref().is_some_and(|id| id.len() != 32)
                 || intent.proposal_id.is_some()
                 || intent.dispatched
             {
@@ -561,7 +563,7 @@ pub(crate) async fn perform(
                 .await
                 .map_err(protocol::bounded)?;
             if system.controllers != [s.plan.owner]
-                || system.module_hash.as_deref() != Some(s.plan.bootstrap_sha256.as_slice())
+                || system.module_hash.as_deref() != Some(s.bound_module())
             {
                 return Err("Bootstrap controller/module binding changed".into());
             }

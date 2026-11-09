@@ -505,6 +505,7 @@ fn proposal_reservation_survives_upgrade_and_grants_only_one_financial_dispatch(
     let c = Recording::new(&s);
     setup(&c, &mut s);
     let proposal = ExternalProposal {
+        request_id: None,
         kind: ProposalKind::Rehearsal,
         intent_id: vec![5; 32],
         request_digest: vec![6; 32],
@@ -556,6 +557,7 @@ fn only_a_reservation_proven_undispatched_can_be_cancelled() {
     let c = Recording::new(&s);
     setup(&c, &mut s);
     let proposal = ExternalProposal {
+        request_id: None,
         kind: ProposalKind::Rehearsal,
         intent_id: vec![5; 32],
         request_digest: vec![6; 32],
@@ -1112,6 +1114,7 @@ fn rehearsal_requires_exact_executed_refresh_freshness_and_consistent_quorum() {
 fn proposal_refusal_proof_cannot_release_a_dispatched_reservation_without_authentic_evidence() {
     let mut state = State::new(plan(false), Principal::from_slice(&[1, 1])).unwrap();
     state.external_proposal = Some(ExternalProposal {
+        request_id: None,
         kind: ProposalKind::Rehearsal,
         intent_id: vec![3; 32],
         request_digest: vec![4; 32],
@@ -1129,7 +1132,7 @@ fn proposal_refusal_proof_cannot_release_a_dispatched_reservation_without_authen
         ingress_expiry: 1_800_000_001_000_000_000,
         nonce: None,
     };
-    assert!(crate::proposal_refusal::verify(&state, &proof).is_err());
+    assert!(crate::proposal_refusal::verify(&state, &proof, 1_800_000_001_000_000_000).is_err());
     assert_eq!(
         state, original,
         "a forged or malformed proof grants no clearing authority"
@@ -1145,4 +1148,26 @@ fn proposal_refusal_proof_cannot_release_a_dispatched_reservation_without_authen
         state, original,
         "bounds are checked before retaining an asynchronous intent"
     );
+}
+
+#[test]
+fn explicit_upgrade_binding_cannot_be_mistaken_for_empty_candid_arguments() {
+    let argument = candid::encode_one(UpgradeBinding {
+        previous_module_sha256: vec![1; 32],
+        module_sha256: vec![2; 32],
+    })
+    .unwrap();
+    assert!(
+        candid::decode_args::<()>(&argument).is_ok(),
+        "negative control: Candid permits unused arguments, so decoding unit is not an arity test"
+    );
+    let decoded = decode_upgrade_binding(&argument).unwrap().unwrap();
+    assert_eq!(decoded.previous_module_sha256, vec![1; 32]);
+    assert_eq!(decoded.module_sha256, vec![2; 32]);
+    assert!(
+        decode_upgrade_binding(&candid::encode_args(()).unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert!(decode_upgrade_binding(&[1, 2, 3]).is_err());
 }

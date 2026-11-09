@@ -41,9 +41,10 @@ fn init(plan: Plan) {
 fn post_upgrade() {
     let (mut s,): (State,) =
         ic_cdk::storage::stable_restore().expect("unsupported or corrupt bootstrap stable state");
-    if s.version == 1 {
-        s.version = STATE_VERSION;
-    }
+    let argument = ic_cdk::api::msg_arg_data();
+    let binding =
+        decode_upgrade_binding(&argument).expect("invalid explicit module migration binding");
+    migrate_checkpoint(&mut s, binding).expect("unsupported historical bootstrap migration");
     s.validate_restored(ic_cdk::api::canister_self())
         .expect("unsupported or corrupt bootstrap stable state");
     save(&s);

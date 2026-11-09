@@ -356,6 +356,7 @@ pub enum ProposalKind {
 }
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize, Serialize)]
 pub struct ExternalProposal {
+    pub request_id: Option<Vec<u8>>,
     pub kind: ProposalKind,
     pub intent_id: Vec<u8>,
     pub request_digest: Vec<u8>,
@@ -420,8 +421,14 @@ pub struct State {
     pub public_visibility_confirmed: bool,
     pub sealed_controller_changes: Option<u64>,
     pub proposal_refusals: Option<Vec<ProposalRefusalAudit>>,
+    pub module_binding: Option<Vec<u8>>,
 }
 impl State {
+    pub fn bound_module(&self) -> &[u8] {
+        self.module_binding
+            .as_deref()
+            .unwrap_or(&self.plan.bootstrap_sha256)
+    }
     pub fn readiness_marker(&self) -> Vec<u8> {
         let mut bytes = b"dendrite-bootstrap-readiness-v1".to_vec();
         bytes.push(self.controller.as_slice().len() as u8);
@@ -453,7 +460,8 @@ impl State {
     }
     pub fn validate_restored(&self, controller: Principal) -> Result<(), String> {
         self.plan.validate()?;
-        if self.version != STATE_VERSION
+        if self.module_binding.as_ref().is_some_and(|h| h.len() != 32)
+            || self.version != STATE_VERSION
             || self.controller != controller
             || self.plan_digest != self.plan.digest()
             || self.staking_subaccount != staking_subaccount(controller, self.plan.nonce)
@@ -469,11 +477,16 @@ impl State {
                     || p.proposer == 0
                     || p.intent_id.len() != 32
                     || p.request_digest.len() != 32
+                    || p.request_id.as_ref().is_some_and(|id| id.len() != 32)
             })
             || self.proposal_refusals.as_ref().is_some_and(|rows| {
                 rows.len() > 16
                     || rows.iter().any(|r| {
-                        r.reservation.intent_id.len() != 32
+                        r.reservation
+                            .request_id
+                            .as_ref()
+                            .is_some_and(|id| id.len() != 32)
+                            || r.reservation.intent_id.len() != 32
                             || r.reservation.request_digest.len() != 32
                             || r.request_id.len() != 32
                             || r.certificate_digest.len() != 32
@@ -511,6 +524,7 @@ impl State {
             public_visibility_confirmed: false,
             sealed_controller_changes: None,
             proposal_refusals: None,
+            module_binding: None,
         })
     }
     pub fn authorize(&self, caller: Principal, revision: u64) -> Result<(), String> {
@@ -610,4 +624,55 @@ impl State {
         self.last_error = None;
         Ok(())
     }
+}
+
+#[derive(CandidType, Deserialize)]
+pub struct UpgradeBinding {
+    pub previous_module_sha256: Vec<u8>,
+    pub module_sha256: Vec<u8>,
+}
+
+pub fn decode_upgrade_binding(argument: &[u8]) -> Result<Option<UpgradeBinding>, String> {
+    if argument == candid::encode_args(()).map_err(|_| "Cannot encode empty upgrade arguments")? {
+        return Ok(None);
+    }
+    candid::decode_one(argument)
+        .map(Some)
+        .map_err(|_| "Invalid explicit module migration binding".into())
+}
+
+pub fn migrate_checkpoint(
+    state: &mut State,
+    binding: Option<UpgradeBinding>,
+) -> Result<(), String> {
+    if let Some(binding) = binding {
+        let reviewed = [
+            [
+                254, 241, 115, 91, 176, 139, 146, 186, 213, 142, 199, 97, 241, 153, 116, 31, 164,
+                89, 41, 43, 129, 134, 76, 33, 154, 255, 84, 66, 231, 66, 50, 101,
+            ],
+            [
+                219, 165, 162, 22, 23, 199, 57, 211, 158, 5, 241, 44, 50, 69, 79, 215, 218, 206,
+                47, 155, 239, 107, 94, 176, 41, 62, 21, 224, 231, 222, 72, 155,
+            ],
+        ];
+        if !reviewed
+            .iter()
+            .any(|h| h.as_slice() == binding.previous_module_sha256)
+            || state.plan.bootstrap_sha256 != binding.previous_module_sha256
+            || binding.module_sha256.len() != 32
+            || state.phase == Phase::Sealed
+            || (state.bound_module() != binding.previous_module_sha256
+                && state.bound_module() != binding.module_sha256)
+        {
+            return Err("Unsupported, sealed or conflicting historical module migration".into());
+        }
+        state.module_binding = Some(binding.module_sha256);
+    } else if state.version == 1 {
+        return Err("Reviewed V1 migration requires the explicit approved module binding".into());
+    }
+    if state.version == 1 {
+        state.version = STATE_VERSION;
+    }
+    Ok(())
 }

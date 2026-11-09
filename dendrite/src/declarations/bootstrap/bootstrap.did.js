@@ -44,6 +44,7 @@ export const idlFactory = ({ IDL }) => {
     'Rehearsal' : IDL.Null,
   });
   const ExternalProposal = IDL.Record({
+    'request_id' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'kind' : ProposalKind,
     'dispatched' : IDL.Bool,
     'created_at' : IDL.Nat64,
@@ -131,6 +132,7 @@ export const idlFactory = ({ IDL }) => {
     'sealed_controller_changes' : IDL.Opt(IDL.Nat64),
     'staking_subaccount' : IDL.Vec(IDL.Nat8),
     'phase' : Phase,
+    'module_binding' : IDL.Opt(IDL.Vec(IDL.Nat8)),
     'rehearsal_proposal' : IDL.Opt(IDL.Nat64),
     'sequence' : IDL.Nat64,
     'rehearsal_started_at' : IDL.Opt(IDL.Nat64),
