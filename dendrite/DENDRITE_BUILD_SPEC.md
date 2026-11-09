@@ -314,6 +314,15 @@ code cannot use this path. Existing original financial identities and uncertaint
 remain binding. This exception does not relax certificate/delegation freshness or
 the historical provenance required for irreversible finalisation; P's provisional
 ability to replace code remains explicit.
+Historical transitions MUST retain signature, exact request and subnet/canister
+binding checks; their age alone MUST NOT expire a creation. Present authority and
+credentials MUST retain ordinary freshness checks. Supported historical modules
+MUST be source-reviewed static identities, never arbitrary receipt-nominated Wasm.
+The permanent staking nonce MUST remain distinct from each payment's dispatch
+identity. Definitive refusal recovery MUST prove the original request did not
+execute; missing history MUST NOT clear uncertainty. Teardown MUST disclose and
+require acknowledgement of unused controller-default ICP, including later arrivals,
+without permitting an unsolicited deposit to veto a reviewed finalisation.
 The creation contracts in `docs/architecture.md` define funding and recovery boundaries.
 The local canister clock is used only for this operational guard, including rate-window
 and in-flight expiry behavior; it is never exposed as the NNS evidence timestamp.

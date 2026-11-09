@@ -131,10 +131,12 @@ The production Standard remains exactly 63,115,200 seconds.
 
 The repeated real-II development probe also verified public request-content plus
 IC-certified reply witnesses after code removal. They contain no signed ingress
-envelopes, keys or reusable delegations. Historical provenance uses an explicit
-30-day SDK verification window; it does not prove current authority. Expired or
-incomplete provenance blocks automatic finalisation. Current canister state uses
-ordinary SDK certificate freshness checks independently. Local qualification may
+envelopes, keys or reusable delegations. Historical provenance verifies the exact
+request, BLS signature, delegated subnet/canister range and signed certificate time
+without expiring an authentic transition after 30 days. A certificate-anchored SDK
+clock is used only for that historical verification, subject to original request
+and present-future bounds. Missing or forged provenance blocks finalisation.
+Current canister state and credentials retain ordinary freshness checks independently. Local qualification may
 bind loopback port 4944 when another workspace owns 4943; origin, API and port must
 match in the reviewed plan and II fixture configuration.
 
@@ -172,18 +174,22 @@ Governance its separately reviewed request. C grants dispatch once, persists tha
 grant across upgrades and resolves the exact proposer, creation/operation marker,
 target and action through Governance. A grant whose reply is lost before the browser
 can send, or a MakeProposal response lost without any discoverable proposal ID, can
-remain unresolved. Time passing does not release that grant. This deliberate
+remain unresolved. An original full-ingress-bound certified typed no-creation
+refusal can release a reservation while retaining its audit; unknown, external or
+pruned outcomes cannot. Time passing does not release that grant. This deliberate
 fail-closed boundary can require external investigation; receipts cannot prove a
 negative or confer a force-clear privilege. An external proposer can instead export
 the exact typed registration payload/Candid, review their own eligibility and fee,
 and submit independently. Registration remains pending until actual metadata agrees.
 
-Pinned Governance filters management ballots by the reader's controller/hotkey
-authority. This first automatic finalisation verifier requires P to read the whole
-manager electorate. If any selected manager lacks that authority for P, the UI
-discloses the limitation and blocks the irreversible long-lock commitment. It never
-adds manager hotkeys or modifies their following as part of creation. This is a
-workflow proof limitation, not a new Standard rule or evidence of independent humans.
+Pinned Governance filters individual ballots by the reader's authority.
+Finalisation uses the exact reserved proposal, actual execution and aggregate
+majority, separately checking fresh target following. The creator may control
+only one manager. Other managers review the certified creation reservation and
+vote through their own Governance-scoped II sessions; this path exposes no owner
+commands or ordinary-management bypass. Aggregate execution does not identify
+historical voters or prove uninterrupted manager membership. No manager keys or
+following are changed to give the creator additional authority.
 
 Unused workflow ICP returns only to the reviewed legacy account, with its own exact
 intent, fee, timestamp and ledger history anchor. Unknown replies are reconciled

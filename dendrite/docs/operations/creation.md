@@ -43,12 +43,22 @@ or independent human ownership. Creation never changes an existing manager's key
 or following automatically. A profile change requires another fresh plan and
 cannot promote a test receipt into finalisation authority.
 
-The pinned Governance API filters management ballots to neurons readable through
-the caller's authority. Automatic finalisation currently needs P to read every
-manager ballot. The application therefore blocks the long-lock commitment if P
-lacks authority on any manager. That is an evidence limitation of this workflow,
-not a new compliance rule. Separate manager-authority changes need their existing
-authorised workflow and review.
+The pinned Governance API filters individual management ballots by the caller's
+controller/hotkey authority. The creator needs authority over a proposed manager
+to submit a rehearsal, not over every manager. Other managers use their own II
+sessions in the creation-vote view, importing the creator's non-secret exact
+proposal receipt. It grants no controller or financial authority. The view checks
+certified creation and bootstrap reservation evidence, the actual proposal and
+fresh target configuration before signing its single reviewed Yes vote.
+
+An executed exact-target RefreshVotingPower proposal with a consistent aggregate
+majority proves Governance executed that action with its recorded electorate.
+Individual voter identities may remain filtered. The aggregate count and fresh
+following do not establish historical electorate identities or uninterrupted
+membership. A presently changed management configuration blocks readiness. An
+unobserved change away and back cannot be ruled out by these APIs; the workflow
+must not describe its rehearsal as proof of continuous membership or independent
+human ownership. Missing/pruned execution evidence blocks automatic finalisation.
 
 ## Separate provision and stake budgets
 
@@ -65,6 +75,26 @@ Conversion is irreversible after successful minting; spent/converted cycles are
 not refundable ICP. Costs depend on network economics and execution. There is no
 promise of a perpetual cycle balance or universal fixed provisioning cost.
 
+The permanent staking nonce never expires and is not a payment timestamp. Each
+first reviewed financial attempt receives its own ledger timestamp and original
+IC ingress identity before signing. A never-dispatched plan can therefore wait
+days without changing its accounts. An uncertain attempt keeps its original
+identity even after deduplication or ingress-history retention expires. A typed,
+certified refusal proving no execution permits a separately reviewed new attempt;
+absence from history does not.
+
+To prevent two imported receipts or tabs from both dispatching an attempt, a
+bounded ICRC-2 compare-and-set reservation uses a purpose-specific spender
+subaccount owned by the management principal. The amount is 1–16 ledger units,
+strictly below the current transfer fee; it grants no application or third party
+a spending credential. Only a new successful approval grants this tab dispatch
+authority. Duplicate approval, lost reply or conflicting allowance does not. The
+review includes this additional ledger fee and all proved prior reservation fees.
+The approval memo commits the exact subsequent ingress request ID. Renewing after
+refusal requires certified original approval and original financial replies.
+Converted cycles retain their own fee/balance checks; a later first canister
+creation does not require a new ICP conversion or change the staking nonce.
+
 Before a staking address appears, the browser verifies the original certified
 creation reply, sole P controller, economical settings, never-installed status,
 exact module hash and replicated plan binding. It uses `install`, never `reinstall`.
@@ -77,11 +107,19 @@ payment is restricted to that exact address and reviewed amount. Underpayment
 pauses; overpayment is displayed and needs a fresh constrained review before
 claiming. Extra deposits confer no creator authority and are not silently spent.
 
-Readiness also checks C's default ICP account. A positive balance there blocks
-irreversible teardown: it is separate from the Governance staking account, and
-the narrow bootstrap has no general payment endpoint to spend it. Preserve P's
-recoverable canister authority while resolving a mistaken deposit; do not treat
-removing code/controllers as financial recovery.
+Readiness discloses C's otherwise unused default ICP balance. Before teardown,
+P must explicitly acknowledge that its current balance and any later arrivals
+will become inaccessible. This acknowledgement is bound to the exact C, T and
+reviewed plan; no stake or user-workflow balance is covered. A third-party deposit,
+including below-fee dust after uninstall, cannot revoke that acknowledgement or
+veto controller removal. There is no sweep, transfer endpoint or promised refund.
+For a meaningful mistaken deposit, decline teardown and retain P's recoverable
+controller authority while separately investigating recovery. An unresolved
+creation payment or proposal liability still blocks its affected action.
+
+Independent management and Ledger calls are not atomic. Funds can arrive between
+balance observation and either teardown step; the acknowledgement explicitly
+covers that risk. Removing code or controllers is never itself financial recovery.
 
 While P still controls C, inspect its fresh cycle balance/settings through the separately
 consented management capability. Maintain at least the reviewed reserve and enough
@@ -138,21 +176,29 @@ module and current controllers are re-established independently.
 | Registration/rehearsal | Original reserved operation, proposer, exact marked payload and Governance proposal ID. A bounded descending Governance history search can suggest original IDs for explicit replicated bootstrap verification; it never submits or clears uncertainty. Filtered/pruned history, a lost dispatch grant, or no match can remain blocked and require external investigation. |
 | Teardown | Historical sealed provenance plus current certified module/controllers and fresh Governance/evaluator facts. Separate calls have a non-atomic gap. |
 
-Historical receipt evidence has an explicit 30-day verification window in this
-first implementation. Current certificates retain normal freshness checks.
-Missing/expired provenance blocks automatic finalisation; time does not confer
-authority to substitute another user-owned canister. Retain the original files for
-independent investigation rather than inventing a replacement success record.
+Historical transition certificates and present authority have different clocks.
+For creation replies and owner-authenticated bootstrap checkpoints only, the
+verifier reconstructs the exact request hash, then verifies BLS signatures, subnet
+delegation/canister ranges with the complete SDK clock anchored to the certificate's
+signed time. That time must follow the original request window and cannot be in
+the future relative to the present clock. It becomes authentic only after signature
+verification. A later certified read may prove an older request reply; no upper
+age limit is imposed on that historical transition. The original expiry remains
+part of the exact certified request ID. This narrow rule does not renew credentials. Fresh certificates, II credentials,
+current module/controllers, target state and controller-history observations keep
+ordinary current-time checks. Missing/forged history still blocks finalisation.
 
-A production lock can outlast that historical window. For an already claimed,
-public neuron whose approved bootstrap still exists with exactly `[P]`, explicitly
-select **Recovery only** before importing its receipt. This path first checks fresh
-certified code/controllers, then requires a fresh owner-authenticated replicated
-bootstrap response and Governance's exact C/T/staking-account binding before each
-recovery write. The original plan and fixed return destination must match that
-on-chain state; an edited JSON checksum cannot redirect money. Current certificate
-and delegation freshness remain unchanged. The original historical evidence is
-still required for finalisation and the full creation workflow.
+The source-bound compatibility list includes both exact qualified V1 build
+variants from source 97343f8. Their checksum-verified bytes are served as certified
+assets. Receipt import may resume those reviewed artifacts; it cannot supply an
+arbitrary Wasm hash or URL. The original plan, nonce, accounts and financial
+identities remain fixed. Removed code is never reinstalled for recovery.
+
+For an already claimed public neuron with an approved installed bootstrap and
+exactly `[P]`, **Recovery only** can establish fresh certified module/controllers,
+owner-authenticated replicated plan and exact Governance C/T/account bindings
+without historical creation evidence. This narrower path grants no provisioning,
+plan edits or finalisation. The original fixed return destination still applies.
 
 Recovery-only resume offers separately consented dissolution, the actual waiting
 period, fixed-account stake/unused-ICP return and original-return reconciliation.
@@ -233,6 +279,15 @@ make NNS and management calls atomic.
 The handover view includes T/C, managers, topics, receipt and existing management
 controls. Ongoing governance and voting-power refresh obligations continue;
 creation does not maintain perpetual compliance.
+
+A dispatched registration or rehearsal reservation is not cancelled merely
+because the browser reports an error. For audited no-creation Governance error
+codes, the bootstrap verifies the original request ID, fixed Governance module,
+root signature and typed certified reply, retains a bounded terminal audit, and
+then allows a new explicitly reviewed reservation. A successful original reply
+resolves its exact proposal ID. Lost/malformed/external replies and pruned history
+remain uncertain. Legacy reservations without a pre-dispatch full ingress binding
+cannot be cleared by supplying a newly rejected request with the same arguments.
 
 ## Cancellation limits
 

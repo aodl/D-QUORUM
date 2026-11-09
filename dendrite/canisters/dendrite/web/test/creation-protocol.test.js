@@ -1,3 +1,4 @@
+import {recordingCertificate} from "./support/recording-certificate.js";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Actor,HttpAgent,Certificate,Cbor,LookupPathStatus} from '@icp-sdk/core/agent';
@@ -6,7 +7,8 @@ import {Principal} from '@icp-sdk/core/principal';
 import {Ed25519KeyIdentity,DelegationChain,DelegationIdentity} from '@icp-sdk/core/identity';
 import {deriveProvisioningSession} from '../src/auth.js';
 import {createProvisioningActors,createCanisterWithWitness,bootstrapStatusWithWitness,verifyCreationWitness,readCreationLedgerBlock,readCreationStakeBalance,readCreationControllerIcpBalance,creationRegistrationMetadata,verifyCreationRegistrationMetadata} from '../src/creation-protocol.js';
-import {bytesHex} from '../src/creation-accounts.js';
+import {readCertificateTimeNs} from "../src/certified-canister-state.js";
+import {bytesHex,hexBytes} from '../src/creation-accounts.js';
 import {idlFactory as bootstrapFactory} from '../../../../src/declarations/bootstrap/bootstrap.did.js';
 
 // Transport recording tests deliberately substitute the certificate decoder.
@@ -43,15 +45,19 @@ test('named provisioning actors retain exact destinations effective routing and 
 test('replicated creation witnesses bind public request content and require an actual replied result',async t=>{
  let reply,request,missing=false,status='replied';const checks=[];
  const agent={rootKey:new Uint8Array(96),update:async(target,opts)=>{
-  request={request_type:'call',canister_id:target,sender:root.getPrincipal(),method_name:opts.methodName,arg:opts.arg,ingress_expiry:1n};
+  request={request_type:'call',canister_id:target,sender:root.getPrincipal(),method_name:opts.methodName,arg:opts.arg,ingress_expiry:BigInt(Date.now()+300000)*1000000n};
   const type=Actor.interfaceOf(actor)._fields.find(([name])=>name===opts.methodName)[1];reply=IDL.encode(type.retTypes,[{Ok:{block_id:7n,canister_id:c}}]);
-  return missing?{}:{requestDetails:request,reply,rawCertificate:Uint8Array.of(1)};
+  return missing?{}:{requestDetails:request,reply,rawCertificate:recordingCertificate()};
  }};
  const factory=()=>IDL.Service({create_canister:IDL.Func([IDL.Record({amount:IDL.Nat})],[IDL.Variant({Ok:IDL.Record({block_id:IDL.Nat,canister_id:IDL.Principal})})],[])});
  const actor=Actor.createActor(factory,{agent,canisterId:c});
  t.mock.method(Certificate,'create',async config=>{checks.push(config);return {lookup_path:path=>({status:LookupPathStatus.Found,value:new TextDecoder().decode(path.at(-1))==='reply'?reply:new TextEncoder().encode(status)})};});
  const result=await createCanisterWithWitness(actor,{amount:2n});assert.equal(result.value.Ok.canister_id.toText(),c.toText());assert.equal(result.witness.request.sender,root.getPrincipal().toText());assert.ok(!('signature'in result.witness.request));assert.equal(checks[0].disableTimeVerification,false);assert.equal(checks[0].maxAgeInMinutes,undefined);
- const verified=await verifyCreationWitness(result.witness,{agent,canisterId:c,owner:root.getPrincipal(),methodName:'create_canister',includeSystemState:false});assert.equal(verified.args[0].amount,2n);assert.equal(checks.at(-1).maxAgeInMinutes,43200);
+ const verified=await verifyCreationWitness(result.witness,{agent,canisterId:c,owner:root.getPrincipal(),methodName:'create_canister',includeSystemState:false});assert.equal(verified.args[0].amount,2n);assert.equal(checks.at(-1).maxAgeInMinutes,10);
+ const originalNow=Date.now(),anchor=Number(readCertificateTimeNs(Certificate.createUnverified({certificate:hexBytes(result.witness.certificate),rootKey:agent.rootKey,principal:{canisterId:c}}))/1000000n);
+ for(const days of [31,90]){t.mock.method(Date,'now',()=>originalNow+days*86400000);await verifyCreationWitness(result.witness,{agent,canisterId:c,owner:root.getPrincipal(),methodName:'create_canister',includeSystemState:false});const config=checks.at(-1);assert.equal(config.disableTimeVerification,false);assert.equal(Date.now()+config.agent.getTimeDiffMsecs(),anchor);assert.equal(typeof config.agent.syncTime,"function");assert.equal(typeof config.agent.syncTimeWithSubnet,"function");}
+ t.mock.restoreAll();
+ t.mock.method(Certificate,'create',async config=>{checks.push(config);return {lookup_path:path=>({status:LookupPathStatus.Found,value:new TextDecoder().decode(path.at(-1))==='reply'?reply:new TextEncoder().encode(status)})};});
  status='processing';await assert.rejects(()=>createCanisterWithWitness(actor,{amount:2n}),/successful reply/);
  missing=true;await assert.rejects(()=>createCanisterWithWitness(actor,{amount:2n}),/no recoverable/);
  await assert.rejects(()=>bootstrapStatusWithWitness(actor,1n),/Unsupported/);
@@ -59,7 +65,7 @@ test('replicated creation witnesses bind public request content and require an a
 test('bootstrap witness collects current certified module controllers and time independently',async t=>{
  let reply;const paths=[];
  const agent={rootKey:new Uint8Array(96),update:async(target,opts)=>{
-  const signature=bootstrapFactory({IDL})._fields.find(([n])=>n==='status')[1];reply=IDL.encode(signature.retTypes,[{Err:'recorded protocol rejection'}]);return {requestDetails:{request_type:'call',canister_id:target,sender:root.getPrincipal(),method_name:'status',arg:opts.arg,ingress_expiry:1n,nonce:Uint8Array.of(1)},reply,rawCertificate:Uint8Array.of(1)};
+  const signature=bootstrapFactory({IDL})._fields.find(([n])=>n==='status')[1];reply=IDL.encode(signature.retTypes,[{Err:'recorded protocol rejection'}]);return {requestDetails:{request_type:'call',canister_id:target,sender:root.getPrincipal(),method_name:'status',arg:opts.arg,ingress_expiry:1n,nonce:Uint8Array.of(1)},reply,rawCertificate:recordingCertificate()};
  },readState:async(_target,options)=>{paths.push(...options.paths);return {certificate:Uint8Array.of(2)};}};
  t.mock.method(Certificate,'create',async()=>({lookup_path:path=>{
   const name=new TextDecoder().decode(path.at(-1));return {status:LookupPathStatus.Found,value:name==='reply'?reply:name==='status'?new TextEncoder().encode('replied'):name==='controllers'?Cbor.encode([root.getPrincipal().toUint8Array()]):name==='time'?Uint8Array.of(1):new Uint8Array(32)};

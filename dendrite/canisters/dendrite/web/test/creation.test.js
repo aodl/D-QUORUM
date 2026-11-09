@@ -42,7 +42,7 @@ test("plans bind network policy profile accounts and distinct complete configura
 });
 test("receipt restart preserves original identities and imports prepared calls as unknown",()=>{
   const p=plan(),r=newCreationReceipt(p),args=IDL.encode([creationArgumentTypes.create],[creationArgs(p)]);
-  const i=addCreationIntent(r,{kind:"CreateCanister",destination:"um5iw-rqaaa-aaaaq-qaaba-cai",argument:args,createdAtTime:1n});
+  const i=addCreationIntent(r,{attemptVersion:1,kind:"CreateCanister",destination:"um5iw-rqaaa-aaaaq-qaaba-cai",argument:args,createdAtTime:1n});
   const json=exportCreationReceipt(r);assert.ok(!/private|delegation|signature|seed/.test(json));
   const imported=importCreationReceipt(json,bindings);assert.equal(imported.receipt.intents[0].state,"Unknown");assert.equal(imported.receipt.intents[0].id,i.id);
   assert.equal(imported.receipt.intents[0].argument,i.argument);
@@ -60,7 +60,7 @@ test("receipt checksum never grants authority and rejects tampering oversized da
   assert.throws(()=>importCreationReceipt(" ".repeat(MAX_CREATION_RECEIPT_BYTES+1)),/bound/);
   assert.throws(()=>importCreationReceipt("{"),/JSON/);
   assert.throws(()=>importCreationReceipt(json,{...bindings,canisterId:"aaaaa-aa"}),/another/);
-  const intent=addCreationIntent(r,{kind:"CreateCanister",destination:"um5iw-rqaaa-aaaaq-qaaba-cai",argument:IDL.encode([creationArgumentTypes.create],[creationArgs(p)]),createdAtTime:1n});
+  const intent=addCreationIntent(r,{attemptVersion:1,kind:"CreateCanister",destination:"um5iw-rqaaa-aaaaq-qaaba-cai",argument:IDL.encode([creationArgumentTypes.create],[creationArgs(p)]),createdAtTime:1n});
   assert.throws(()=>settleCreationIntent(r,intent.id,"Confirmed",{arbitrary:"1"}),/reference/);
   assert.equal(intent.state,"Prepared");settleCreationIntent(r,intent.id,"Rejected");
   assert.equal(receiptContentDigest(r),JSON.parse(exportCreationReceipt(r)).checksum);
@@ -90,9 +90,9 @@ test("replicated scalar known metadata and actual creator role are required befo
 });
 test("unknown imported financial argument types and substituted controllers fail without damaging the current receipt",()=>{
   const p=plan(),r=newCreationReceipt(p),args=creationArgs(p);args.creation_args[0].settings[0].controllers=[[Principal.anonymous()]];
-  const before=exportCreationReceipt(r);assert.throws(()=>addCreationIntent(r,{kind:'CreateCanister',destination:'um5iw-rqaaa-aaaaq-qaaba-cai',argument:IDL.encode([creationArgumentTypes.create],[args]),createdAtTime:1n}),/provisioning/);
+  const before=exportCreationReceipt(r);assert.throws(()=>addCreationIntent(r,{attemptVersion:1,kind:'CreateCanister',destination:'um5iw-rqaaa-aaaaq-qaaba-cai',argument:IDL.encode([creationArgumentTypes.create],[args]),createdAtTime:1n}),/provisioning/);
   assert.equal(exportCreationReceipt(r),before);
-  assert.throws(()=>addCreationIntent(r,{kind:'PayStake',destination:'ryjl3-tyaaa-aaaaa-aaaba-cai',argument:Uint8Array.of(1),createdAtTime:1n}),/decode/);assert.equal(r.intents.length,0);
+  assert.throws(()=>addCreationIntent(r,{attemptVersion:1,kind:'PayStake',destination:'ryjl3-tyaaa-aaaaa-aaaba-cai',argument:Uint8Array.of(1),createdAtTime:1n}),/decode/);assert.equal(r.intents.length,0);
 });
 test("creation recovery proves the original permanent burn before issuing its exact deduplication request",async()=>{
   const p=plan(),args=creationArgs(p),tx={Map:[['op',{Text:'burn'}],['amt',{Nat:args.amount}],['ts',{Nat:p.nonce}],['from',{Array:[{Blob:P.toUint8Array()},{Blob:args.from_subaccount[0]}]}],['memo',{Blob:hexBytes('fe'.repeat(32))}]]};
@@ -105,7 +105,7 @@ test("creation recovery proves the original permanent burn before issuing its ex
 
 test("reviewed revisions preserve financial provenance and cannot upgrade a test profile",()=>{
  const p=plan(),r=newCreationReceipt(p),args=creationArgs(p);
- const i=addCreationIntent(r,{kind:'CreateCanister',destination:'um5iw-rqaaa-aaaaq-qaaba-cai',argument:IDL.encode([creationArgumentTypes.create],[args]),createdAtTime:p.nonce});
+ const i=addCreationIntent(r,{attemptVersion:1,kind:'CreateCanister',destination:'um5iw-rqaaa-aaaaq-qaaba-cai',argument:IDL.encode([creationArgumentTypes.create],[args]),createdAtTime:p.nonce});
  settleCreationIntent(r,i.id,'Confirmed',{canister_id:C,block_id:'7'});
  const next=createCreationRevision(p,{...basic,managers:['12'],stakeIcp:'3'},bindings,{sha256:'ab'.repeat(32)});
  applyCreationRevision(r,next);const restored=importCreationReceipt(exportCreationReceipt(r),bindings);
@@ -145,15 +145,15 @@ test("every recovery receipt operation rejects substituted money authority or te
   ['CreationVote','rrkah-fqaaa-aaaaa-aaaaq-cai','nns',buildDirectManagerOperation(11n,{RegisterVote:{vote:1,proposal:[{id:9n}]}}),a=>a.command[0].RegisterVote.vote=2],
   ['Rehearsal','rrkah-fqaaa-aaaaa-aaaaq-cai','nns',buildManageNeuronProposal(11n,600n,{RefreshVotingPower:{}},'Reviewed benign rehearsal'),a=>a.neuron_id_or_subaccount[0].NeuronId.id=12n],
  ];
- for(const [kind,destination,type,args,mutate]of operations){const argument=IDL.encode([creationArgumentTypes[type]],[args]);const i=addCreationIntent(r,{kind,destination,argument,createdAtTime:1n});settleCreationIntent(r,i.id,'Confirmed',{block_id:'7'});assert.equal(importCreationReceipt(exportCreationReceipt(r),bindings).receipt.intents.at(-1).kind,kind);
-  const bad=IDL.decode([creationArgumentTypes[type]],argument)[0];mutate(bad);const before=exportCreationReceipt(r);assert.throws(()=>addCreationIntent(r,{kind,destination,argument:IDL.encode([creationArgumentTypes[type]],[bad]),createdAtTime:1n}),/Receipt/);assert.equal(exportCreationReceipt(r),before);
-  assert.throws(()=>addCreationIntent(r,{kind,destination:P.toText(),argument,createdAtTime:1n}),/destination/);
+ for(const [kind,destination,type,args,mutate]of operations){const argument=IDL.encode([creationArgumentTypes[type]],[args]);const i=addCreationIntent(r,{attemptVersion:1,kind,destination,argument,createdAtTime:1n});settleCreationIntent(r,i.id,'Confirmed',{block_id:'7'});assert.equal(importCreationReceipt(exportCreationReceipt(r),bindings).receipt.intents.at(-1).kind,kind);
+  const bad=IDL.decode([creationArgumentTypes[type]],argument)[0];mutate(bad);const before=exportCreationReceipt(r);assert.throws(()=>addCreationIntent(r,{attemptVersion:1,kind,destination,argument:IDL.encode([creationArgumentTypes[type]],[bad]),createdAtTime:1n}),/Receipt/);assert.equal(exportCreationReceipt(r),before);
+  assert.throws(()=>addCreationIntent(r,{attemptVersion:1,kind,destination:P.toText(),argument,createdAtTime:1n}),/destination/);
  }
- const wrongSettings=operations.find(o=>o[0]==='ClearControllers')[3];wrongSettings.settings.memory_allocation=[1n];assert.throws(()=>addCreationIntent(r,{kind:'ClearControllers',destination:'aaaaa-aa',argument:IDL.encode([creationArgumentTypes.updateSettings],[wrongSettings]),createdAtTime:1n}),/unrelated/);
+ const wrongSettings=operations.find(o=>o[0]==='ClearControllers')[3];wrongSettings.settings.memory_allocation=[1n];assert.throws(()=>addCreationIntent(r,{attemptVersion:1,kind:'ClearControllers',destination:'aaaaa-aa',argument:IDL.encode([creationArgumentTypes.updateSettings],[wrongSettings]),createdAtTime:1n}),/unrelated/);
 });
 test("receipt history limits and malformed provenance cannot damage an existing exportable checkpoint",()=>{
  const p=plan(),r=newCreationReceipt(p);checkpointCreation(r,'Plan',{review:true});const valid=exportCreationReceipt(r);
- for(const change of [v=>v.version=2,v=>v.plan_history={},v=>v.plan_history=Array(17).fill(v.plan),v=>v.proposed_plan={...v.plan,revision:'3'},v=>v.intents=Array(129).fill({}),v=>v.checkpoints=Array(129).fill(v.checkpoints[0]),v=>v.canister_id=P.toText(),v=>v.neuron_id='0',v=>v.neuron_id='600',v=>v.creation_witness={request:{},request_id:'00'.repeat(32),certificate:'00'}]){
+ for(const change of [v=>v.version=3,v=>v.plan_history={},v=>v.plan_history=Array(17).fill(v.plan),v=>v.proposed_plan={...v.plan,revision:'3'},v=>v.intents=Array(129).fill({}),v=>v.checkpoints=Array(129).fill(v.checkpoints[0]),v=>v.canister_id=P.toText(),v=>v.neuron_id='0',v=>v.neuron_id='600',v=>v.creation_witness={request:{},request_id:'00'.repeat(32),certificate:'00'}]){
   const bad=JSON.parse(valid);change(bad);assert.throws(()=>exportCreationReceipt(bad));
  }
  const old=r.checkpoints[0];r.checkpoints=Array(128).fill(old);const full=exportCreationReceipt(r);assert.throws(()=>checkpointCreation(r,'Plan',{overflow:true}),/history/);assert.equal(exportCreationReceipt(r),full);

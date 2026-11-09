@@ -49,6 +49,14 @@ function foundBytes(certificate, certifiedPath, label) {
   return result.value;
 }
 
+// Parsing alone grants no authority. Callers must verify the certificate's BLS
+// signature before using this timestamp as evidence.
+export function readCertificateTimeNs(certificate) {
+  const value=decodeUnsignedLeb128(foundBytes(certificate,PATH_TIME,"Certificate time"));
+  if(value>0xffffffffffffffffn)throw Error("Certificate time exceeds the reviewed u64 clock.");
+  return value;
+}
+
 export function decodeCertifiedControllers(bytes) {
   let decoded;
   try {

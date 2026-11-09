@@ -1,12 +1,12 @@
-import { Actor, HttpAgent, Certificate, requestIdOf, LookupPathStatus } from "@icp-sdk/core/agent";
+import { Actor, HttpAgent, Certificate, requestIdOf, LookupPathStatus, Expiry } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { runtimeConfiguration } from "./actor.js";
-import { ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID, validateProvisioningDelegation } from "./auth.js";
+import { ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID, NNS_GOVERNANCE_CANISTER_ID, validateProvisioningDelegation } from "./auth.js";
 import { idlFactory as bootstrapFactory, init as bootstrapInit } from "../../../../src/declarations/bootstrap/bootstrap.did.js";
 import { idlFactory as nnsFactory } from "../../../../src/declarations/nns-governance/nns-governance.did.js";
 import { bytesHex, hexBytes, stakingSubaccount } from "./creation-accounts.js";
-import { normalizeCertifiedCanisterState } from "./certified-canister-state.js";
+import { normalizeCertifiedCanisterState,readCertificateTimeNs } from "./certified-canister-state.js";
 
 const opt = (value) => IDL.Opt(value), blob = IDL.Vec(IDL.Nat8), empty = IDL.Record({});
 const account = IDL.Record({ owner: IDL.Principal, subaccount: opt(blob) });
@@ -16,6 +16,9 @@ const transferError = IDL.Variant({ BadFee: badFee, BadBurn: IDL.Record({ min_bu
   TooOld: IDL.Null, CreatedInFuture: IDL.Record({ ledger_time: IDL.Nat64 }), Duplicate: IDL.Record({ duplicate_of: IDL.Nat }),
   TemporarilyUnavailable: IDL.Null, GenericError: IDL.Record({ error_code: IDL.Nat, message: IDL.Text }) });
 const transferArgs = IDL.Record({ from_subaccount: opt(blob), to: account, fee: opt(IDL.Nat), amount: IDL.Nat, memo: opt(blob), created_at_time: opt(IDL.Nat64) });
+const approveArgs=IDL.Record({from_subaccount:opt(blob),spender:account,amount:IDL.Nat,expected_allowance:opt(IDL.Nat),expires_at:opt(IDL.Nat64),fee:opt(IDL.Nat),memo:opt(blob),created_at_time:opt(IDL.Nat64)});
+const approveError=IDL.Variant({BadFee:badFee,InsufficientFunds:IDL.Record({balance:IDL.Nat}),AllowanceChanged:IDL.Record({current_allowance:IDL.Nat}),Expired:IDL.Record({ledger_time:IDL.Nat64}),TooOld:IDL.Null,CreatedInFuture:IDL.Record({ledger_time:IDL.Nat64}),Duplicate:IDL.Record({duplicate_of:IDL.Nat}),TemporarilyUnavailable:IDL.Null,GenericError:IDL.Record({error_code:IDL.Nat,message:IDL.Text})});
+const approvalMethods={icrc2_approve:IDL.Func([approveArgs],[IDL.Variant({Ok:IDL.Nat,Err:approveError})],[]),icrc2_allowance:IDL.Func([IDL.Record({account,spender:account})],[IDL.Record({allowance:IDL.Nat,expires_at:opt(IDL.Nat64)})],[])};
 const blocksArgs = IDL.Record({ start: IDL.Nat64, length: IDL.Nat64 });
 const block = IDL.Record({ transaction: IDL.Record({ memo: IDL.Nat64, icrc1_memo: opt(blob), created_at_time: IDL.Record({ timestamp_nanos: IDL.Nat64 }),
   operation: opt(IDL.Variant({ Transfer: IDL.Record({ from: blob, to: blob, amount: tokens, fee: tokens }), Mint: IDL.Reserved, Burn: IDL.Reserved, Approve: IDL.Reserved })) }), timestamp: IDL.Record({ timestamp_nanos: IDL.Nat64 }) });
@@ -25,6 +28,7 @@ const history = IDL.Record({ first_block_index: IDL.Nat64, chain_length: IDL.Nat
 const legacyTransferArgs=IDL.Record({from_subaccount:opt(blob),to:blob,fee:tokens,amount:tokens,memo:IDL.Nat64,created_at_time:opt(IDL.Record({timestamp_nanos:IDL.Nat64}))});
 const legacyTransferError=IDL.Variant({BadFee:IDL.Record({expected_fee:tokens}),InsufficientFunds:IDL.Record({balance:tokens}),TxTooOld:IDL.Record({allowed_window_nanos:IDL.Nat64}),TxCreatedInFuture:IDL.Null,TxDuplicate:IDL.Record({duplicate_of:IDL.Nat64})});
 const ledgerFactory = () => IDL.Service({
+  ...approvalMethods,
   icrc1_fee: IDL.Func([], [IDL.Nat], []), icrc1_balance_of: IDL.Func([account], [IDL.Nat], []),
   icrc1_transfer: IDL.Func([transferArgs], [IDL.Variant({ Ok: IDL.Nat, Err: transferError })], []), query_blocks: IDL.Func([blocksArgs], [history], []),
   transfer:IDL.Func([legacyTransferArgs],[IDL.Variant({Ok:IDL.Nat64,Err:legacyTransferError})],[]),
@@ -41,7 +45,7 @@ const createError = IDL.Variant({ InsufficientFunds: IDL.Record({ balance: IDL.N
 const cyclesValue=IDL.Rec();cyclesValue.fill(IDL.Variant({Int:IDL.Int,Nat:IDL.Nat,Nat64:IDL.Nat64,Text:IDL.Text,Blob:blob,Array:IDL.Vec(cyclesValue),Map:IDL.Vec(IDL.Tuple(IDL.Text,cyclesValue))}));
 const cyclesBlocksArgs=IDL.Vec(IDL.Record({start:IDL.Nat,length:IDL.Nat})),cyclesBlocks=IDL.Rec();
 cyclesBlocks.fill(IDL.Record({log_length:IDL.Nat,blocks:IDL.Vec(IDL.Record({id:IDL.Nat,block:cyclesValue})),archived_blocks:IDL.Vec(IDL.Record({args:cyclesBlocksArgs,callback:IDL.Func([cyclesBlocksArgs],[cyclesBlocks],["query"])}))}));
-const cyclesFactory = () => IDL.Service({ icrc1_fee: IDL.Func([], [IDL.Nat], []), icrc1_balance_of: IDL.Func([account], [IDL.Nat], []),
+const cyclesFactory = () => IDL.Service({ ...approvalMethods, icrc1_fee: IDL.Func([], [IDL.Nat], []), icrc1_balance_of: IDL.Func([account], [IDL.Nat], []),
   icrc3_get_blocks:IDL.Func([cyclesBlocksArgs],[cyclesBlocks],[]),
   create_canister: IDL.Func([createArgs], [IDL.Variant({ Ok: IDL.Record({ block_id: IDL.Nat, canister_id: IDL.Principal }), Err: createError })], []) });
 const mintArgs = IDL.Record({ block_index: IDL.Nat64, to_subaccount: opt(blob), deposit_memo: opt(blob) });
@@ -66,7 +70,7 @@ const managementFactory = () => IDL.Service({
 
 // Exported types bind exact displayed arguments, their recovery intent and plan
 // digest to the same Candid encoding sent by the supported actors.
-export const creationArgumentTypes = Object.freeze({ transfer: transferArgs, mint: mintArgs, create: createArgs, install: installArgs, uninstall: uninstallArgs, updateSettings: updateSettingsArgs, canister: canisterArg,
+export const creationArgumentTypes = Object.freeze({ approve: approveArgs, transfer: transferArgs, mint: mintArgs, create: createArgs, install: installArgs, uninstall: uninstallArgs, updateSettings: updateSettingsArgs, canister: canisterArg,
   legacyTransfer:legacyTransferArgs,
   bootstrapAdvance:bootstrapFactory({IDL})._fields.find(([name])=>name==="advance")[1].argTypes[0],
   nns:nnsFactory({IDL})._fields.find(([name])=>name==="manage_neuron")[1].argTypes[0] });
@@ -103,22 +107,53 @@ export function witnessRequestContent(request) {
     arg: hexBytes(request.arg), sender: Principal.fromText(request.sender), ingress_expiry: BigInt(request.ingress_expiry),
     ...(request.nonce === null ? {} : { nonce: hexBytes(request.nonce) }) };
 }
-async function witnessedUpdate(actor, methodName, args, includeSystemState) {
-  const agent = Actor.agentOf(actor), canisterId = Actor.canisterIdOf(actor);
+export function creationRequestBinding({owner,destination,methodName,argument,nonce,ingressExpiry=BigInt(Date.now()+240000)*1000000n}) {
+  const request={request_type:"call",canister_id:Principal.from(destination).toText(),method_name:methodName,arg:bytesHex(argument),sender:Principal.from(owner).toText(),ingress_expiry:String(ingressExpiry),nonce:bytesHex(nonce)};
+  return {request,request_id:bytesHex(requestIdOf(witnessRequestContent(request)))};
+}
+export function validateCreationRequestBinding(binding,{owner,destination,methodName,argument}) {
+  if(!binding||Object.keys(binding).sort().join(",")!=="request,request_id")throw Error("Missing original ingress request binding.");
+  const r=binding.request;if(!r||Object.keys(r).sort().join(",")!=="arg,canister_id,ingress_expiry,method_name,nonce,request_type,sender"||r.request_type!=="call"||r.canister_id!==Principal.from(destination).toText()||r.sender!==Principal.from(owner).toText()||r.method_name!==methodName||r.arg!==bytesHex(argument)||!/^[1-9]\d{0,19}$/.test(r.ingress_expiry)||BigInt(r.ingress_expiry)<=0n||BigInt(r.ingress_expiry)>0xffffffffffffffffn||typeof r.nonce!=="string"||r.nonce.length!==64)throw Error("Original ingress destination/method/arguments/identity/expiry/nonce changed.");
+  hexBytes(r.nonce,32);if(bytesHex(requestIdOf(witnessRequestContent(r)))!==binding.request_id)throw Error("Original ingress request hash differs.");return binding;
+}
+async function witnessedUpdate(actor, methodName, args, includeSystemState, binding) {
+  let agent = Actor.agentOf(actor);const canisterId = Actor.canisterIdOf(actor);
   const signature = Actor.interfaceOf(actor)._fields.find(([name]) => name === methodName)?.[1];
   if (!signature) throw Error("Unsupported creation evidence method.");
-  const result = await agent.update(canisterId, { methodName, arg: IDL.encode(signature.argTypes, args), effectiveCanisterId: canisterId });
+  if(["icrc1_transfer","icrc2_approve"].includes(methodName)&&![ICP_LEDGER_CANISTER_ID,CYCLES_LEDGER_CANISTER_ID].includes(canisterId.toText()))throw Error("Financial destination is outside reviewed Ledgers.");
+  const argument=IDL.encode(signature.argTypes,args);
+  if(binding){validateCreationRequestBinding(binding,{owner:await agent.getPrincipal(),destination:canisterId,methodName,argument});
+    if(BigInt(binding.request.ingress_expiry)<=BigInt(Date.now())*1000000n)throw Error("Reviewed ingress request expired before dispatch; preserve its original financial identity.");
+    agent=await HttpAgent.from(agent);
+    agent.addTransform("update",async request=>{if(request.endpoint!=="call")return request;
+      if(request.body.canister_id.toText()!==canisterId.toText()||request.body.method_name!==methodName||bytesHex(request.body.arg)!==bytesHex(argument))throw Error("Exact request transform cannot target another operation.");
+      request.body.ingress_expiry=Expiry.fromJSON(JSON.stringify({__expiry__:binding.request.ingress_expiry}));request.body.nonce=hexBytes(binding.request.nonce);return request;
+    },-1000);
+  }
+  const result = await agent.update(canisterId, { methodName, arg: argument, effectiveCanisterId: canisterId,...(binding?{nonce:hexBytes(binding.request.nonce)}:{}) });
   if (!result.requestDetails || !result.reply) throw Error("Replicated creation response has no recoverable request evidence.");
   const request = publicRequest(result.requestDetails), requestId = requestIdOf(witnessRequestContent(request));
+  if(binding&&bytesHex(requestId)!==binding.request_id)throw Error("Replica response belongs to a different ingress request; original outcome remains unresolved.");
   let certificate = result.rawCertificate;
   if (includeSystemState) {
     certificate = (await agent.readState(canisterId, { paths: [requestPath(requestId, "status"), requestPath(requestId, "reply"),
       systemPath(canisterId, "module_hash"), systemPath(canisterId, "controllers"), [utf8.encode("time")]] })).certificate;
   }
   const witness = { request, request_id: bytesHex(requestId), certificate: bytesHex(certificate) };
-  await verifyCreationWitness(witness, { agent, canisterId, owner: result.requestDetails.sender, methodName, includeSystemState, historical: false });
-  return { value: IDL.decode(signature.retTypes, result.reply)[0], witness };
+  const verified=await verifyCreationWitness(witness, { agent, canisterId, owner: result.requestDetails.sender, methodName, includeSystemState, historical: false });
+  return {system:verified.system,value: IDL.decode(signature.retTypes, result.reply)[0], witness };
 }
+// Reconcile an original, already saved ingress identity. This signs only a
+// fresh read_state request; it never resubmits the original value-moving call.
+export async function readCreationRequestWitness(actor,binding){
+  const agent=Actor.agentOf(actor),canisterId=Actor.canisterIdOf(actor),r=binding?.request;
+  validateCreationRequestBinding(binding,{owner:await agent.getPrincipal(),destination:canisterId,methodName:r?.method_name,argument:hexBytes(r?.arg??"")});
+  const id=hexBytes(binding.request_id,32),certificate=(await agent.readState(canisterId,{paths:[requestPath(id,"status"),requestPath(id,"reply"),systemPath(canisterId,"module_hash"),systemPath(canisterId,"controllers"),[utf8.encode("time")]]})).certificate;
+  const witness={...binding,certificate:bytesHex(certificate)},verified=await verifyCreationWitness(witness,{agent,canisterId,owner:r.sender,methodName:r.method_name,includeSystemState:true,historical:false});
+  return {value:verified.value,witness,system:verified.system};
+}
+export const creationFinancialWithWitness = (actor,method,args,binding) => witnessedUpdate(actor,method,[args],true,binding);
+export const creationProposalWithWitness = (governance, request, binding) => witnessedUpdate(governance, "manage_neuron", [request], true,binding);
 export const createCanisterWithWitness = (cycles, args) => witnessedUpdate(cycles, "create_canister", [args], false);
 export const bootstrapStatusWithWitness = (bootstrap, revision) => witnessedUpdate(bootstrap, "status", [revision], true);
 
@@ -135,19 +170,30 @@ export async function verifyOriginalCreationBurn(cycles,index,args,owner){
 
 export async function verifyCreationWitness(witness, { agent, canisterId, owner, methodName, includeSystemState, historical = true }) {
   const request = witnessRequestContent(witness.request), id = requestIdOf(request), target = Principal.from(canisterId);
+  if(methodName==="manage_neuron"&&target.toText()!==NNS_GOVERNANCE_CANISTER_ID)throw Error("Proposal proof destination is not Governance.");
   if (request.request_type !== "call" || request.method_name !== methodName || request.canister_id.toText() !== target.toText()
     || request.sender.toText() !== Principal.from(owner).toText() || bytesHex(id) !== witness.request_id
-    || !["create_canister", "status"].includes(methodName)) throw Error("Creation witness request binding failed.");
-  // Historical evidence has an explicit finite retention window. It proves a
-  // past transition, never present authority. Current state is read separately
-  // with the SDK's ordinary freshness limits. Expired provenance fails closed.
+    || !["create_canister", "status", "manage_neuron", "icrc1_transfer", "icrc2_approve"].includes(methodName)) throw Error("Creation witness request binding failed.");
+  // Historical authenticity and current authority use separate clocks. Parse
+  // the signed time only to anchor this certificate's verification; it acquires
+  // authority only after BLS and delegated canister-range checks succeed. A new
+  // read_state certificate may legitimately prove an older request's reply.
+  const expiryMs=Number(request.ingress_expiry/1_000_000n);
+  let proofClock=agent;
+  if(historical){
+    const unverified=Certificate.createUnverified({certificate:hexBytes(witness.certificate),rootKey:agent.rootKey,principal:{canisterId:target}}),signedTime=readCertificateTimeNs(unverified),now=BigInt(Date.now())*1000000n;
+    if(!Number.isSafeInteger(expiryMs)||expiryMs<=0||request.ingress_expiry>now+600000000000n||signedTime>now+300000000000n||signedTime+600000000000n<request.ingress_expiry)throw Error("Historical certificate time is outside the original request/current future bounds.");
+    const anchor=Number(signedTime/1000000n),noSync=async()=>{throw Error("Historical verification cannot synchronise or renew current authority.");};
+    proofClock={getTimeDiffMsecs:()=>anchor-Date.now(),hasSyncedTime:()=>true,syncTime:noSync,syncTimeWithSubnet:noSync};
+  }
   const certificate = await Certificate.create({ certificate: hexBytes(witness.certificate), rootKey: agent.rootKey,
-    principal: { canisterId: target }, agent, disableTimeVerification: false,
-    ...(historical ? { maxAgeInMinutes: 30 * 24 * 60 } : {}) });
+    principal: { canisterId: target }, agent:proofClock, disableTimeVerification: false,
+    ...(historical ? { maxAgeInMinutes: 10 } : {}) });
   const found = (field) => { const value = certificate.lookup_path(requestPath(id, field));
     if (value.status !== LookupPathStatus.Found || !(value.value instanceof Uint8Array)) throw Error("Creation reply is absent from certified history.");return value.value; };
   if (new TextDecoder().decode(found("status")) !== "replied") throw Error("Creation request has no certified successful reply.");
-  const factory = methodName === "status" ? bootstrapFactory : cyclesFactory;
+  if(["icrc1_transfer","icrc2_approve"].includes(methodName)&&![ICP_LEDGER_CANISTER_ID,CYCLES_LEDGER_CANISTER_ID].includes(target.toText()))throw Error("Financial proof destination is outside the reviewed Ledgers.");
+  const factory = ["icrc1_transfer","icrc2_approve"].includes(methodName) ? ledgerFactory : methodName === "status" ? bootstrapFactory : methodName === "manage_neuron" ? nnsFactory : cyclesFactory;
   const signature = factory({ IDL })._fields.find(([name]) => name === methodName)[1];
   const args = IDL.decode(signature.argTypes, request.arg), value = IDL.decode(signature.retTypes, found("reply"))[0];
   return { args, value, system: includeSystemState ? normalizeCertifiedCanisterState(certificate, target) : undefined };

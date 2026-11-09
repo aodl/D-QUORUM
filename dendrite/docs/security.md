@@ -172,3 +172,43 @@ not a severity change, a general ignore, or a claim the packages are fixed. Raw 
 OSV findings are retained. The two OSV exclusions expire 2026-12-04 and require renewed
 review if the tool/path/configuration changes. The four previously reviewed Rust
 maintenance notices retain their individual reasons and the same next-review date.
+
+Creation recovery separates authentic historical transitions from fresh current
+power. Historical certificate verification still checks the BLS signature, subnet
+delegation and canister range, exact original ingress request and reply. Its SDK
+clock is anchored narrowly to that certificate's signed time, with original-request
+and present-future bounds. This does not renew a signing credential or substitute
+for fresh module/controller, Governance and controller-history observations. A
+static source-reviewed artifact map permits the two qualified V1 build variants;
+unknown modules fail closed. An explicit upgrade binds the old module and new
+module while preserving the original plan, accounts, nonce and pending operations.
+Removed code is never reinstalled to resume finalisation.
+
+Governance ballots are caller-filtered. Exact proposal execution and its aggregate
+tally demonstrate the network's decision under that proposal's electorate. Fresh
+following establishes present configuration. Neither proves historical voter IDs,
+uninterrupted membership, independent humans or creator authority over every
+manager. Other managers vote under their own existing authority, without granting
+the creator hotkeys. Proposal refusal recovery requires a certified typed response
+for the pre-reserved full ingress request ID, not just equal arguments or an error
+message. Unavailable original evidence preserves uncertainty.
+
+The unused controller-default ICP account is distinct from stake and user-owned
+workflow accounts. Teardown requires an explicit C/T/plan-bound acknowledgement
+of its observed balance and later arrivals. Unsolicited deposits do not revoke it.
+There is no new sweep endpoint. Actual creation liabilities must still settle.
+Financial attempts retain their independently prepared timestamps and ingress IDs;
+the permanent staking nonce is never renewed. A bounded purpose-specific ICRC-2
+compare-and-set reservation prevents competing tabs from both gaining dispatch
+authority. Its additional fees and prior consumed reservation fees are reviewed;
+its management-principal spender is not an application signing credential.
+
+The pinned signer 5.4.0 heartbeat source receives a digest-bound build patch in
+`canisters/dendrite/web/sdk-heartbeat-policy.mjs`. It retains recent pending IDs,
+checks the source and JSON-RPC shape for both ready and pending replies, and
+schedules polls only after matching replies. Production and local builds apply
+the same patch. Original and patched source hashes are fixed; drift fails the
+build. Timeout durations, delegation expiry and certificate checks are unchanged.
+Focused SDK tests include unpatched negative controls; they are not replica or
+II authentication evidence. Same-origin script compromise remains within the
+provisional controller trust boundary described above.

@@ -5,7 +5,7 @@ import {resolve} from "node:path";
 
 const hash=bytes=>createHash("sha256").update(bytes).digest("hex");
 const run=args=>{const result=spawnSync("cargo",args,{encoding:"utf8",stdio:["ignore","pipe","inherit"]});if(result.status!==0)throw Error(`Bootstrap build failed: cargo ${args.join(" ")}`);return result.stdout;};
-async function sourceFiles(directory){const out=[];for(const entry of await readdir(directory,{withFileTypes:true})){const path=`${directory}/${entry.name}`;if(entry.isDirectory())out.push(...await sourceFiles(path));else if(entry.name.endsWith(".rs")||entry.name==="Cargo.toml"||entry.name.endsWith(".did"))out.push(path);}return out;}
+async function sourceFiles(directory){const out=[];for(const entry of await readdir(directory,{withFileTypes:true})){const path=`${directory}/${entry.name}`;if(entry.isDirectory())out.push(...await sourceFiles(path));else if(entry.name.endsWith(".rs")||entry.name==="Cargo.toml"||entry.name.endsWith(".did")||entry.name.endsWith(".der"))out.push(path);}return out;}
 export async function prepareBootstrap(){
   const files=["Cargo.toml","Cargo.lock","rust-toolchain.toml",...await sourceFiles("canisters/bootstrap"),...await sourceFiles("crates/ic-clients"),...await sourceFiles("crates/dendrite-types")].sort();
   const entries=await Promise.all(files.map(async p=>[p,hash(await readFile(p))]));
