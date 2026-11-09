@@ -6,6 +6,13 @@ struct CreationProposal {
     topic: i32,
     executed_timestamp_seconds: u64,
     ballots: Vec<(u64, CreationBallot)>,
+    latest_tally: Option<CreationTally>,
+}
+#[derive(CandidType, Deserialize)]
+struct CreationTally {
+    yes: u64,
+    no: u64,
+    total: u64,
 }
 #[derive(CandidType, Deserialize)]
 struct CreationBallot {
@@ -24,6 +31,30 @@ struct RegisteredMetadata {
 #[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
 enum RegisteredTopic {
     Governance,
+}
+#[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+struct RefusalReservation {
+    intent_id: Vec<u8>,
+    request_digest: Vec<u8>,
+    request_id: Option<Vec<u8>>,
+    proposer: u64,
+    revision: u64,
+    dispatched: bool,
+    proposal_id: Option<u64>,
+}
+#[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+struct RefusalAudit {
+    reservation: RefusalReservation,
+    request_id: Vec<u8>,
+    error_type: i32,
+    certificate_digest: Vec<u8>,
+    reply_digest: Vec<u8>,
+}
+#[derive(CandidType, Deserialize, Debug)]
+struct RefusalState {
+    version: u16,
+    proposal_refusals: Option<Vec<RefusalAudit>>,
+    external_proposal: Option<candid::Reserved>,
 }
 fn receipt_id(receipt: &serde_json::Value, name: &str) -> u64 {
     receipt[name].as_str().unwrap().parse().unwrap()
@@ -52,9 +83,20 @@ fn verify_proposal(pic: &pocket_ic::PocketIc, p: Principal, id: u64, count: usiz
     assert_eq!(result.topic, topic);
     assert!(result.executed_timestamp_seconds > 0);
     if topic == 1 {
-        assert_eq!(result.ballots.len(), count);
+        // Ballots are filtered by caller authority; the replicated aggregate
+        // refers to the actual historical electorate, whose IDs are not public.
+        assert_eq!(result.ballots.len(), 1);
+        let tally = result.latest_tally.unwrap();
+        assert_eq!(tally.total, count as u64);
+        assert!(tally.yes > tally.total / 2);
+        assert!(tally.yes + tally.no <= tally.total);
         assert!(result.ballots.iter().all(|(_, b)| b.voting_power == 1));
-        assert!(result.ballots.iter().filter(|(_, b)| b.vote == 1).count() > count / 2);
+        assert!(
+            result
+                .ballots
+                .iter()
+                .all(|(_, b)| (0..=2).contains(&b.vote))
+        );
     }
 }
 
@@ -68,6 +110,20 @@ pub fn coordinate(
     let production = scenario == "creation-production";
     let principal = signal(directory, "creation-principal", child);
     let p = Principal::from_text(principal["principal"].as_str().unwrap()).unwrap();
+    let identities: Vec<Principal> = principal["participants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| Principal::from_text(p.as_str().unwrap()).unwrap())
+        .collect();
+    assert_eq!(identities.len(), if production { 5 } else { 1 });
+    assert_eq!(
+        identities
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        identities.len()
+    );
     let at = now(pic);
     let managers: Vec<u64> = if production {
         (11..=15).collect()
@@ -75,8 +131,8 @@ pub fn coordinate(
         vec![11]
     };
     let mut neurons = vec![];
-    for id in &managers {
-        let mut manager = seed(*id, p, at);
+    for (index, id) in managers.iter().enumerate() {
+        let mut manager = seed(*id, identities[index], at);
         manager.known_neuron_data = Some(known(*id));
         manager.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
         neurons.push(manager);
@@ -186,6 +242,82 @@ pub fn coordinate(
             .collect::<Vec<_>>(),
         managers
     );
+    if production {
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(31 * 86_400));
+        pic.auto_progress();
+        publish(
+            directory,
+            "creation-31-day-clock",
+            serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+        );
+        let resumed = signal(directory, "creation-31-day-resumed", child);
+        assert_eq!(resumed["credentials_renewed"], true);
+        assert_eq!(public_neuron(pic, t).account, subaccount);
+        assert_eq!(pic.get_controllers(c), vec![p]);
+    }
+    if production {
+        let refused = signal(directory, "creation-registration-refused", child);
+        let intent = refused["intents"].as_array().unwrap().last().unwrap();
+        assert_eq!(intent["state"], "Rejected");
+        let revision = refused["plan"]["revision"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let state: Result<RefusalState, String> = update(pic, c, p, "status", revision);
+        let state = state.unwrap();
+        assert_eq!(state.version, 2);
+        assert!(state.external_proposal.is_none());
+        let audit = state.proposal_refusals.unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].error_type, 8);
+        assert_eq!(
+            audit[0].request_id,
+            hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()
+        );
+        assert_eq!(
+            audit[0].reservation.request_digest,
+            hex::decode(intent["argument_digest"].as_str().unwrap()).unwrap()
+        );
+        assert_eq!(
+            audit[0].certificate_digest,
+            Sha256::digest(
+                hex::decode(intent["reply_witness"]["certificate"].as_str().unwrap()).unwrap()
+            )
+            .to_vec()
+        );
+        assert_eq!(
+            public_neuron(pic, 11).neuron_fees_e8s,
+            0,
+            "refused creation did not charge a proposal fee"
+        );
+        // Explicitly labelled native upgrade fault, after browser-created C and
+        // an actual signed Governance refusal. No provisioning/finalisation substitution.
+        let module_path = std::env::var_os("DENDRITE_BOOTSTRAP_TEST_WASM")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root().join("dendrite/target/bootstrap-release/bootstrap.wasm"));
+        let module = std::fs::read(module_path).unwrap();
+        assert_eq!(
+            pic.canister_status(c, Some(p))
+                .unwrap()
+                .module_hash
+                .unwrap(),
+            Sha256::digest(&module).to_vec()
+        );
+        pic.upgrade_canister(c, module, encode_one(()).unwrap(), Some(p))
+            .unwrap();
+        let after: Result<RefusalState, String> = update(pic, c, p, "status", revision);
+        let after = after.unwrap();
+        assert_eq!(after.proposal_refusals.unwrap(), audit);
+        assert!(after.external_proposal.is_none());
+        assert_eq!(pic.get_controllers(c), vec![p]);
+        publish(
+            directory,
+            "creation-refusal-upgrade-verified",
+            serde_json::json!({"audit_retained":true,"classification":"native same-module upgrade of browser-created C; real signed proposal refusal"}),
+        );
+    }
     let rehearsal = signal(directory, "creation-rehearsal", child);
     verify_proposal(
         pic,
@@ -209,6 +341,17 @@ pub fn coordinate(
         assert_eq!(
             metadata.committed_topics,
             Some(vec![Some(RegisteredTopic::Governance)])
+        );
+    }
+    if production {
+        // Unsolicited funds are neither T stake nor P workflow funds.
+        transfer_external(
+            pic,
+            l::Account {
+                owner: c,
+                subaccount: None,
+            },
+            100_000_000,
         );
     }
     publish(
@@ -251,20 +394,99 @@ pub fn coordinate(
         assert_eq!(public_neuron(pic, t).cached_neuron_stake_e8s, stake);
         assert_eq!(pic.get_controllers(c), vec![p]);
     } else {
+        let sealed = signal(directory, "creation-sealed", child);
+        assert_eq!(sealed["canister_id"], c.to_text());
+        assert!(sealed["sealed_witness"].is_object());
+        assert!(
+            pic.canister_status(c, Some(p))
+                .unwrap()
+                .module_hash
+                .is_some()
+        );
+        assert_eq!(pic.get_controllers(c), vec![p]);
+        transfer_external(
+            pic,
+            l::Account {
+                owner: c,
+                subaccount: None,
+            },
+            2,
+        );
+        publish(
+            directory,
+            "creation-sealed-dust-injected",
+            serde_json::json!({}),
+        );
         let removed = signal(directory, "creation-code-removed", child);
         assert_eq!(removed["canister_id"], c.to_text());
         assert_eq!(removed["neuron_id"], t.to_string());
         let system = pic.canister_status(c, Some(p)).unwrap();
         assert!(system.module_hash.is_none());
         assert_eq!(pic.get_controllers(c), vec![p]);
+        // New dust after uninstall must not veto the second teardown step.
+        transfer_external(
+            pic,
+            l::Account {
+                owner: c,
+                subaccount: None,
+            },
+            1,
+        );
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(59 * 86_400));
+        pic.auto_progress();
         publish(
             directory,
             "creation-code-removal-verified",
+            serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+        );
+        let resumed = signal(directory, "creation-90-day-resumed", child);
+        assert!(resumed["now_ms"].as_u64().is_some());
+        assert_eq!(public_neuron(pic, t).account, subaccount);
+        assert_eq!(pic.get_controllers(c), vec![p]);
+        let held = signal(directory, "creation-controller-removal-held", child);
+        assert_eq!(held["canister"], c.to_text());
+        assert_eq!(held["neuron"], t.to_string());
+        assert!(
+            pic.canister_status(c, Some(p))
+                .unwrap()
+                .module_hash
+                .is_none()
+        );
+        assert_eq!(pic.get_controllers(c), vec![p]);
+        // The exact signed request is held inside Chrome after final preflight.
+        // No envelope or reusable delegation crosses this coordinator boundary.
+        transfer_external(
+            pic,
+            l::Account {
+                owner: c,
+                subaccount: None,
+            },
+            4,
+        );
+        publish(
+            directory,
+            "creation-final-dust-injected",
             serde_json::json!({}),
         );
         let finalised = signal(directory, "creation-finalised", child);
         assert_eq!(finalised["canister_id"], c.to_text());
         assert!(pic.get_controllers(c).is_empty());
+        let stranded: candid::Nat = query(
+            pic,
+            LEDGER,
+            "icrc1_balance_of",
+            l::Account {
+                owner: c,
+                subaccount: None,
+            },
+        );
+        assert_eq!(
+            stranded,
+            candid::Nat::from(100_000_007u64),
+            "acknowledged funds remain; no sweep or invented refund"
+        );
+        assert_eq!(public_neuron(pic, t).cached_neuron_stake_e8s, stake);
         let result: Result<dendrite_types::ComplianceReport, candid::Reserved> =
             update(pic, verifier, Principal::anonymous(), "check_neuron", t);
         assert_eq!(
@@ -282,6 +504,14 @@ pub fn coordinate(
         );
         let after = signal(directory, "creation-post-final-management", child);
         verify_proposal(pic, p, receipt_id(&after, "proposal"), managers.len(), 1);
+    }
+    for (index, id) in managers.iter().enumerate() {
+        let manager = public_neuron(pic, *id);
+        assert_eq!(manager.controller, Some(identities[index]));
+        assert!(
+            manager.hot_keys.is_empty(),
+            "no extra creator hotkey may be added"
+        );
     }
     let remaining_cycles = pic.cycle_balance(c);
     assert!(

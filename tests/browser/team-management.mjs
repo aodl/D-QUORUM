@@ -1,3 +1,4 @@
+import {installCreationClockBeforeResume} from './creation-virtual-clock.mjs';
 import {containBrowserNetwork} from "./local-network-guard.mjs";
 // Actual compiled application + II. Only public principals and bounded UI evidence leave Chrome.
 import puppeteer from '../../dendrite/node_modules/puppeteer-core/lib/puppeteer/puppeteer-core.js';
@@ -6,10 +7,11 @@ import {creationJourney} from './creation-journey.mjs';
 const directory=process.env.SYSTEM_BROWSER_COORDINATION;
 const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
-const browser=await puppeteer.launch({executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']});
+const launchOptions={executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
+const browser=await puppeteer.launch(launchOptions),participantBrowsers=[browser],participantBrowserByIndex=new Map([[0,browser]]);
 const deadline=setTimeout(()=>{console.error('signed browser test exceeded 20 minutes');process.exit(1);},1200000);
 const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
-await containBrowserNetwork(browser,denied);
+await containBrowserNetwork(browser,denied,{beforeResume:installCreationClockBeforeResume});
 const scenario=process.env.SYSTEM_BROWSER_SCENARIO;
 if(!['scoped-signing','team-management','cancellation','wrong-provider','creation-recoverable','creation-production'].includes(scenario))throw Error('explicit local browser scenario required');
 const scopeProbeMode=scenario==='scoped-signing';
@@ -123,17 +125,23 @@ async function authenticate(index){
  }
 }
 async function authenticateAttempt(index){
- const actions=[];
- const context=await browser.createBrowserContext();const page=await context.newPage();applicationPages.push(page);await guard(page);
+ const actions=[];let selectedRemembered=false;
+ let participantBrowser=browser;
+ if(scenario.startsWith('creation-')){
+  participantBrowser=participantBrowserByIndex.get(index);
+  if(!participantBrowser){participantBrowser=await puppeteer.launch(launchOptions);participantBrowsers.push(participantBrowser);participantBrowserByIndex.set(index,participantBrowser);await containBrowserNetwork(participantBrowser,denied,{beforeResume:installCreationClockBeforeResume});}
+ }
+ const context=await participantBrowser.createBrowserContext();const page=await context.newPage();applicationPages.push(page);await guard(page);
  await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
  if(scenario==='team-management')await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');});await page.waitForSelector('button');
  const popupPromise=new Promise(resolve=>page.once('popup',resolve));
  if(!await click(page,'Sign in with Internet Identity'))throw Error('actual application sign-in missing');
  const popup=await popupPromise;await guard(popup);
+ if(scenario.startsWith('creation-')){popup.on('requestfailed',r=>console.error(JSON.stringify({phase:'II failed request',index,path:new URL(r.url()).pathname,error:r.failure()?.errorText})));popup.on('pageerror',e=>console.error(JSON.stringify({phase:'II frontend exception',index,type:e.name})));}
  if(scenario.startsWith('creation-'))await popup.waitForFunction(()=>location.hostname==='id.ai.localhost',{timeout:45000});
  const cdp=await popup.createCDPSession();await cdp.send('WebAuthn.enable');const {authenticatorId}=await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
  await popup.bringToFront();
- if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'native window closed by SDK',frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed'})));}
+ if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'native window closed by SDK',index,frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed',index})));}
  for(let i=0;i<120;i++){
   if(popup.isClosed())break;
   if(scenario.startsWith('creation-')&&await page.$eval('body',el=>el.innerText.includes('Dendrite principal:')))break;
@@ -141,7 +149,7 @@ async function authenticateAttempt(index){
   // One guarded snapshot: the popup may close as authentication completes.
   let labels,headings;try{({labels,headings}=await popup.evaluate(()=>({labels:Array.from(document.querySelectorAll('button'),b=>b.textContent.trim()),headings:Array.from(document.querySelectorAll('h1,h2'),el=>el.textContent.trim().slice(0,160))})));}catch(error){if(popup.isClosed())break;if(String(error.message).includes('Execution context was destroyed')){await pause(500);continue;}throw error;}
   // These are public control labels, never credential, delegation or recovery material.
-  if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings}));
+  if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings,buttons:await popup.$$eval('button',buttons=>buttons.map(b=>({label:b.textContent.trim(),disabled:b.disabled,expanded:b.getAttribute('aria-expanded')})))}));
   const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
   if(failureHeading){
    const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};
@@ -150,11 +158,14 @@ async function authenticateAttempt(index){
    if(['Unable to connect','Connection closed'].includes(failureHeading))error.iiChannelFailure=failureHeading;
    throw error;
   }
+  if(labels.includes('Authenticating...')){await popup.bringToFront();await cdp.send('WebAuthn.setUserVerified',{authenticatorId,isUserVerified:true});await cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId,enabled:true});}
   if(labels.includes('Create identity')){actions.push('Create identity');const field=await popup.$('input:not([type=hidden])');if(field)await field.type(`Synthetic manager ${index}`);await click(popup,'Create identity');}
   else if(labels.includes('Create with passkey')){actions.push('Create with passkey');await click(popup,'Create with passkey');}
   else if(labels.includes('Create')){actions.push('Create');await click(popup,'Create');}
   else if(labels.includes('Continue'))await click(popup,'Continue');
   else if(labels.includes('Authorize'))await click(popup,'Authorize');
+  else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
+  else if(!selectedRemembered&&i>10&&labels.includes(`Synthetic manager ${index}`)){selectedRemembered=true;actions.push('Select own remembered identity');await click(popup,`Synthetic manager ${index}`);}
   await pause(500);
   }catch(error){if(/Target closed|Execution context was destroyed/.test(String(error.message))){await pause(200);if(popup.isClosed())break;continue;}throw error;}
  }
@@ -174,7 +185,9 @@ async function authenticateAttempt(index){
   await writeEvidence(`${directory}/scope-probe.json`,JSON.stringify({...proof,uiActions:actions,authenticationRetries,deniedOrigins:denied,browser:await browser.version()}));
   return {scoped:true};
  }
- await page.waitForFunction(()=>document.body.innerText.includes('Dendrite principal:'),{timeout:45000});
+ try { await page.waitForFunction(()=>document.body.innerText.includes('Dendrite principal:')||document.body.innerText.includes('Channel was closed before a response was received'),{timeout:45000}); }
+ catch(error){throw error;}
+ if(await page.$eval('body',el=>el.innerText.includes('Channel was closed before a response was received'))){const error=Error('II setup channel closed before authentication');error.iiChannelFailure='Connection closed';throw error;}
  const principal=await page.$eval('body',el=>/Dendrite principal: ([a-z0-9-]+)/.exec(el.innerText)?.[1]);
  if(!principal)throw Error('real application principal absent');
  // Presence metadata only; never read stored credentials or database contents.
@@ -246,4 +259,4 @@ try{
   }}catch{console.error(JSON.stringify({phase:'failure diagnostics unavailable',index}));}
  }
  throw error;
-}finally{clearTimeout(deadline);await browser.close();}
+}finally{clearTimeout(deadline);await Promise.all(participantBrowsers.map(instance=>instance.close()));}

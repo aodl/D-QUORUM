@@ -1,12 +1,21 @@
+import {advanceCreationBrowserClocks} from './creation-virtual-clock.mjs';
 // Real compiled UI only. Public receipts/IDs cross the coordinator boundary;
 // II credentials, passkeys and delegation material never leave Chrome.
 import {mkdir,readdir,readFile,stat} from 'node:fs/promises';
 import {exportCreationReceipt} from '../../dendrite/canisters/dendrite/web/src/creation-receipt.js';
 
 export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied}){
- const production=scenario==='creation-production',user=await authenticate(0);let page=user.page;
+ const production=scenario==='creation-production',user=await authenticate(0),participants=[user];
+ if(production)for(let index=1;index<5;index++){
+  // Chrome exposes native virtual authenticators across simultaneous II
+  // windows. Only the participant currently using a passkey may respond.
+  for(const p of participants){await p.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:p.nativeDevice.authenticatorId,enabled:false});await p.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:p.nativeDevice.authenticatorId,isUserVerified:false});}
+  participants.push(await authenticate(index));
+ }
+ if(production)for(const p of participants.slice(1)){await p.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:p.nativeDevice.authenticatorId,enabled:false});await p.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:p.nativeDevice.authenticatorId,isUserVerified:false});}
+ let page=user.page;
  page.on('response',response=>{if(response.status()>=400)console.error(JSON.stringify({phase:'creation HTTP failure',url:response.url(),status:response.status()}));});
- await writeEvidence(`${directory}/creation-principal.json`,JSON.stringify({principal:user.principal}));
+ await writeEvidence(`${directory}/creation-principal.json`,JSON.stringify({principal:user.principal,participants:participants.map(p=>p.principal)}));
  const fixture=await waitSignal('creation-provisioned');
  const receipts=`${directory}/receipts`;await mkdir(receipts,{recursive:true});await user.context.setDownloadBehavior({policy:'allow',downloadPath:receipts});
  async function press(label){console.error(JSON.stringify({phase:'creation action',label}));await page.bringToFront();const all=await page.$$('button');for(const b of all)if((await b.evaluate(el=>el.textContent)).trim()===label){await b.evaluate(el=>{for(let d=el.parentElement;d;d=d.parentElement)if(d.tagName==='DETAILS'&&!d.open)d.querySelector('summary')?.click();});await b.click();return;}throw Error(`Missing creation action: ${label}`);}
@@ -14,36 +23,42 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  async function fill(name,value){console.error(JSON.stringify({phase:'creation field',name}));await page.bringToFront();await page.$eval(`[name="${name}"]`,el=>{el.value='';});await page.type(`[name="${name}"]`,value);}
  async function save(){const previous=new Map(await Promise.all((await readdir(receipts)).filter(n=>n.endsWith('.json')).map(async n=>[n,(await stat(`${receipts}/${n}`)).mtimeMs])));await press('Save creation receipt');
   for(let i=0;i<200;i++){for(const n of(await readdir(receipts)).filter(n=>n.endsWith('.json'))){const file=`${receipts}/${n}`;if((await stat(file)).mtimeMs!==previous.get(n)){try{const json=await readFile(file,'utf8'),value=JSON.parse(json);return {file,json,value};}catch{}}}await pause(50);}throw Error('Actual receipt download did not complete');}
- async function signPrepared(){const saved=await save();await page.click('[name=creation-intent-saved]');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}await idle();return saved;}
- async function reauthenticate(label){let popup=(await user.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
-  if(user.nativeDevice.popup.isClosed())throw Error('Native passkey window was closed; the hardware surrogate is unavailable.');
-  await user.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:user.nativeDevice.authenticatorId,isUserVerified:true});
-  await user.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:user.nativeDevice.authenticatorId,enabled:true});
+ async function signPrepared({holdController=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController)await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm('holdController');});if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
+ async function reauthenticate(label,participant=user){let popup=(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
+  if(participant.nativeDevice.popup.isClosed())throw Error('Native passkey window was closed; the hardware surrogate is unavailable.');
+  await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});
+  await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});
   const opened=p=>popup=p;page.once('popup',opened);await press(label);
   // The actual II frontend may reuse its own fresh session. Never export a
   // virtual authenticator credential/private key to manufacture the same P.
   for(let i=0;i<180;i++){const state=await page.$eval('body',el=>({text:el.textContent,busy:el.querySelector('.creation-workflow')?.getAttribute('aria-busy'),error:el.querySelector('.creation-workflow [role=alert]')?.textContent}));
    if(state.error)throw Error(`Creation authentication failed: ${state.error}`);
    const profile={'Consent to funding capability':'FundProvisioning','Consent to controller management capability':'ManageBootstrap','Consent to exact bootstrap capability':'CallBootstrap'}[label];
-   if(profile?state.text.includes(`${profile}: active`)&&state.busy==='false':state.text.includes(`Dendrite principal: ${user.principal}`)){page.off('popup',opened);await page.bringToFront();return;}
+   if(profile?state.text.includes(`${profile}: active`)&&state.busy==='false':state.text.includes(`Dendrite principal: ${participant.principal}`)){page.off('popup',opened);await page.bringToFront();return;}
    // AuthClient may reuse the still-open II window. Its native virtual
    // authenticator stays in that window; no credential is extracted or copied.
-   popup=popup&&!popup.isClosed()?popup:(await user.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
+   popup=popup&&!popup.isClosed()?popup:(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
    if(!popup){await pause(100);continue;}
    try{const labels=await popup.$$eval('button',els=>els.map(el=>el.textContent.trim()));
     if(i%10===0)console.error(JSON.stringify({phase:'creation II reauthentication',label,labels,headings:await popup.$$eval('h1,h2,[role=alert]',els=>els.map(el=>el.textContent.trim().slice(0,300)))}));
     if(labels.includes('Authenticating...')){await popup.bringToFront();}
-    else if(labels.includes('Continue'))await click(popup,'Continue');else if(labels.includes('Authorize'))await click(popup,'Authorize');
-    else {const remembered=labels.find(v=>v.includes('Synthetic manager 0'));if(remembered)await click(popup,remembered);}
+    else if(labels.includes('Continue'))await click(popup,'Continue');else if(labels.includes('Authorize'))await click(popup,'Authorize');else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
+    else {const remembered=labels.find(v=>v.includes(`Synthetic manager ${participants.indexOf(participant)}`));if(remembered)await click(popup,remembered);}
    }catch(e){if(!popup.isClosed()&&!/Execution context/.test(e.message))throw e;}await pause(500);}
   page.off('popup',opened);throw Error('Real II reauthentication prerequisite unavailable: the original P was not re-established; no key export or substituted identity was used.');}
+ async function renewParticipants(clock,saved){
+  const observation=await advanceCreationBrowserClocks(participants,clock.now_ms);
+  for(const participant of participants){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity',participant);}
+  page=user.page;await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
+  return {...observation,credentials_renewed:true,principals:participants.map(p=>p.principal)};
+ }
  async function capabilities(){for(const [profile,label]of[['FundProvisioning','Consent to funding capability'],['ManageBootstrap','Consent to controller management capability'],['CallBootstrap','Consent to exact bootstrap capability']]){
    if(profile!=='FundProvisioning'&&!await page.$eval('.creation-workflow',el=>!el.innerText.includes('Controller C: not provisioned')))continue;
    const exists=await page.$$eval('button',(els,label)=>els.some(el=>el.textContent.trim()===label),label);if(exists)await reauthenticate(label);
   }}
  async function refresh(){await press('Refresh independent chain evidence');await idle();}
  await page.bringToFront();console.error(JSON.stringify({phase:'creation route and profile'}));await page.evaluate(()=>location.hash='#/create');await page.waitForSelector('[name=creation-profile]');await page.select('[name=creation-profile]',production?'ProductionCandidate':'RecoverableTest');
- await fill('managers',fixture.managers.join(','));if(production){await fill('delegates',`4=${fixture.managers.slice(0,3).join(',')}`);await fill('name','Local creation candidate');await fill('description','Provisional per-neuron controller; creator retains recoverable authority until separate finalisation.');}
+ await fill('managers',fixture.managers.join(','));if(production){await fill('delegates',`4=${fixture.managers.slice(0,3).join(',')}`);await fill('name','Test 11');await fill('description','Provisional per-neuron controller; creator retains recoverable authority until separate finalisation.');}
  await press('Review creation plan');await idle();let saved=await save();await writeEvidence(`${directory}/creation-plan.json`,JSON.stringify(saved.value));await waitSignal('creation-funding-ready');
  await reauthenticate('Consent to funding capability');await refresh();
  for(let i=0;i<3;i++){await press('Review next provisioning request');await idle();await signPrepared();}
@@ -57,6 +72,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  await press('Verify funding and claim the one bound neuron');await idle();for(let i=0;i<20;i++){const present=await page.$$eval('button',els=>els.some(el=>el.textContent==='Advance one reviewed configuration step'));if(!present)break;await press('Advance one reviewed configuration step');await idle();}
  if(production){await page.click('[name=creation-lock-confirmed]');await press('Commit the reviewed lock');await idle();}
  saved=await save();await writeEvidence(`${directory}/creation-configured.json`,JSON.stringify(saved.value));
+ if(production){const clock=await waitSignal('creation-31-day-clock');const evidence=await renewParticipants(clock,saved);await writeEvidence(`${directory}/creation-31-day-resumed.json`,JSON.stringify(evidence));}
  // Exercise the compiled wizard at narrow width and 200% page scale while
  // signing remains real. These are visual/accessibility actions, not mocks or
  // substitutes for the independent on-chain configuration oracle.
@@ -72,8 +88,20 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  await writeEvidence(`${directory}/creation-accessibility.json`,JSON.stringify(accessibility));await scaleSession.send('Emulation.setPageScaleFactor',{pageScaleFactor:1});await scaleSession.detach();
  await page.setViewport({width:1280,height:900});await page.emulateMediaFeatures([]);
  const propose=async(kind,manager)=>{await fill('creation-proposer',String(manager));await press(kind==='registration'?'Review global known-neuron registration proposal':'Review benign manager refresh proposal');await idle();await signPrepared();return (await save()).value.intents.at(-1).references.proposal_id;};
- const vote=async(manager,id)=>{await fill('creation-proposer',String(manager));await fill('creation-proposal',id);await press('Review manager Yes vote');await idle();await signPrepared();};
- let registration;if(production){registration=await propose('registration',fixture.managers[0]);for(const manager of fixture.managers.slice(1,4))await vote(manager,registration);await press('Begin registered manager rehearsal');await idle();}
+ const vote=async(manager,id)=>{if(production&&manager!==fixture.managers[0]){const exported=await save(),participant=participants[fixture.managers.indexOf(manager)],ownerPage=page;page=participant.page;try{await page.bringToFront();await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-team-receipt]');await(await page.$('[name=creation-team-receipt]')).uploadFile(exported.file);await idle();await fill('creation-team-manager',String(manager));await press('Review exact creation Yes vote');await idle();await page.click('[name=creation-team-consent]');await press('Sign exact manager creation vote');await idle();}finally{page=ownerPage;}return;}await fill('creation-proposer',String(manager));await fill('creation-proposal',id);await press('Review manager Yes vote');await idle();await signPrepared();};
+ let registration;if(production){
+  // A real pinned validation refusal must clear only its original certified
+  // reservation. The duplicate known name is deliberately reviewed unchanged.
+  await fill('creation-proposer',String(fixture.managers[0]));await press('Review global known-neuron registration proposal');await idle();
+  let refusal=false;try{await signPrepared();}catch(error){refusal=/Creation UI blocked:/.test(error.message);if(!refusal)throw error;}
+  saved=await save();const rejected=saved.value.intents.at(-1);
+  if(!refusal||rejected.kind!=='Registration'||rejected.state!=='Rejected'||!rejected.reply_witness||!rejected.request_binding)throw Error('Real registration refusal was not authoritatively reconciled');
+  await writeEvidence(`${directory}/creation-registration-refused.json`,JSON.stringify(saved.value));await waitSignal('creation-refusal-upgrade-verified');
+  await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity');await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
+  await press('Review plan changes');await fill('name','Local creation candidate');await press('Review replacement plan');await idle();await save();await page.click('[name=creation-revision-confirmed]');await press('Apply reviewed plan revision');await idle();
+  for(let i=0;i<20;i++){if(!await page.$$eval('button',els=>els.some(el=>el.textContent==='Advance one reviewed configuration step')))break;await press('Advance one reviewed configuration step');await idle();}
+  if(await page.$('[name=creation-lock-confirmed]')){await page.click('[name=creation-lock-confirmed]');await press('Commit the reviewed lock');await idle();}
+  registration=await propose('registration',fixture.managers[0]);for(const manager of fixture.managers.slice(1,4))await vote(manager,registration);await press('Begin registered manager rehearsal');await idle();}
  const rehearsal=await propose('rehearsal',fixture.managers[0]);if(production)for(const manager of fixture.managers.slice(1,3))await vote(manager,rehearsal);
  await writeEvidence(`${directory}/creation-rehearsal.json`,JSON.stringify({proposal:rehearsal,registration,receipt:(await save()).value}));await waitSignal('creation-rehearsal-verified');
  if(!production){if(await page.$$eval('button',els=>els.some(el=>/removal of every controller|Verify executed quorum and seal/.test(el.textContent))))throw Error('Test profile exposed irreversible finalisation');
@@ -90,18 +118,19 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   await writeEvidence(`${directory}/creation-recovered.json`,JSON.stringify({return_block:returned.references.block_id,receipt:saved.value,scope:'Unused user-controlled ICP returned; seven-day locked stake remains in its neuron. Separate real-protocol test proves later disbursement.'}));
   await page.screenshot({path:`${directory}/creation-recoverable.png`});
  }else{
-  await fill('creation-proposal',rehearsal);await press('Verify executed quorum and seal finalisation');await idle();await save();await press('Stop and verify quiescence');await idle();
+  await press('Review unused controller-account funds');await idle();await page.click('[name=creation-default-icp-consent]');await press('Acknowledge unused controller-account funds');await idle();
+  await fill('creation-proposal',rehearsal);await press('Verify executed quorum and seal finalisation');await idle();saved=await save();await writeEvidence(`${directory}/creation-sealed.json`,JSON.stringify(saved.value));await waitSignal('creation-sealed-dust-injected');await press('Stop and verify quiescence');await idle();
   saved=await save();const c=saved.value.canister_id,t=saved.value.neuron_id;await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of bootstrap code');await idle();await signPrepared();
-  await refresh();saved=await save();await writeEvidence(`${directory}/creation-code-removed.json`,JSON.stringify(saved.value));await waitSignal('creation-code-removal-verified');
-  await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity');await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await reauthenticate('Consent to controller management capability');await refresh();
-  await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of every controller');await idle();await signPrepared();await refresh();
+  await refresh();saved=await save();await writeEvidence(`${directory}/creation-code-removed.json`,JSON.stringify(saved.value));const clock=await waitSignal('creation-code-removal-verified');
+  await renewParticipants(clock,saved);await writeEvidence(`${directory}/creation-90-day-resumed.json`,JSON.stringify({now_ms:clock.now_ms,principals:participants.map(p=>p.principal)}));
+  await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of every controller');await idle();await signPrepared({holdController:true});await refresh();
   if(!await page.$eval('.creation-workflow',el=>el.innerText.includes('Finalised — Compliant')))throw Error('Fresh final report was not Compliant');
   if(await page.$eval('.creation-workflow',el=>/\b(?:FundProvisioning|ManageBootstrap|CallBootstrap): active/.test(el.textContent)))throw Error('Finalisation retained a local provisioning capability');
   await writeEvidence(`${directory}/creation-finalised.json`,JSON.stringify((await save()).value));await waitSignal('creation-finalisation-verified');
   await page.evaluate(t=>location.hash=`#/neuron/${t}`,t);await page.waitForSelector('.control-panel',{timeout:90000});await press('Review voting-power refresh');await page.waitForSelector('.transaction-review');await page.click('[name=confirmation]');await press('Submit exact reviewed request');
   await page.waitForFunction(()=>/Proposal ID: \d+/.test(document.body.innerText),{timeout:90000});const post=await page.$eval('body',el=>/Proposal ID: (\d+)/.exec(el.innerText)[1]);
-  for(const manager of fixture.managers.slice(1,3)){await page.waitForSelector('.control-panel select',{timeout:90000});await page.select('.control-panel select',String(manager));await fill('management-proposal',post);await press('Review manager vote');await page.waitForSelector('.transaction-review');await page.click('[name=confirmation]');await press('Submit exact reviewed request');await page.waitForFunction(()=>!document.querySelector('.transaction-review'),{timeout:90000});}
-  await writeEvidence(`${directory}/creation-post-final-management.json`,JSON.stringify({proposal:post,target:t,controller:c}));
+  for(const manager of fixture.managers.slice(1,3)){page=participants[fixture.managers.indexOf(manager)].page;await page.bringToFront();await page.evaluate(t=>location.hash=`#/neuron/${t}`,t);await page.waitForSelector('.control-panel select',{timeout:90000});await page.select('.control-panel select',String(manager));await fill('management-proposal',post);await press('Review manager vote');await page.waitForSelector('.transaction-review');await page.click('[name=confirmation]');await press('Submit exact reviewed request');await page.waitForFunction(()=>!document.querySelector('.transaction-review'),{timeout:90000});}
+  page=user.page;await writeEvidence(`${directory}/creation-post-final-management.json`,JSON.stringify({proposal:post,target:t,controller:c}));
  }
  await waitSignal('creation-browser-verified');if(denied.length)throw Error('Creation browser attempted non-local traffic');
 }

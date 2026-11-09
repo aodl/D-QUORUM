@@ -1,6 +1,6 @@
 // Pause every new page target before execution, including the first II popup
 // navigation. Page-level guards alone attach too late for that first request.
-export async function containBrowserNetwork(browser, denied) {
+export async function containBrowserNetwork(browser, denied, {beforeResume}={}) {
  const root=await browser.target().createCDPSession();
  const attach=async parent=>{
   parent.on('Target.attachedToTarget',async event=>{
@@ -13,6 +13,7 @@ export async function containBrowserNetwork(browser, denied) {
      try { if(allowed)await session.send('Fetch.continueRequest',{requestId:request.requestId});else{denied.push(url.origin);await session.send('Fetch.failRequest',{requestId:request.requestId,errorReason:'BlockedByClient'});} } catch(error){if(!/closed|detached/i.test(error.message))throw error;}
     });
     await attach(session);
+    if(beforeResume)await beforeResume(session,event.targetInfo);
     await session.send('Runtime.runIfWaitingForDebugger');
    } catch(error){if(!/closed|detached/i.test(error.message))throw error;}
   });

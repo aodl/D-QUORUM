@@ -212,6 +212,13 @@ struct ProposalOracle {
     executed_timestamp_seconds: u64,
     deadline_timestamp_seconds: Option<u64>,
     ballots: Vec<(u64, BallotOracle)>,
+    latest_tally: Option<TallyOracle>,
+}
+#[derive(CandidType, Deserialize)]
+struct TallyOracle {
+    yes: u64,
+    no: u64,
+    total: u64,
 }
 #[derive(CandidType, Deserialize)]
 struct BallotOracle {
@@ -386,18 +393,36 @@ enum CreationCase {
 
 fn production_creation(case: CreationCase) {
     let with_automation = matches!(case, CreationCase::Automation);
+    let independent_team = matches!(case, CreationCase::Production);
     use bootstrap_model::{Following, Metadata, Network, Phase, Plan, Profile, Step};
     use quorum_ic_clients::{GOVERNANCE, governance as g};
     use sha2::{Digest, Sha256};
     let pic = real_pic();
     let owner = user(41);
+    let manager_owner = |id: u64| {
+        if independent_team && id != 11 {
+            user(id as u8 + 40)
+        } else {
+            owner
+        }
+    };
     let at = now(&pic);
     let mut neurons = vec![];
     for id in 11..=15 {
-        let mut n = seed(id, owner, at);
+        let mut n = seed(id, manager_owner(id), at);
         n.known_neuron_data = Some(known(id));
         n.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
         neurons.push(n);
+    }
+    if independent_team {
+        let mut alternate = seed(16, user(56), at);
+        alternate.known_neuron_data = Some(known(16));
+        alternate.dissolve_state = Some(g::DissolveState::DissolveDelaySeconds(1));
+        alternate.followees = vec![
+            fs(1, &[11, 12, 13, 14, 15]),
+            fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID]),
+        ];
+        neurons.push(alternate);
     }
     for id in [
         dendrite_types::ALPHA_VOTE_NEURON_ID,
@@ -563,7 +588,7 @@ fn production_creation(case: CreationCase) {
                 other => panic!("registration fault fixture did not submit: {other:?}"),
             };
             if expired {
-                cast_vote(&pic, owner, 12, id, 2);
+                cast_vote(&pic, manager_owner(12), 12, id, 2);
                 let open: Option<ProposalOracle> =
                     update(&pic, GOVERNANCE, owner, "get_proposal_info", id);
                 let open = open.unwrap();
@@ -579,7 +604,7 @@ fn production_creation(case: CreationCase) {
                 }
             } else {
                 for manager in [12, 13, 14, 15] {
-                    cast_vote(&pic, owner, manager, id, 2);
+                    cast_vote(&pic, manager_owner(manager), manager, id, 2);
                 }
             }
             let rejected: Option<ProposalOracle> =
@@ -611,10 +636,10 @@ fn production_creation(case: CreationCase) {
         update(&pic, GOVERNANCE, owner, "get_proposal_info", registration);
     assert_eq!(before.unwrap().status, 1);
     for id in [12, 13, 14] {
-        vote_yes(&pic, owner, id, registration);
+        vote_yes(&pic, manager_owner(id), id, registration);
     }
     if with_automation {
-        vote_yes(&pic, owner, 15, registration);
+        vote_yes(&pic, manager_owner(15), 15, registration);
     }
     let executed: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, owner, "get_proposal_info", registration);
@@ -625,10 +650,102 @@ fn production_creation(case: CreationCase) {
     let info: Result<g::NeuronInfo, g::GovernanceError> =
         update(&pic, GOVERNANCE, owner, "get_neuron_info", t);
     assert_eq!(info.unwrap().known_neuron_data.unwrap().name, metadata.name);
+    if independent_team {
+        let follow = |managers: &[u64]| {
+            let rows = plan
+                .following
+                .iter()
+                .map(|f| g::Following {
+                    topic: Some(f.topic),
+                    followees: Some(
+                        (if f.topic == 1 {
+                            managers.to_vec()
+                        } else {
+                            f.followees.clone()
+                        })
+                        .into_iter()
+                        .map(|id| g::NeuronId { id })
+                        .collect(),
+                    ),
+                })
+                .collect();
+            let response: g::ManageResponse = update(&pic, GOVERNANCE, owner, "manage_neuron", g::request(11, g::Command::MakeProposal(Box::new(g::MakeProposal {
+                title: Some("Review changed target management membership".into()), summary: "Isolated native real-Governance membership fault; no browser authority substitution is claimed".into(), url: String::new(), action: Some(g::ActionRequest::ManageNeuron(Box::new(g::request(t,g::Command::SetFollowing(g::SetFollowing {topic_following: Some(rows)}))))),
+            }))));
+            let Some(g::ResponseCommand::MakeProposal(id)) = response.command else {
+                panic!(
+                    "real membership proposal was refused: {:?}",
+                    response.command
+                )
+            };
+            let id = id.proposal_id.unwrap().id;
+            for manager in [12, 13] {
+                vote_yes(&pic, manager_owner(manager), manager, id);
+            }
+            let result: Option<ProposalOracle> =
+                update(&pic, GOVERNANCE, owner, "get_proposal_info", id);
+            assert_eq!(result.unwrap().status, 4);
+            id
+        };
+        follow(&[11, 12, 13, 14, 16]);
+        assert!(
+            advance(&pic, c, owner, Step::BeginRehearsal).is_err(),
+            "changed membership before rehearsal blocks readiness even with the same count"
+        );
+        follow(&[11, 12, 13, 14, 15]);
+        advance(&pic, c, owner, Step::BeginRehearsal).unwrap();
+        let insufficient = propose_refresh(&pic, owner, 11, t);
+        assert!(
+            advance(&pic, c, owner, Step::Seal(insufficient)).is_err(),
+            "one vote is insufficient"
+        );
+        for manager in [12, 13, 14] {
+            cast_vote(&pic, manager_owner(manager), manager, insufficient, 2);
+        }
+        assert!(
+            advance(&pic, c, owner, Step::Seal(insufficient)).is_err(),
+            "a rejected rehearsal never qualifies"
+        );
+        let historical = propose_refresh(&pic, owner, 11, t);
+        follow(&[11, 12, 13, 14, 16]);
+        for manager in [12, 15] {
+            vote_yes(&pic, manager_owner(manager), manager, historical);
+        }
+        let executed: Option<ProposalOracle> =
+            update(&pic, GOVERNANCE, owner, "get_proposal_info", historical);
+        let executed = executed.unwrap();
+        assert_eq!(executed.status, 4);
+        assert_eq!(executed.latest_tally.unwrap().total, 5);
+        assert!(
+            advance(&pic, c, owner, Step::Seal(historical)).is_err(),
+            "historical execution does not prove the current manager identities"
+        );
+        follow(&[11, 12, 13, 14, 15]);
+        let wrong_action = follow(&[11, 12, 13, 14, 15]);
+        assert!(
+            advance(&pic, c, owner, Step::Seal(wrong_action)).is_err(),
+            "an executed exact-target configuration command is not the benign refresh rehearsal"
+        );
+        let wrong_target = propose_refresh(&pic, owner, 11, 16);
+        for manager in [12, 13] {
+            vote_yes(&pic, manager_owner(manager), manager, wrong_target);
+        }
+        assert!(
+            advance(&pic, c, owner, Step::Seal(wrong_target)).is_err(),
+            "an executed refresh of another neuron cannot qualify T"
+        );
+        assert!(
+            advance(&pic, c, owner, Step::Seal(u64::MAX)).is_err(),
+            "unavailable history fails closed"
+        );
+        println!(
+            "Native protocol observations: five independent owners; filtered ballots; historical electorate snapshot survives changed current membership; current configuration/action/target/quorum checks reject wrong proofs. Transient changes restored without observation are not disproved by aggregate tallies."
+        );
+    }
     advance(&pic, c, owner, Step::BeginRehearsal).unwrap();
     let rehearsal = propose_refresh(&pic, owner, 11, t);
     for id in [12, 13] {
-        vote_yes(&pic, owner, id, rehearsal);
+        vote_yes(&pic, manager_owner(id), id, rehearsal);
     }
     let oracle: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, owner, "get_proposal_info", rehearsal);
@@ -636,16 +753,27 @@ fn production_creation(case: CreationCase) {
     assert_eq!(oracle.status, 4);
     let electorate: std::collections::BTreeSet<_> =
         oracle.ballots.iter().map(|(id, _)| *id).collect();
-    assert_eq!(electorate, plan.managers.iter().copied().collect());
+    assert_eq!(
+        electorate,
+        if independent_team {
+            [11].into_iter().collect()
+        } else {
+            plan.managers.iter().copied().collect()
+        }
+    );
+    let tally = oracle.latest_tally.unwrap();
+    assert_eq!(tally.total, 5);
+    assert_eq!(tally.yes, 3);
+    assert_eq!(tally.no, 0);
     assert_eq!(
         oracle.ballots.iter().filter(|(_, b)| b.vote == 1).count(),
-        3
+        if independent_team { 1 } else { 3 }
     );
     let filtered: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, c, "get_proposal_info", rehearsal);
     assert!(
         filtered.unwrap().ballots.is_empty(),
-        "C cannot independently see manager identities; browser electorate proof remains necessary"
+        "C cannot see historical manager identities; aggregate execution proves quorum, not continuous membership"
     );
     let before: Result<dendrite_types::ComplianceReport, candid::Reserved> = update(
         &pic,
@@ -740,7 +868,7 @@ fn production_creation(case: CreationCase) {
     advance(&pic, c, owner, Step::BeginRehearsal).unwrap();
     let new_rehearsal = propose_refresh(&pic, owner, 11, t);
     for id in [12, 13] {
-        vote_yes(&pic, owner, id, new_rehearsal);
+        vote_yes(&pic, manager_owner(id), id, new_rehearsal);
     }
     let resealed = advance(&pic, c, owner, Step::Seal(new_rehearsal)).unwrap();
     assert_eq!(resealed.sealed_controller_changes, Some(upgraded_changes));
@@ -797,9 +925,9 @@ fn production_creation(case: CreationCase) {
         report.overall_status,
         dendrite_types::ComplianceStatus::Compliant
     );
-    let later = propose_refresh(&pic, owner, 12, t);
+    let later = propose_refresh(&pic, manager_owner(12), 12, t);
     for id in [13, 14] {
-        vote_yes(&pic, owner, id, later);
+        vote_yes(&pic, manager_owner(id), id, later);
     }
     let final_proposal: Option<ProposalOracle> =
         update(&pic, GOVERNANCE, owner, "get_proposal_info", later);
@@ -836,16 +964,22 @@ fn production_creation(case: CreationCase) {
 #[test]
 #[ignore = "creation_protocol real bootstrap, Governance and Ledger qualification"]
 fn real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return() {
-    recoverable_creation(false);
+    recoverable_creation(false, false);
 }
 
 #[test]
 #[ignore = "creation_protocol real Governance external-error financial uncertainty"]
 fn real_bootstrap_external_disbursement_error_retains_its_financial_intent() {
-    recoverable_creation(true);
+    recoverable_creation(true, false);
 }
 
-fn recoverable_creation(external_disbursement_error: bool) {
+#[test]
+#[ignore = "creation_protocol: genuine reviewed V1 Wasm checkpoint, 31/90 day pause and V2 state migration"]
+fn real_reviewed_v1_checkpoint_survives_long_wait_and_upgrade() {
+    recoverable_creation(false, true);
+}
+
+fn recoverable_creation(external_disbursement_error: bool, historical: bool) {
     use bootstrap_model::{Following, Network, Phase, Plan, Profile, Step};
     use quorum_ic_clients::{GOVERNANCE, governance as g};
     use sha2::{Digest, Sha256};
@@ -891,10 +1025,11 @@ fn recoverable_creation(external_disbursement_error: bool) {
         );
     }
     let c = create_through_cycles_ledger(&pic, owner);
-    let bytes = std::fs::read(
-        root().join("dendrite/target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm"),
-    )
-    .expect("build bootstrap before this real-protocol gate");
+    let mut bytes = if historical {
+        include_bytes!("../../../dendrite/canisters/bootstrap/compat/fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265.wasm").to_vec()
+    } else {
+        bootstrap_bytes()
+    };
     let plan = Plan {
         version: 1,
         profile: Profile::RecoverableTest,
@@ -995,6 +1130,61 @@ fn recoverable_creation(external_disbursement_error: bool) {
             .contains("actual owner")
     );
     let original_claim = checkpoint_fault(&pic, c, owner, Step::Claim, &bytes);
+    if historical {
+        let before: Result<bootstrap_model::State, String> = update(&pic, c, owner, "status", 1u64);
+        let before = before.unwrap();
+        assert_eq!(
+            before.version, 1,
+            "checkpoint comes from the actual qualified V1 executable"
+        );
+        assert!(
+            before.pending.is_some(),
+            "original uncertain claim remains outstanding"
+        );
+        for days in [31u64, 59] {
+            pic.advance_time(std::time::Duration::from_secs(days * 86_400));
+            let resumed: Result<bootstrap_model::State, String> =
+                update(&pic, c, owner, "status", 1u64);
+            assert_eq!(
+                resumed.unwrap(),
+                before,
+                "waiting never renews an uncertain operation identity"
+            );
+        }
+        let image = pic.get_stable_memory(c);
+        let evidence = root().join(format!(
+            "dist/evidence/creation-completion-checkpoint-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&evidence).unwrap();
+        std::fs::write(evidence.join("reviewed-v1-ambiguous-claim.bin"), &image).unwrap();
+        std::fs::write(evidence.join("provenance.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "classification":"actual reviewed V1 executable's persisted pre-await image; real Governance claim retained while its callback checkpoint was restored; 31/90 day native protocol observations, not browser II evidence",
+            "input_qualified_source":"97343f8dbb714a0a12f90a474805518c83017184","wasm_sha256":hex::encode(Sha256::digest(&bytes)),"image_sha256":hex::encode(Sha256::digest(&image)),"controller":c.to_text(),"owner":owner.to_text(),"neuron":original_claim.neuron_id,"nonce":plan.nonce,"stable_version":before.version,"days_waited":90
+        })).unwrap()).unwrap();
+        bytes = bootstrap_bytes();
+        pic.upgrade_canister(
+            c,
+            bytes.clone(),
+            encode_one(bootstrap_model::UpgradeBinding {
+                previous_module_sha256: plan.bootstrap_sha256.clone(),
+                module_sha256: Sha256::digest(&bytes).to_vec(),
+            })
+            .unwrap(),
+            Some(owner),
+        )
+        .unwrap();
+        let migrated: Result<bootstrap_model::State, String> =
+            update(&pic, c, owner, "status", 1u64);
+        let mut expected = before;
+        expected.version = bootstrap_model::STATE_VERSION;
+        expected.module_binding = Some(Sha256::digest(&bytes).to_vec());
+        assert_eq!(
+            migrated.unwrap(),
+            expected,
+            "upgrade retains the genuine original plan/account/nonce/neuron/pending identity"
+        );
+    }
     let claimed = advance(&pic, c, owner, Step::Claim).unwrap();
     assert_eq!(
         claimed.neuron_id, original_claim.neuron_id,
@@ -1055,6 +1245,7 @@ fn recoverable_creation(external_disbursement_error: bool) {
         })),
     );
     let reservation = bootstrap_model::ExternalProposal {
+        request_id: None,
         kind: bootstrap_model::ProposalKind::Rehearsal,
         intent_id: intent_id.clone(),
         request_digest: Sha256::digest(candid::encode_one(&proposal_request).unwrap()).to_vec(),
@@ -1414,8 +1605,23 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
     let repeated: Result<MintSuccess, NotifyError> =
         update(&pic, cmc(), owner, "notify_mint_cycles", notify);
     assert_eq!(repeated.unwrap(), minted);
+    // A fresh first create attempt after conversion is independent of the
+    // permanent account nonce and the original payment deduplication window.
+    pic.advance_time(std::time::Duration::from_secs(48 * 3600));
     let before = cycles_balance(&pic, owner, Some(funding_sub.clone()));
     let create = creation_args(&pic, owner, Some(funding_sub.clone()));
+    let mut stale_first = create.clone();
+    stale_first.created_at_time =
+        Some(pic.get_time().as_nanos_since_unix_epoch() - 48 * 3600 * 1_000_000_000);
+    let refusal: Result<Created, CreateError> =
+        update(&pic, cycles_ledger(), owner, "create_canister", stale_first);
+    assert!(matches!(refusal, Err(CreateError::TooOld)));
+    assert_eq!(
+        before,
+        cycles_balance(&pic, owner, Some(funding_sub.clone())),
+        "definite first-call TooOld has no burn or fee"
+    );
+    let original_create = create.clone();
     let created: Result<Created, CreateError> = update(
         &pic,
         cycles_ledger(),
@@ -1424,8 +1630,13 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
         create.clone(),
     );
     let created = created.unwrap();
-    let duplicate: Result<Created, CreateError> =
-        update(&pic, cycles_ledger(), owner, "create_canister", create);
+    let duplicate: Result<Created, CreateError> = update(
+        &pic,
+        cycles_ledger(),
+        owner,
+        "create_canister",
+        original_create.clone(),
+    );
     assert!(
         matches!(duplicate, Err(CreateError::Duplicate { duplicate_of, canister_id: Some(id) }) if id == created.canister_id && duplicate_of == created.block_id)
     );
@@ -1539,5 +1750,134 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
     println!(
         "real provisioned controller {}, sole owner {}, exact cycle debit and retained duplicate ID verified",
         created.canister_id, owner
+    );
+}
+
+#[test]
+#[ignore = "requires pinned PocketIC NNS subnet"]
+fn creation_local_certificate_root_is_stable_across_worlds() {
+    let first = real_pic();
+    let a = first.root_key().expect("NNS root public key");
+    drop(first);
+    let second = real_pic();
+    let b = second.root_key().expect("NNS root public key");
+    assert_eq!(
+        a.as_slice(),
+        include_bytes!("../../../dendrite/canisters/bootstrap/compat/pocketic-15-root-public.der")
+            .as_slice()
+    );
+    assert_eq!(
+        a, b,
+        "Local certificate policy requires the pinned deterministic root"
+    );
+    println!("creation certificate ROOT PUBLIC KEY {}", hex::encode(a));
+}
+
+#[test]
+#[ignore = "creation_protocol: actual pinned ICP Ledger ICRC-2 compare-and-set feasibility"]
+fn real_creation_dispatch_reservation_compare_and_set() {
+    #[derive(CandidType, Clone)]
+    struct Approve {
+        from_subaccount: Option<Vec<u8>>,
+        spender: l::Account,
+        amount: Nat,
+        expected_allowance: Option<Nat>,
+        expires_at: Option<u64>,
+        fee: Option<Nat>,
+        memo: Option<Vec<u8>>,
+        created_at_time: Option<u64>,
+    }
+    #[derive(CandidType, candid::Deserialize, Debug)]
+    enum Error {
+        AllowanceChanged { current_allowance: Nat },
+        BadFee { expected_fee: Nat },
+        InsufficientFunds { balance: Nat },
+        TooOld,
+        CreatedInFuture { ledger_time: u64 },
+        Duplicate { duplicate_of: Nat },
+        TemporarilyUnavailable,
+        GenericError { error_code: Nat, message: String },
+        Expired { ledger_time: u64 },
+    }
+    let pic = real_pic();
+    let owner = user(41);
+    install_real(
+        &pic,
+        vec![],
+        vec![(
+            l::Account {
+                owner,
+                subaccount: None,
+            },
+            1_000_000,
+        )],
+        artifact("governance-canister"),
+        artifact("ledger-canister"),
+    );
+    let args = Approve {
+        from_subaccount: None,
+        spender: l::Account {
+            owner: candid::Principal::management_canister(),
+            subaccount: Some(vec![1; 32]),
+        },
+        amount: 1u64.into(),
+        expected_allowance: Some(0u64.into()),
+        expires_at: None,
+        fee: Some(10_000u64.into()),
+        memo: Some(vec![42; 32]),
+        created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+    };
+    let first: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
+    let block = first.expect("management principal reservation has no generic spending endpoint");
+    let duplicate: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
+    assert!(matches!(duplicate, Err(Error::Duplicate { duplicate_of }) if duplicate_of == block));
+    let mut competitor = args;
+    competitor.memo = Some(vec![43; 32]);
+    let second: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", competitor);
+    assert!(
+        matches!(second, Err(Error::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
+    );
+    let base = l::TransferArg {
+        from_subaccount: None,
+        to: l::Account {
+            owner: user(42),
+            subaccount: None,
+        },
+        amount: 10_000u64.into(),
+        fee: Some(10_000u64.into()),
+        memo: Some(vec![44]),
+        created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+    };
+    let mut bad_fee = base.clone();
+    bad_fee.fee = Some(1u64.into());
+    let bad_fee: Result<Nat, l::TransferError> =
+        update(&pic, LEDGER, owner, "icrc1_transfer", bad_fee);
+    assert!(matches!(bad_fee, Err(l::TransferError::BadFee { .. })));
+    let mut insufficient = base.clone();
+    insufficient.amount = 1_000_000u64.into();
+    let insufficient: Result<Nat, l::TransferError> =
+        update(&pic, LEDGER, owner, "icrc1_transfer", insufficient);
+    assert!(matches!(
+        insufficient,
+        Err(l::TransferError::InsufficientFunds { .. })
+    ));
+    let mut stale = base;
+    stale.created_at_time =
+        Some(pic.get_time().as_nanos_since_unix_epoch() - 48 * 3600 * 1_000_000_000);
+    let stale: Result<Nat, l::TransferError> = update(&pic, LEDGER, owner, "icrc1_transfer", stale);
+    assert!(matches!(stale, Err(l::TransferError::TooOld)));
+    let balance: Nat = query(
+        &pic,
+        LEDGER,
+        "icrc1_balance_of",
+        l::Account {
+            owner,
+            subaccount: None,
+        },
+    );
+    assert_eq!(
+        balance,
+        Nat::from(990_000u64),
+        "exactly one approval fee; refusal and duplicate do not charge"
     );
 }

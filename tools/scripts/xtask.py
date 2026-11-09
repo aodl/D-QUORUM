@@ -137,15 +137,17 @@ def prepare_bootstrap():
     PREPARED_ARTIFACTS['dendrite_bootstrap']=manifest
 
 def creation_pure():
-    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
+    run(['node','--test','tests/browser/creation-virtual-clock.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
     completed_suites.add('creation_pure')
 
 def creation_recording():
     run(['cargo','test','--locked','--manifest-path','dendrite/Cargo.toml','-p','dendrite-bootstrap','--lib'],kind='behaviour',name='bootstrap recording faults checkpoints and operation generations')
-    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-controller.test.js canisters/dendrite/web/test/creation-protocol.test.js'],kind='behaviour',name='browser financial recording faults and cancellation ownership')
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-controller.test.js canisters/dendrite/web/test/creation-protocol.test.js canisters/dendrite/web/test/creation-team-vote.test.js'],kind='behaviour',name='browser financial recording faults and cancellation ownership')
     completed_suites.add('creation_recording')
 
 def creation_protocol():
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-historical-proof.test.js'],kind='behaviour',name='genuine archived certificate verification: historical provenance, not live permissions')
     prepare_bootstrap();suite('creation_protocol')
 
 def creation_browser():
