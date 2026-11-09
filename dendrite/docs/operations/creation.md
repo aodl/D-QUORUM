@@ -172,6 +172,8 @@ selected eligible proposer using the existing Governance-only identity. Review t
 current fee and truthful provisional-controller description. This is a global NNS
 proposal; adoption/execution and actual metadata readback are required. Rejection,
 name collision, unavailable status or adopted-but-unexecuted status are not success.
+Final readiness also checks the registered committed-topic variants against the
+reviewed plan; changed, duplicate, unknown or unavailable topic metadata blocks it.
 Browsing or finishing configuration submits no proposal automatically.
 
 Next, managers demonstrate an executed benign refresh proposal for exact T. The

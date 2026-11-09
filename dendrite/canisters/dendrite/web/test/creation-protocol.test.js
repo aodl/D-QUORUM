@@ -5,7 +5,7 @@ import {IDL} from '@icp-sdk/core/candid';
 import {Principal} from '@icp-sdk/core/principal';
 import {Ed25519KeyIdentity,DelegationChain,DelegationIdentity} from '@icp-sdk/core/identity';
 import {deriveProvisioningSession} from '../src/auth.js';
-import {createProvisioningActors,createCanisterWithWitness,bootstrapStatusWithWitness,verifyCreationWitness,readCreationLedgerBlock,readCreationStakeBalance,readCreationControllerIcpBalance} from '../src/creation-protocol.js';
+import {createProvisioningActors,createCanisterWithWitness,bootstrapStatusWithWitness,verifyCreationWitness,readCreationLedgerBlock,readCreationStakeBalance,readCreationControllerIcpBalance,creationRegistrationMetadata,verifyCreationRegistrationMetadata} from '../src/creation-protocol.js';
 import {bytesHex} from '../src/creation-accounts.js';
 import {idlFactory as bootstrapFactory} from '../../../../src/declarations/bootstrap/bootstrap.did.js';
 
@@ -14,6 +14,19 @@ import {idlFactory as bootstrapFactory} from '../../../../src/declarations/boots
 // the separate real-II/replica lanes are the authority for that evidence.
 const c=Principal.fromText('pi33i-pt777-77776-aaaaa-cai'),root=Ed25519KeyIdentity.generate(),key=Ed25519KeyIdentity.generate();
 const options={host:'http://127.0.0.1:4944',fetchRootKey:true,canisterId:c.toText()};
+test('registration readback binds every reviewed metadata field including committed topic variants',()=>{
+ const plan={metadata:[{name:'Provisional candidate',description:'P still controls C',links:['https://example.invalid']}],committed_topics:[4,3]},expected=creationRegistrationMetadata(plan);
+ assert.deepEqual(expected.committed_topics,[[[{Governance:null}],[{NetworkEconomics:null}]]]);
+ assert.equal(verifyCreationRegistrationMetadata(plan,expected),true);
+ const reordered=structuredClone(expected);reordered.committed_topics[0].reverse();assert.equal(verifyCreationRegistrationMetadata(plan,reordered),true);
+ const mutations=[m=>m.name='Changed',m=>m.description=['Changed'],m=>m.links=[[]],m=>delete m.committed_topics,m=>m.committed_topics=[],m=>m.committed_topics=[[],[]],m=>m.committed_topics=[null],m=>m.committed_topics=[[[]]],m=>m.committed_topics=[[[{Governance:null}],[{Governance:null}]]],m=>m.committed_topics=[[[{Governance:null}],[{CatchAll:null}]]],m=>m.committed_topics=[[[{Governance:null,NetworkEconomics:null}]]],m=>m.committed_topics=[[[{Governance:'unexpected'}]]]];
+ for(const mutate of mutations){const metadata=structuredClone(expected);mutate(metadata);assert.throws(()=>verifyCreationRegistrationMetadata(plan,metadata),/metadata/);}
+ assert.throws(()=>verifyCreationRegistrationMetadata(plan,undefined),/Awaiting/);
+ assert.throws(()=>creationRegistrationMetadata({...plan,metadata:[]}),/required/);
+ assert.throws(()=>creationRegistrationMetadata({...plan,committed_topics:[99]}),/Unsupported/);
+ assert.equal(verifyCreationRegistrationMetadata({...plan,metadata:[]},expected),true);
+ assert.equal(verifyCreationRegistrationMetadata({...plan,committed_topics:[]},{...expected,committed_topics:[]}),true);
+});
 async function session(profile){const chain=await DelegationChain.create(root,key.getPublicKey(),new Date(Date.now()+60000));return deriveProvisioningSession(DelegationIdentity.fromDelegation(key,chain),key.getPublicKey().toDer(),profile,profile==='FundProvisioning'?undefined:c.toText());}
 test('named provisioning actors retain exact destinations effective routing and session expiry checks',async t=>{
  const calls=[];t.mock.method(HttpAgent,'create',async config=>{calls.push(config);return {};});

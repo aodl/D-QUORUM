@@ -71,6 +71,19 @@ export const creationArgumentTypes = Object.freeze({ transfer: transferArgs, min
   bootstrapAdvance:bootstrapFactory({IDL})._fields.find(([name])=>name==="advance")[1].argTypes[0],
   nns:nnsFactory({IDL})._fields.find(([name])=>name==="manage_neuron")[1].argTypes[0] });
 const proposalType=creationArgumentTypes.nns.getType()._fields.find(([name])=>name==="command")[1]._type._fields.find(([name])=>name==="MakeProposal")[1];
+// Pinned Governance variant names, separate from the shared Standard catalogue.
+const protocolTopicNames=new Map([[0,"CatchAll"],[1,"NeuronManagement"],[2,"ExchangeRate"],[3,"NetworkEconomics"],[4,"Governance"],[5,"NodeAdmin"],[6,"ParticipantManagement"],[7,"SubnetManagement"],[8,"Kyc"],[9,"NodeProviderRewards"],[10,"IcOsVersionDeployment"],[12,"IcOsVersionElection"],[13,"SnsAndCommunityFund"],[14,"ApiBoundaryNodeManagement"],[15,"SubnetRental"],[16,"ApplicationCanisterManagement"],[17,"ProtocolCanisterManagement"],[18,"ServiceNervousSystemManagement"]]);
+function registrationTopics(plan){return plan.committed_topics.map(topic=>{const name=protocolTopicNames.get(topic);if(!name)throw Error("Unsupported registration topic.");return [{[name]:null}];});}
+export function creationRegistrationMetadata(plan){const m=plan.metadata[0];if(!m)throw Error("Reviewed production metadata is required.");return {name:m.name,description:[m.description],links:[m.links],committed_topics:[registrationTopics(plan)]};}
+export function verifyCreationRegistrationMetadata(plan,observed){
+  if(!observed)throw Error("Awaiting actual known-neuron registration.");const expected=plan.metadata[0];
+  if(expected&&(observed.name!==expected.name||(observed.description?.[0]??"")!==expected.description||JSON.stringify(observed.links?.[0]??[])!==JSON.stringify(expected.links)))throw Error("Registered metadata changed.");
+  const outer=observed.committed_topics;if(!Array.isArray(outer)||outer.length>1||outer.length&&!Array.isArray(outer[0]))throw Error("Registered topic metadata is unavailable or malformed.");
+  const names=(outer[0]??[]).map(row=>{if(!Array.isArray(row)||row.length!==1||!row[0]||Object.keys(row[0]).length!==1||Object.values(row[0])[0]!==null)throw Error("Registered topic metadata contains an unknown variant.");return Object.keys(row[0])[0];});
+  const wanted=registrationTopics(plan).map(row=>Object.keys(row[0])[0]);
+  if(new Set(names).size!==names.length||names.slice().sort().join(',')!==wanted.sort().join(','))throw Error("Registered committed-topic metadata changed.");
+  return true;
+}
 export const encodeCreationRegistrationProposal=proposal=>IDL.encode([proposalType],[proposal]);
 export const encodeBootstrapPlan = (plan) => IDL.encode(bootstrapInit({ IDL }), [plan]);
 export const decodeBootstrapPlan = bytes => IDL.decode(bootstrapInit({IDL}),bytes)[0];

@@ -12,6 +12,19 @@ struct CreationBallot {
     vote: i32,
     voting_power: u64,
 }
+#[derive(CandidType, Deserialize)]
+struct RegisteredInfo {
+    known_neuron_data: Option<RegisteredMetadata>,
+}
+#[derive(CandidType, Deserialize)]
+struct RegisteredMetadata {
+    name: String,
+    committed_topics: Option<Vec<Option<RegisteredTopic>>>,
+}
+#[derive(CandidType, Deserialize, Debug, PartialEq, Eq)]
+enum RegisteredTopic {
+    Governance,
+}
 fn receipt_id(receipt: &serde_json::Value, name: &str) -> u64 {
     receipt[name].as_str().unwrap().parse().unwrap()
 }
@@ -188,6 +201,14 @@ pub fn coordinate(
             receipt_id(&rehearsal, "registration"),
             managers.len(),
             4,
+        );
+        let registered: Result<RegisteredInfo, g::GovernanceError> =
+            update(pic, GOVERNANCE, p, "get_neuron_info", t);
+        let metadata = registered.unwrap().known_neuron_data.unwrap();
+        assert_eq!(metadata.name, "Local creation candidate");
+        assert_eq!(
+            metadata.committed_topics,
+            Some(vec![Some(RegisteredTopic::Governance)])
         );
     }
     publish(
