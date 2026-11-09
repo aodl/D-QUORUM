@@ -542,3 +542,33 @@ client before publishing it. Reload requires II again; an existing in-memory sco
 session may be reused while live. This replaces the former assumption that II itself
 issues a Governance-targeted parent. The anonymous backend and direct browser-to-NNS
 transaction architecture remain unchanged. Final-origin operator gates remain UNRUN.
+
+### Independent-team and durable-recovery correction tranche — unqualified
+
+Starting source: reviewed handover `69eda704e098512154952d691b77dde37a0abab4`.
+Its completed 22-lane qualification remains historical evidence for implementation
+`97343f8dbb714a0a12f90a474805518c83017184`, not proof for these corrections.
+
+The initial browser correction removes the requirement that P control every
+manager before committing the lock. Existing planning still requires authority
+on at least one manager. Rehearsal validation binds the requested proposal ID,
+exact target/action, creation start checkpoint, actual execution and a consistent
+aggregate majority tally. Individual ballots are caller-filtered and are not a
+complete electorate oracle. Fresh target-following checks remain necessary;
+aggregate execution alone does not reveal historical electorate identities or
+prove uninterrupted membership. No manager controller/hotkey is modified.
+
+Initial verification: 247 frontend tests and a local-origin frontend build pass.
+The three new rehearsal tests are pure/recording evidence, not real-II or
+independent-team acceptance. No new canonical artifacts or release qualification
+are claimed. Published generated assets remain those of the reviewed release.
+
+Outstanding: independent-principal browser/protocol acceptance and membership
+change proofs; non-blocking unsolicited-default-account ICP policy; durable
+historical provenance and reviewed artifact compatibility/migration; replicated
+proof of definite proposal-creation refusal; independent monetary-attempt
+identities with audited typed no-execution outcomes; genuine reviewed-version
+checkpoint migration; full unchanged-source acceptance, canonical builds,
+security/SBOM and deterministic evidence bundle. Do not qualify this tranche
+until those requirements pass. No external prerequisite has been established as
+a blocker. No push, deployment or mainnet operation is authorised.
