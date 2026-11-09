@@ -104,6 +104,11 @@ output under `dist/browser-qualification`.
 
 ### Troubleshooting
 
+The consolidated readiness aggregator defaults to `dist/ci-evidence`. For a new
+local qualification, `D_QUORUM_CI_EVIDENCE_DIR` may select a separate directory of
+the same named lane receipts and hashed logs, preserving historical operator
+evidence. Source/status, complete case selection and checksum checks are unchanged.
+
 Creation's signed browser fixture retains Chrome's native virtual passkey window
 using supported SDK transport/window lifetime settings, recorded with original and
 fixture hashes. Each capability still receives a fresh genuine II delegation to a

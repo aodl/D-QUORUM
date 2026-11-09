@@ -582,7 +582,7 @@ def integrated_acceptance():
 
 def integrated_readiness():
     # Aggregate existing lane receipts. Never rerun or substitute a weaker suite.
-    directory=ROOT/'dist/ci-evidence'
+    directory=pathlib.Path(os.environ.get('D_QUORUM_CI_EVIDENCE_DIR',str(ROOT/'dist/ci-evidence'))).resolve()
     required=['unit','mock','hardening','protocol','production','scale','capacity','coverage','security','integration_inventory','component_dendrite','system_protocol','system_browser','component_dendrite_canonical','reproducible','canonical_artifact','system_protocol_canonical']
     required+=['creation_pure','creation_recording','creation_protocol','creation_browser','creation_canonical']
     gates=[];completed=set();failures=[]
