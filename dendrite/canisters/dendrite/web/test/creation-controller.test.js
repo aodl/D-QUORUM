@@ -5,13 +5,13 @@ import {Principal} from "@icp-sdk/core/principal";
 import {IDL} from "@icp-sdk/core/candid";
 import {Actor,HttpAgent,Certificate,LookupPathStatus,requestIdOf} from "@icp-sdk/core/agent";
 import {createCreationController} from "../src/creation-controller.js";
-import {CREATION_PROTOCOL_PINS} from "../src/creation-plan.js";
+import {CREATION_PROTOCOL_PINS,parseCreationPlan,planJson} from "../src/creation-plan.js";
 import {hexBytes,legacyAccount,sha256Hex,bytesHex,stakingSubaccount} from "../src/creation-accounts.js";
 import {fundingSubaccount} from "../src/creation-accounts.js";
 import {creationArgumentTypes,witnessRequestContent} from "../src/creation-protocol.js";
 import {idlFactory as bootstrapFactory} from "../../../../src/declarations/bootstrap/bootstrap.did.js";
 import {buildManageNeuronProposal} from "../src/transaction.js";
-import {addCreationIntent,settleCreationIntent} from "../src/creation-receipt.js";
+import {addCreationIntent,settleCreationIntent,newCreationReceipt,exportCreationReceipt} from "../src/creation-receipt.js";
 
 // Recording faults verify browser coordination only. Replica permission and
 // money/provisioning evidence comes from the separate real-artifact lanes.
@@ -181,7 +181,7 @@ async function recoveryFixture(t,mode){
   stop_canister:async arg=>{assert.equal(arg.canister_id.toText(),c.toText());calls.push('stop');stops++;status=mode==='never-stopped'||mode==='restart-race'&&stops===2?'running':'stopped';if(mode==='completed'&&stops===1){state.pending=[];state.neuron_id=[600n];state.phase={Configuring:null};state.sequence=2n;}},
   start_canister:async()=>{calls.push('start');status='running';},
   install_code:async arg=>{calls.push('upgrade');assert.deepEqual(arg.mode,{upgrade:[]});assert.equal(bytesHex(arg.wasm_module),bytesHex(recordingWasm));assert.equal(status,'stopped');version++;if(mode==='changed-checkpoint'){state.sequence++;state.pending[0].sequence=state.sequence;}}};
- await f.controller.connect('ManageBootstrap');await f.controller.connect('CallBootstrap');f.controller.export();return {...f,calls};
+ await f.controller.connect('ManageBootstrap');await f.controller.connect('CallBootstrap');f.controller.export();return {...f,calls,bootstrapState:state,c};
 }
 test('same-code recovery waits for real quiescence and refuses a controller restart before upgrade',async t=>{
  for(const mode of ['never-stopped','restart-race'])await t.test(mode,async t=>{const f=await recoveryFixture(t,mode);await assert.rejects(()=>f.controller.recoverUpgrade({confirmed:true}),/quiesced|restarted/);assert.ok(!f.calls.includes('upgrade'));assert.equal(f.state.transfers.length,0);});
@@ -191,4 +191,43 @@ test('quiescence can settle the original callback without a recovery upgrade',as
 });
 test('a pending recovery checkpoint is drained again upgraded and compared without resending money',async t=>{
  for(const mode of ['pending','changed-checkpoint'])await t.test(mode,async t=>{const f=await recoveryFixture(t,mode);const action=f.controller.recoverUpgrade({confirmed:true});if(mode==='pending')await action;else await assert.rejects(()=>action,/checkpoint\/readback differs/);assert.deepEqual(f.calls,['stop','start','stop','upgrade','start']);assert.equal(f.state.transfers.length,0);assert.equal(f.state.mintEffects,0);});
+});
+
+async function currentRecoveryFixture(t){
+ const f=await recoveryFixture(t,'pending'),p=f.controller.plan,s=f.bootstrapState;
+ s.pending=[];s.neuron_id=[600n];s.public_visibility_confirmed=true;s.phase={Recovering:null};
+ f.controller.receipt.neuron_id='600';
+ const receipt=f.controller.receipt;receipt.creation_witness=null;receipt.sealed_witness=null;
+ const json=f.controller.export();
+ const neuron={id:[{id:600n}],controller:[f.c],account:stakingSubaccount(f.c,p.nonce),visibility:[2],hot_keys:[],not_for_profit:false,cached_neuron_stake_e8s:200000000n,neuron_fees_e8s:0n,dissolve_state:[{DissolveDelaySeconds:0n}]};
+ f.gov.list_neurons=async()=>({full_neurons:[neuron],total_pages_available:[1n]});
+ f.actors.bootstrap.advance=async args=>{f.calls.push(Object.keys(args.step)[0]);if(args.step.Disburse){s.phase={Recovered:null};s.disbursement_block=[77n];}return {Ok:{...s,plan:p,controller:f.c}};};
+ f.state.blocks.set(77n,{transaction:{operation:[{Transfer:{from:legacyAccount(Principal.fromText('rrkah-fqaaa-aaaaa-aaaaq-cai'),stakingSubaccount(f.c,p.nonce)),to:p.return_account,amount:{e8s:199990000n},fee:{e8s:10000n}}}]}});
+ return {...f,p,json,neuron};
+}
+test('current-controller recovery needs explicit consent and fresh C P plan and Governance bindings without historical proof',async t=>{
+ const f=await currentRecoveryFixture(t);
+ await assert.rejects(()=>f.controller.import(f.json),/provenance is missing/);
+ await assert.rejects(()=>f.controller.import(f.json,{recoveryOnly:true}),/Explicitly approve/);
+ await f.controller.import(f.json,{recoveryOnly:true,confirmed:true});assert.equal(f.controller.recoveryOnly,true);
+ await assert.rejects(()=>f.controller.prepareReturnIcp(),/CallBootstrap/);assert.equal(f.state.transfers.length,0);
+ await f.controller.connect('ManageBootstrap');await f.controller.connect('CallBootstrap');await f.controller.connect('FundProvisioning');
+ await f.controller.refresh();assert.equal(f.controller.observed.recoveryBound,true);
+ await f.controller.prepareStakeDisbursement();f.controller.export();await f.controller.dispatch({saved:true,confirmed:true});
+ assert.deepEqual(f.calls,['Disburse']);assert.equal(f.controller.receipt.intents.at(-1).references.block_id,'77');
+ assert.equal(f.controller.observed.state.phase.Recovered,null);assert.equal(f.state.transfers.length,0);
+});
+test('recovery-only import cannot enable full workflow methods or change its on-chain fixed recipient',async t=>{
+ const f=await currentRecoveryFixture(t);await f.controller.import(f.json,{recoveryOnly:true,confirmed:true});
+ const forbidden=[['prepareProvisioning'],['install'],['prepareStakePayment'],['reviewRevision',input],['commitRevision',{confirmed:true}],['reconcileRevision'],['reconcileConversion'],['reconcileCreation',7n],['prepareNnsProposal','Registration',11n],['seal',1n],['readiness'],['prepareUninstall',{confirmed:true}],['prepareControllerRemoval',{confirmed:true}],['advance',{CommitLock:null},{confirmed:true}],['advance',{Configure:null}],['advance',{Claim:null}]];
+ for(const [name,...args]of forbidden)await assert.rejects(()=>f.controller[name](...args),/Recovery-only/);
+ const altered=parseCreationPlan({...planJson(f.p),return_account:bytesHex(legacyAccount(other))},bindings),receipt=newCreationReceipt(altered);receipt.canister_id=f.c.toText();receipt.neuron_id='600';
+ await f.controller.import(exportCreationReceipt(receipt),{recoveryOnly:true,confirmed:true});await f.controller.connect('ManageBootstrap');await f.controller.connect('CallBootstrap');await f.controller.connect('FundProvisioning');
+ await assert.rejects(()=>f.controller.prepareReturnIcp(),/binding mismatch/);assert.equal(f.state.transfers.length,0);assert.deepEqual(f.calls,[]);
+});
+test('recovery-only resume rejects absent unknown or differently controlled code and a changed target',async t=>{
+ const f=await currentRecoveryFixture(t);
+ for(const system of [{controllers:[owner]}, {moduleHash:new Uint8Array(32),controllers:[owner]}, {moduleHash:f.p.bootstrap_sha256,controllers:[owner,other]}]){f.state.bootstrapSystem=system;await assert.rejects(()=>f.controller.import(f.json,{recoveryOnly:true,confirmed:true}),/fresh certified/);}
+ f.state.bootstrapSystem={moduleHash:f.p.bootstrap_sha256,controllers:[owner]};await f.controller.import(f.json,{recoveryOnly:true,confirmed:true});await f.controller.connect('ManageBootstrap');await f.controller.connect('CallBootstrap');await f.controller.connect('FundProvisioning');f.neuron.controller=[Principal.anonymous()];
+ await assert.rejects(()=>f.controller.prepareReturnIcp(),/target\/account\/controller/);assert.equal(f.state.transfers.length,0);assert.equal(f.controller.observed.recoveryBound,false);
 });

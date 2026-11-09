@@ -45,6 +45,20 @@ test("old receipt and absent code cannot expose a reinstall action",()=>{
   f.c.receipt.neuron_id=null;f.c.observed.management.version=0n;f.view.render(f.root);assert.ok(button(f.root,"Install the pinned bootstrap (install only)"));
  }finally{f.close();}
 });
+test("recovery-only import requires its explicit checkbox and limits visible actions even for production receipts",async()=>{
+ const f=mount({planless:true});try{
+  const file=find(f.root,'creation-receipt');file.files=[{size:2,text:async()=>'{}'}];await file.emit('change');assert.deepEqual(f.calls.at(-1),{name:'import',args:['{}']});
+  find(f.root,'creation-recovery-only').checked=true;const next=find(f.root,'creation-receipt');next.files=[{size:2,text:async()=>'{}'}];await next.emit('change');assert.deepEqual(f.calls.at(-1),{name:'import',args:['{}',{recoveryOnly:true,confirmed:true}]});
+ }finally{f.close();}
+ const production=mount({production:true,phase:'Sealed',recoveryOnly:true});try{
+  production.c.observed.recoveryBound=true;production.view.render(production.root);
+  assert.match(production.root.textContent,/Recovery only — P still controls C/);
+  assert.ok(!labels(production.root).some(s=>/removal of|seal finalisation|registration proposal|provisioning request|Commit the reviewed lock|Advance one reviewed/.test(s)));
+  find(production.root,'creation-unseal-consent').checked=true;await button(production.root,'Restore the recoverable configuration path').click();assert.deepEqual(production.calls.at(-1),{name:'unseal',args:[{confirmed:true}]});
+  production.c.observed.state.phase={Recovering:null};production.view.render(production.root);find(production.root,'creation-dissolution-consent').checked=true;await button(production.root,'Start reviewed recovery dissolution').click();assert.deepEqual(production.calls.at(-1),{name:'advance',args:[{StartDissolving:null},{confirmed:true}]});
+  production.c.receipt.intents=[{kind:'DisburseStake',state:'Unknown',id:'original'}];production.view.render(production.root);assert.match(production.root.textContent,/original is unresolved/);assert.ok(!button(production.root,'Review dissolved stake disbursement'));
+ }finally{production.close();}
+});
 test("code removal and controller removal require separate fresh exact-ID confirmations",async()=>{
  const f=mount({production:true,phase:"Sealed"});try{f.c.receipt.sealed_witness={};f.view.render(f.root);
   for(const [name,value]of[["confirm-controller",cId],["confirm-neuron","600"]]){find(f.root,name).value=value;await find(f.root,name).emit("input");}

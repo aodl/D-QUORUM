@@ -1,6 +1,7 @@
 // Real compiled UI only. Public receipts/IDs cross the coordinator boundary;
 // II credentials, passkeys and delegation material never leave Chrome.
 import {mkdir,readdir,readFile,stat} from 'node:fs/promises';
+import {exportCreationReceipt} from '../../dendrite/canisters/dendrite/web/src/creation-receipt.js';
 
 export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied}){
  const production=scenario==='creation-production',user=await authenticate(0);let page=user.page;
@@ -76,7 +77,13 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  const rehearsal=await propose('rehearsal',fixture.managers[0]);if(production)for(const manager of fixture.managers.slice(1,3))await vote(manager,rehearsal);
  await writeEvidence(`${directory}/creation-rehearsal.json`,JSON.stringify({proposal:rehearsal,registration,receipt:(await save()).value}));await waitSignal('creation-rehearsal-verified');
  if(!production){if(await page.$$eval('button',els=>els.some(el=>/removal of every controller|Verify executed quorum and seal/.test(el.textContent))))throw Error('Test profile exposed irreversible finalisation');
-  await page.$eval('[name=creation-dissolution-consent]',el=>el.closest('details').querySelector('summary').click());
+  // Discard historical creation evidence deliberately. The recovery-only path
+  // must prove current approved C/P/plan/T bindings through real signed calls,
+  // without weakening certificate freshness or allowing finalisation.
+  const recoveryValue=(await save()).value;recoveryValue.creation_witness=null;recoveryValue.sealed_witness=null;
+  const recoveryFile=`${receipts}/recovery-without-history.json`;await writeEvidence(recoveryFile,exportCreationReceipt(recoveryValue));
+  await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity');await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await page.click('[name=creation-recovery-only]');await(await page.$('[name=creation-receipt]')).uploadFile(recoveryFile);await idle();await capabilities();await refresh();
+  if(!await page.$eval('.creation-workflow',el=>el.innerText.includes('Recovery only — P still controls C')))throw Error('Explicit current-binding recovery mode was not established');
   await page.click('[name=creation-dissolution-consent]');await press('Start reviewed recovery dissolution');await idle();await writeEvidence(`${directory}/creation-dissolving.json`,JSON.stringify((await save()).value));
   await press('Review return of leftover workflow ICP');await idle();await signPrepared();saved=await save();
   const returned=saved.value.intents.findLast(i=>i.kind==='ReturnIcp');if(returned?.state!=='Confirmed')throw Error('Unused workflow ICP return was not confirmed');

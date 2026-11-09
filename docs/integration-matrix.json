@@ -167,7 +167,10 @@
       "mandatory": true,
       "tests": [
         "unused ICP return reconciles the original fixed-account block after losing its reply",
-        "two browser plans restored from the same receipt preserve the same monetary timestamp and explicit fee"
+        "two browser plans restored from the same receipt preserve the same monetary timestamp and explicit fee",
+        "current-controller recovery needs explicit consent and fresh C P plan and Governance bindings without historical proof",
+        "recovery-only import cannot enable full workflow methods or change its on-chain fixed recipient",
+        "recovery-only resume rejects absent unknown or differently controlled code and a changed target"
       ],
       "validators": []
     },

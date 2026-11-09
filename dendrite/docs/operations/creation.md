@@ -144,6 +144,28 @@ Missing/expired provenance blocks automatic finalisation; time does not confer
 authority to substitute another user-owned canister. Retain the original files for
 independent investigation rather than inventing a replacement success record.
 
+A production lock can outlast that historical window. For an already claimed,
+public neuron whose approved bootstrap still exists with exactly `[P]`, explicitly
+select **Recovery only** before importing its receipt. This path first checks fresh
+certified code/controllers, then requires a fresh owner-authenticated replicated
+bootstrap response and Governance's exact C/T/staking-account binding before each
+recovery write. The original plan and fixed return destination must match that
+on-chain state; an edited JSON checksum cannot redirect money. Current certificate
+and delegation freshness remain unchanged. The original historical evidence is
+still required for finalisation and the full creation workflow.
+
+Recovery-only resume offers separately consented dissolution, the actual waiting
+period, fixed-account stake/unused-ICP return and original-return reconciliation.
+It cannot provision, change the plan, configure a long lock, register or finalise.
+Only a separately reviewed approved same-code unseal/checkpoint recovery can
+restore its existing mutation path. Unknown financial operations retain their
+original identities. Missing code, another controller, incompatible artifacts,
+private/unavailable Governance bindings or changed plan/stake block recovery and
+preserve the remaining authority for investigation. After uninstall this path is
+unavailable: it cannot replace the required historical teardown provenance or
+authorise reinstalling C. These are workflow restrictions; P still has normal
+canister-controller authority and can replace provisional code outside the wizard.
+
 An unresolved cycles-only creation does not consume untouched ICP. A separately
 saved fixed-account return may recover currently available workflow ICP while the
 original creation remains Unknown. This does not recover cycles, infer C's identity

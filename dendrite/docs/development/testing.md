@@ -124,6 +124,15 @@ completion. Such recording/checkpoint faults are identified separately from the
 positive browser path. Unknown proposal history or a missing canister ID remains
 unresolved; a test's phase flag is never the external completion oracle.
 
+The recoverable signed-browser journey additionally drops its historical creation
+witness, reloads the application and explicitly enters recovery-only resume. Fresh
+real-II credentials, certified code/controllers, replicated bootstrap plan and
+actual Governance account binding must establish its authority before dissolution
+and an actual fixed-account ICP return. This does not weaken historical evidence
+or current certificate/delegation freshness. Recording faults reject substituted
+plans/recipients, code/controllers and targets and keep full workflow/finalisation
+methods unavailable in that mode.
+
 - Missing ID/origin or malformed alternative JSON: export every exact build input.
 - Wrong Node/npm: select Node 24.15.0 and npm 11.12.1.
 - Missing fixture Wasm: run `cargo xtask test`, which builds fixtures first.

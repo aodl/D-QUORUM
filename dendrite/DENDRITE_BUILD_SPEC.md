@@ -304,6 +304,16 @@ creations remain non-compliant and cannot enter irreversible finalisation. Impor
 non-secret receipts establish no authority and never substitute for replicated
 Governance/ledger evidence and fresh certified system state. Financial ambiguity
 retains its exact operation identity, even after deduplication windows expire.
+An explicitly selected recovery-only resume MAY use current approved installed
+code, exactly `[P]` controllers, a fresh owner-authenticated replicated original
+plan and the current public Governance C/T/account binding when historical creation
+proof is unavailable. Before dissolution or any return payment it MUST re-establish
+those bindings and the fixed return destination. It MUST NOT enable provisioning,
+plan edits, configuration, registration, code removal or controller removal. Missing
+code cannot use this path. Existing original financial identities and uncertainty
+remain binding. This exception does not relax certificate/delegation freshness or
+the historical provenance required for irreversible finalisation; P's provisional
+ability to replace code remains explicit.
 The creation contracts in `docs/architecture.md` define funding and recovery boundaries.
 The local canister clock is used only for this operational guard, including rate-window
 and in-flight expiry behavior; it is never exposed as the NNS evidence timestamp.

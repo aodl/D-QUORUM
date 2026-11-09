@@ -229,6 +229,10 @@ pub fn coordinate(
         // preserving the locked stake and controller. The independent native
         // real-protocol lane covers the actual seven-day disbursement wait.
         let recovered = signal(directory, "creation-recovered", child);
+        assert!(
+            recovered["receipt"]["creation_witness"].is_null(),
+            "the signed recovery-only journey must establish current bindings without historical creation evidence"
+        );
         let block = receipt_id(&recovered, "return_block");
         assert!(block > stake_block);
         let history: l::History = query(
