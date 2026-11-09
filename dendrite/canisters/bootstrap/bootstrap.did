@@ -69,11 +69,26 @@ type Plan = record {
 };
 type Profile = variant { ProductionCandidate; RecoverableTest };
 type ProposalKind = variant { Registration; Rehearsal };
+type ProposalRefusalAudit = record {
+  request_id : blob;
+  reply_digest : blob;
+  reservation : ExternalProposal;
+  certificate_digest : blob;
+  error_type : int32;
+};
+type ProposalRefusalProof = record {
+  argument : blob;
+  certificate : blob;
+  ingress_expiry : nat64;
+  nonce : opt blob;
+  intent_id : blob;
+};
 type Result = variant { Ok : State; Err : text };
 type State = record {
   controller : principal;
   last_error : opt text;
   disbursement_block : opt nat64;
+  proposal_refusals : opt vec ProposalRefusalAudit;
   plan_digest : blob;
   pending : opt Pending;
   plan : Plan;
@@ -98,6 +113,7 @@ type Step = variant {
   StartDissolving;
   ReserveProposal : ExternalProposal;
   Unseal;
+  ResolveProposalRefusal : ProposalRefusalProof;
   Refresh;
   ReconcileDisbursement : nat64;
   CommitLock;

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod engine;
 pub mod model;
+mod proposal_refusal;
 mod protocol;
 use candid::{CandidType, Deserialize};
 use model::*;
@@ -38,8 +39,11 @@ fn init(plan: Plan) {
 }
 #[ic_cdk::post_upgrade]
 fn post_upgrade() {
-    let (s,): (State,) =
+    let (mut s,): (State,) =
         ic_cdk::storage::stable_restore().expect("unsupported or corrupt bootstrap stable state");
+    if s.version == 1 {
+        s.version = STATE_VERSION;
+    }
     s.validate_restored(ic_cdk::api::canister_self())
         .expect("unsupported or corrupt bootstrap stable state");
     save(&s);

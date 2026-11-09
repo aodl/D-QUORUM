@@ -11,18 +11,23 @@ The three replicated, owner-authenticated methods are `status(revision)`,
 for their exact bounded types. There is no query whose phase flag alone authorises
 teardown, arbitrary Governance command, recipient, upload, proxy, factory or timer.
 
-Stable format 1 checkpoints the plan, nonce, neuron binding, sequence, dispatched
+Stable format 2 checkpoints the plan, nonce, neuron binding, sequence, dispatched
 effect and unresolved financial result before asynchronous mutations. An upgrade
-validates that format and binding, retaining original operation identities. A
+validates that format and binding, retaining original operation identities. The
+reviewed V1 Candid checkpoint decodes missing optional refusal history as absent
+and migrates only its stable version; plan version and all original bindings stay
+unchanged. The protocol lane must exercise the genuine reviewed V1 executable. A
 possibly executed additive lock increase or disbursement is never blindly resent.
 Corrupt/unsupported state traps rather than requesting a reinstall.
 
 The test profile uses one manager and the pinned protocol's initial seven-day
 delay. It cannot seal. Production uses shared Standard constants, public known
 managers/delegates and exact following, and requires actual known registration
-before sealing. C can verify the executed rehearsal payload and tally; the browser
-must additionally verify the complete readable electorate. C sees filtered ballots,
-so a caller-supplied boolean is insufficient.
+before sealing. C verifies the executed rehearsal payload and aggregate majority; the browser
+checks the exact reserved proposal and fresh target configuration. Individual
+ballots remain caller-filtered. These facts do not identify an unobservable
+historical electorate or prove uninterrupted membership. No caller-supplied
+success boolean replaces protocol evidence.
 
 P remains C's sole canister controller throughout bootstrap and can replace its
 code. These checks do not constrain a hostile controller with management authority.
@@ -51,3 +56,18 @@ and user-supplied modules are unsupported.
 Development evidence lives in the consolidated root creation lanes. It is distinct
 from the final unchanged-source qualification, canonical repeats and mainnet
 compatibility. No production write is part of those lanes.
+
+`ResolveProposalRefusal` accepts only a bounded certified response for the original
+reserved Governance MakeProposal request. It reconstructs the request ID from P,
+fixed destination/method, original arguments, ingress expiry and nonce. Root BLS
+verification, the exact pinned Governance module and audited pre-insertion error
+codes are required. External/unknown/malformed outcomes remain reserved. The
+terminal audit retains the original reservation and request/certificate/reply
+digests (at most 16 terminal rows). There is no force-clear switch.
+
+The DER files under `compat/` contain **public verification keys only**: the IC
+root key shipped in the pinned SDK, and PocketIC 15's deterministic local test
+root. Local roots outside that exact reviewed topology fail closed. These are not
+DFX identities, signing keys or credentials. Historical source-bound Wasm files
+are compatibility artifacts served by the certified frontend, never arbitrary
+receipt-nominated code.

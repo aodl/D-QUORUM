@@ -53,6 +53,13 @@ export const idlFactory = ({ IDL }) => {
     'revision' : IDL.Nat64,
     'intent_id' : IDL.Vec(IDL.Nat8),
   });
+  const ProposalRefusalProof = IDL.Record({
+    'argument' : IDL.Vec(IDL.Nat8),
+    'certificate' : IDL.Vec(IDL.Nat8),
+    'ingress_expiry' : IDL.Nat64,
+    'nonce' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+    'intent_id' : IDL.Vec(IDL.Nat8),
+  });
   const Step = IDL.Variant({
     'MarkProposalDispatched' : IDL.Vec(IDL.Nat8),
     'ResolveProposal' : IDL.Nat64,
@@ -63,6 +70,7 @@ export const idlFactory = ({ IDL }) => {
     'StartDissolving' : IDL.Null,
     'ReserveProposal' : ExternalProposal,
     'Unseal' : IDL.Null,
+    'ResolveProposalRefusal' : ProposalRefusalProof,
     'Refresh' : IDL.Null,
     'ReconcileDisbursement' : IDL.Nat64,
     'CommitLock' : IDL.Null,
@@ -73,6 +81,13 @@ export const idlFactory = ({ IDL }) => {
     }),
   });
   const Advance = IDL.Record({ 'step' : Step, 'revision' : IDL.Nat64 });
+  const ProposalRefusalAudit = IDL.Record({
+    'request_id' : IDL.Vec(IDL.Nat8),
+    'reply_digest' : IDL.Vec(IDL.Nat8),
+    'reservation' : ExternalProposal,
+    'certificate_digest' : IDL.Vec(IDL.Nat8),
+    'error_type' : IDL.Int32,
+  });
   const Effect = IDL.Variant({
     'Lock' : IDL.Nat64,
     'Following' : Following,
@@ -106,6 +121,7 @@ export const idlFactory = ({ IDL }) => {
     'controller' : IDL.Principal,
     'last_error' : IDL.Opt(IDL.Text),
     'disbursement_block' : IDL.Opt(IDL.Nat64),
+    'proposal_refusals' : IDL.Opt(IDL.Vec(ProposalRefusalAudit)),
     'plan_digest' : IDL.Vec(IDL.Nat8),
     'pending' : IDL.Opt(Pending),
     'plan' : Plan,

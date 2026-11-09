@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const VERSION: u16 = 1;
+pub const STATE_VERSION: u16 = 2;
 pub const MAX_STATE_BYTES: usize = 65_536;
 pub const INITIAL_CLAIM_LOCK_SECONDS: u64 = 7 * ONE_DAY_SECONDS;
 pub const MIN_RESERVE: u64 = 100_000_000_000;
@@ -346,6 +347,7 @@ pub enum Step {
     ResolveProposal(u64),
     MarkProposalDispatched(Vec<u8>),
     CancelReservedProposal(Vec<u8>),
+    ResolveProposalRefusal(ProposalRefusalProof),
 }
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize, Serialize)]
 pub enum ProposalKind {
@@ -362,6 +364,22 @@ pub struct ExternalProposal {
     pub created_at: u64,
     pub proposal_id: Option<u64>,
     pub dispatched: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize, Serialize)]
+pub struct ProposalRefusalProof {
+    pub intent_id: Vec<u8>,
+    pub argument: Vec<u8>,
+    pub ingress_expiry: u64,
+    pub nonce: Option<Vec<u8>>,
+    pub certificate: Vec<u8>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize, Serialize)]
+pub struct ProposalRefusalAudit {
+    pub reservation: ExternalProposal,
+    pub request_id: Vec<u8>,
+    pub certificate_digest: Vec<u8>,
+    pub reply_digest: Vec<u8>,
+    pub error_type: i32,
 }
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize, Serialize)]
 pub enum Effect {
@@ -401,6 +419,7 @@ pub struct State {
     pub external_proposal: Option<ExternalProposal>,
     pub public_visibility_confirmed: bool,
     pub sealed_controller_changes: Option<u64>,
+    pub proposal_refusals: Option<Vec<ProposalRefusalAudit>>,
 }
 impl State {
     pub fn readiness_marker(&self) -> Vec<u8> {
@@ -434,7 +453,7 @@ impl State {
     }
     pub fn validate_restored(&self, controller: Principal) -> Result<(), String> {
         self.plan.validate()?;
-        if self.version != VERSION
+        if self.version != STATE_VERSION
             || self.controller != controller
             || self.plan_digest != self.plan.digest()
             || self.staking_subaccount != staking_subaccount(controller, self.plan.nonce)
@@ -451,6 +470,17 @@ impl State {
                     || p.intent_id.len() != 32
                     || p.request_digest.len() != 32
             })
+            || self.proposal_refusals.as_ref().is_some_and(|rows| {
+                rows.len() > 16
+                    || rows.iter().any(|r| {
+                        r.reservation.intent_id.len() != 32
+                            || r.reservation.request_digest.len() != 32
+                            || r.request_id.len() != 32
+                            || r.certificate_digest.len() != 32
+                            || r.reply_digest.len() != 32
+                            || !(3..=8).contains(&r.error_type)
+                    })
+            })
             || (self.phase == Phase::Sealed && self.sealed_controller_changes.is_none())
             || candid::encode_one(self)
                 .map_err(|_| "Invalid state encoding")?
@@ -464,7 +494,7 @@ impl State {
     pub fn new(plan: Plan, controller: Principal) -> Result<Self, String> {
         plan.validate()?;
         Ok(Self {
-            version: VERSION,
+            version: STATE_VERSION,
             staking_subaccount: staking_subaccount(controller, plan.nonce),
             plan_digest: plan.digest(),
             plan,
@@ -480,6 +510,7 @@ impl State {
             external_proposal: None,
             public_visibility_confirmed: false,
             sealed_controller_changes: None,
+            proposal_refusals: None,
         })
     }
     pub fn authorize(&self, caller: Principal, revision: u64) -> Result<(), String> {
@@ -520,6 +551,15 @@ impl State {
         Ok(())
     }
     pub fn begin(&mut self, step: Step, now: u64) -> Result<u64, String> {
+        if let Step::ResolveProposalRefusal(proof) = &step
+            && (proof.intent_id.len() != 32
+                || proof.argument.len() > 8192
+                || proof.certificate.len() > 8192
+                || proof.nonce.as_ref().is_some_and(|n| n.len() > 64))
+        {
+            return Err("Proposal refusal proof exceeds its bound".into());
+        }
+
         if self.phase == Phase::Recovered {
             return Err("Recovery has completed".into());
         }

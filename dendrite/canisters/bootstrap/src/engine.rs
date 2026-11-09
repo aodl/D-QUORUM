@@ -210,6 +210,16 @@ pub(crate) async fn perform(
         intent.dispatched = true;
         return Ok(());
     }
+    if let Step::ResolveProposalRefusal(proof) = &step {
+        let audit = crate::proposal_refusal::verify(s, proof)?;
+        let history = s.proposal_refusals.get_or_insert_with(Vec::new);
+        if history.len() == 16 {
+            history.remove(0);
+        }
+        history.push(audit);
+        s.external_proposal = None;
+        return Ok(());
+    }
     if let Step::CancelReservedProposal(id) = &step {
         let intent = s
             .external_proposal
@@ -655,7 +665,8 @@ pub(crate) async fn perform(
         | Step::ReconcileDisbursement(_)
         | Step::ResolveProposal(_)
         | Step::MarkProposalDispatched(_)
-        | Step::CancelReservedProposal(_) => {
+        | Step::CancelReservedProposal(_)
+        | Step::ResolveProposalRefusal(_) => {
             unreachable!("handled before target read")
         }
     }

@@ -1107,3 +1107,42 @@ fn rehearsal_requires_exact_executed_refresh_freshness_and_consistent_quorum() {
     s.rehearsal_started_at = None;
     assert!(validate_rehearsal_response(&s, Some(executed_rehearsal())).is_err());
 }
+
+#[test]
+fn proposal_refusal_proof_cannot_release_a_dispatched_reservation_without_authentic_evidence() {
+    let mut state = State::new(plan(false), Principal::from_slice(&[1, 1])).unwrap();
+    state.external_proposal = Some(ExternalProposal {
+        kind: ProposalKind::Rehearsal,
+        intent_id: vec![3; 32],
+        request_digest: vec![4; 32],
+        proposer: 11,
+        revision: 1,
+        created_at: 1_800_000_000,
+        proposal_id: None,
+        dispatched: true,
+    });
+    let original = state.clone();
+    let proof = ProposalRefusalProof {
+        intent_id: vec![3; 32],
+        argument: vec![1],
+        certificate: vec![0],
+        ingress_expiry: 1_800_000_001_000_000_000,
+        nonce: None,
+    };
+    assert!(crate::proposal_refusal::verify(&state, &proof).is_err());
+    assert_eq!(
+        state, original,
+        "a forged or malformed proof grants no clearing authority"
+    );
+    let mut oversized = proof;
+    oversized.certificate = vec![0; 8193];
+    assert!(
+        state
+            .begin(Step::ResolveProposalRefusal(oversized), 1_800_000_000)
+            .is_err()
+    );
+    assert_eq!(
+        state, original,
+        "bounds are checked before retaining an asynchronous intent"
+    );
+}
