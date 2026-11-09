@@ -16,18 +16,6 @@ use std::{
 };
 use support::*;
 
-// A separate loopback test port avoids disrupting another workspace's replica.
-fn browser_port() -> u16 {
-    let port = std::env::var("DENDRITE_TEST_HTTP_PORT")
-        .unwrap_or_else(|_| "4943".into())
-        .parse()
-        .expect("local browser port");
-    assert!(
-        [4943, 4944].contains(&port),
-        "unsupported local browser port"
-    );
-    port
-}
 // Test-only, independently decoded proposal fields; no production client expansion.
 #[derive(CandidType, Deserialize)]
 struct BrowserBallot {

@@ -535,8 +535,20 @@ struct IiFrontendConfig {
     dummy_auth: Option<Option<IiDummyAuth>>,
     dev_csp: Option<bool>,
 }
+// Both browser fixtures must use the same bounded loopback port selection.
+pub fn browser_port() -> u16 {
+    let port = std::env::var("DENDRITE_TEST_HTTP_PORT")
+        .unwrap_or_else(|_| "4943".into())
+        .parse()
+        .expect("local browser port");
+    assert!(
+        [4943, 4944].contains(&port),
+        "unsupported local browser port"
+    );
+    port
+}
 pub fn configure_real_ii(pic: &PocketIc) {
-    configure_real_ii_at_port(pic, 4943);
+    configure_real_ii_at_port(pic, browser_port());
 }
 pub fn configure_real_ii_at_port(pic: &PocketIc, port: u16) {
     assert!([4943, 4944].contains(&port));
