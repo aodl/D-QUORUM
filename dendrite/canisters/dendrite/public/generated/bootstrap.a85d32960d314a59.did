@@ -9,6 +9,7 @@ type Effect = variant {
   Disburse;
 };
 type ExternalProposal = record {
+  request_id : opt blob;
   kind : ProposalKind;
   dispatched : bool;
   created_at : nat64;
@@ -69,11 +70,26 @@ type Plan = record {
 };
 type Profile = variant { ProductionCandidate; RecoverableTest };
 type ProposalKind = variant { Registration; Rehearsal };
+type ProposalRefusalAudit = record {
+  request_id : blob;
+  reply_digest : blob;
+  reservation : ExternalProposal;
+  certificate_digest : blob;
+  error_type : int32;
+};
+type ProposalRefusalProof = record {
+  argument : blob;
+  certificate : blob;
+  ingress_expiry : nat64;
+  nonce : opt blob;
+  intent_id : blob;
+};
 type Result = variant { Ok : State; Err : text };
 type State = record {
   controller : principal;
   last_error : opt text;
   disbursement_block : opt nat64;
+  proposal_refusals : opt vec ProposalRefusalAudit;
   plan_digest : blob;
   pending : opt Pending;
   plan : Plan;
@@ -83,6 +99,7 @@ type State = record {
   sealed_controller_changes : opt nat64;
   staking_subaccount : blob;
   phase : Phase;
+  module_binding : opt blob;
   rehearsal_proposal : opt nat64;
   sequence : nat64;
   rehearsal_started_at : opt nat64;
@@ -98,6 +115,7 @@ type Step = variant {
   StartDissolving;
   ReserveProposal : ExternalProposal;
   Unseal;
+  ResolveProposalRefusal : ProposalRefusalProof;
   Refresh;
   ReconcileDisbursement : nat64;
   CommitLock;

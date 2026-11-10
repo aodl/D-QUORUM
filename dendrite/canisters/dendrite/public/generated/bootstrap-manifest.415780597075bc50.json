@@ -1,10 +1,10 @@
 {
   "version": 1,
   "component": "dendrite-bootstrap",
-  "sha256": "dba5a21617c739d39e05f12c32454fd7dace2f9bef6b5eb0293e15e0e7de489b",
-  "bytes": 1146535,
-  "candid_sha256": "5337880b780d1bfda11f243d7608bf832b23f681fb4cdce5e088dd127eca9d4d",
-  "source_fingerprint": "046e464cfe0e11571c176c6cd8df697e60487d2a420b9f0f290159a9be578150",
+  "sha256": "ac7e2907b323f980b108548978837b114cb7bfcce35034ed0f19f8ee9932b107",
+  "bytes": 1461910,
+  "candid_sha256": "a85d32960d314a5945c427ee0e6780b6d9057ec526fe5affe55931ed65726bd8",
+  "source_fingerprint": "1892763397b5239ec346938eed096f7a8f4ea7cb569c40a3a0c653dc2c74f4b2",
   "policy": {
     "version": 1,
     "standard_version": "nns-dendrite/1.1-draft",
@@ -38,5 +38,5 @@
       "18422777432977120264"
     ]
   },
-  "wasm_path": "/generated/bootstrap.dba5a21617c739d3.wasm"
+  "wasm_path": "/generated/bootstrap.ac7e2907b323f980.wasm"
 }
