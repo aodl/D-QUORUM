@@ -98,7 +98,11 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   page=user.page;await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
   return {...observation,credentials_renewed:true,renewed_principals:renewed.map(p=>p.principal),principals:participants.map(p=>p.principal)};
  }
- async function capabilities(){for(const [profile,label]of[['FundProvisioning','Consent to funding capability'],['ManageBootstrap','Consent to controller management capability'],['CallBootstrap','Consent to exact bootstrap capability']]){
+ async function capabilities(){
+  // HttpAgent captures fetch when constructed. Install the local-only fault
+  // transport before consent creates capability agents, including after reload.
+  await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');});
+  for(const [profile,label]of[['FundProvisioning','Consent to funding capability'],['ManageBootstrap','Consent to controller management capability'],['CallBootstrap','Consent to exact bootstrap capability']]){
    if(profile!=='FundProvisioning'&&!await page.$eval('.creation-workflow',el=>!el.innerText.includes('Controller C: not provisioned')))continue;
    const exists=await page.$$eval('button',(els,label)=>els.some(el=>el.textContent.trim()===label),label);if(exists)await reauthenticate(label);
   }}
@@ -232,6 +236,13 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of every controller');await idle();await signPrepared({holdController:true});await refresh();
   if(!await page.$eval('.creation-workflow',el=>el.innerText.includes('Finalised — Compliant')))throw Error('Fresh final report was not Compliant');
   if(await page.$eval('.creation-workflow',el=>/\b(?:FundProvisioning|ManageBootstrap|CallBootstrap): active/.test(el.textContent)))throw Error('Finalisation retained a local provisioning capability');
+  const deniedCreator=await page.evaluate(async()=>{
+   const controller=await globalThis.creationRetainedControllerProbe(),bootstrap=await globalThis.creationRetainedBootstrapProbe();
+   delete globalThis.creationRetainedControllerProbe;delete globalThis.creationRetainedBootstrapProbe;
+   return {controller,bootstrap,classification:'Test-only retained genuine scoped actors in this browser realm; no keys, delegations or envelopes exported. Product credentials were independently cleared.'};
+  });
+  if(!deniedCreator.controller.controller_denied||!deniedCreator.bootstrap.code_unavailable)throw Error('Old real delegated creator authority was not denied after finalisation');
+  await writeEvidence(`${directory}/creation-signed-creator-denied.json`,JSON.stringify(deniedCreator));
   await writeEvidence(`${directory}/creation-finalised.json`,JSON.stringify((await save()).value));await waitSignal('creation-finalisation-verified');
   await page.evaluate(t=>location.hash=`#/neuron/${t}`,t);await page.waitForSelector('.control-panel',{timeout:90000});await press('Review voting-power refresh');await page.waitForSelector('.transaction-review');await page.click('[name=confirmation]');await press('Submit exact reviewed request');
   await page.waitForFunction(()=>/Proposal ID: \d+/.test(document.body.innerText),{timeout:90000});const post=await page.$eval('body',el=>/Proposal ID: (\d+)/.exec(el.innerText)[1]);

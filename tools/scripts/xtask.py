@@ -137,7 +137,7 @@ def prepare_bootstrap():
     PREPARED_ARTIFACTS['dendrite_bootstrap']=manifest
 
 def creation_pure():
-    run(['node','--test','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
+    run(['node','--test','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs','tests/browser/mutation-fault-probe.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
     run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
     completed_suites.add('creation_pure')
 

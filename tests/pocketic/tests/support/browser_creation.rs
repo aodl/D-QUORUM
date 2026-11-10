@@ -984,6 +984,25 @@ pub fn coordinate(
             "creation-final-dust-injected",
             serde_json::json!({}),
         );
+        let denied = signal(directory, "creation-signed-creator-denied", child);
+        for field in ["controller", "bootstrap"] {
+            assert_eq!(denied[field]["canister"], c.to_text());
+            assert_eq!(denied[field]["principal"], p.to_text());
+            assert!(
+                denied[field]["credential_valid_until_ns"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<u128>()
+                    .unwrap()
+                    > denied[field]["now_ns"]
+                        .as_str()
+                        .unwrap()
+                        .parse::<u128>()
+                        .unwrap()
+            );
+        }
+        assert_eq!(denied["controller"]["controller_denied"], true);
+        assert_eq!(denied["bootstrap"]["code_unavailable"], true);
         let finalised = signal(directory, "creation-finalised", child);
         assert_eq!(finalised["canister_id"], c.to_text());
         assert!(pic.get_controllers(c).is_empty());
@@ -1089,7 +1108,7 @@ pub fn coordinate(
     publish(
         directory,
         "creation-browser-verified",
-        serde_json::json!({"profile":scenario,"target":t,"controller":c.to_text(),"no_coordinator_creation_claim_configuration_or_finalisation":true}),
+        serde_json::json!({"profile":scenario,"target":t,"controller":c.to_text(),"positive_creation_claim_configuration_and_finalisation_through_browser_or_bootstrap":true,"coordinator_faults":["real native Governance membership/economics/catalogue proposals","synthetic external Ledger funding and unsolicited deposits"]}),
     );
 }
 

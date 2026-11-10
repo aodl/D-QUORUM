@@ -1486,6 +1486,8 @@ fn browser_world(scenario: &str) {
         "creation-recovered.json",
         "creation-code-removed.json",
         "creation-finalised.json",
+        "creation-signed-creator-denied.json",
+        "creation-authority-probe-policy.json",
         "creation-post-final-management.json",
         "creation-resources.json",
         "historical-bootstrap-policy.json",

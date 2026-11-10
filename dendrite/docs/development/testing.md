@@ -118,6 +118,23 @@ the foreground after II returns so background animation-frame suspension cannot
 masquerade as a hung import. No key export, fake session, sender substitution or
 certificate/delegation freshness bypass qualifies a signed browser gate.
 
+Creation installs its local fault transport before constructing capability agents:
+the SDK captures `fetch` at construction. A harness regression demonstrates why
+installing it only at dispatch misses a management call. The final gap test holds
+the actual signed controller-removal request before transport and injects another
+real Ledger deposit, then releases that same request.
+
+The local fixture additionally retains two exact-C actors inside Chrome only for
+post-finalisation negative controls. It uses the still-unexpired genuine child
+delegations to attempt restoring P as controller and advancing the removed
+bootstrap. No identity, key, envelope or delegation is exported. Public diagnostics
+must demonstrate controller denial and unavailable code, independently checked
+against module absence/empty controllers. Those test-only references are deleted;
+the product's capability cleanup is checked separately. The source/fixture hashes
+are recorded, and these hooks never enter canonical production assets. Native
+membership/economics/catalogue fault proposals are explicitly distinguished from
+the positive browser provisioning, configuration, registration and manager quorum.
+
 Fault injection may restore an observed pre-await stable image after draining the
 actual callback, preserving real remote effects while modelling lost local
 completion. Such recording/checkpoint faults are identified separately from the
