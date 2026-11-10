@@ -174,3 +174,9 @@ test("NNS dispatch errors survive clearing and rerendering the exact review",asy
   assert.match(f.root.textContent,/Interrupted\/unknown Registration/);assert.ok(!button(f.root,"Submit exact reviewed request"));
  }finally{f.close();}
 });
+
+test('dispatch reservation disclosure uses the exact marker instead of assuming a management spender',()=>{
+ const f=mount();try{f.c.prepared={details:'Cycles creation',args:{},intent:{id:'original',destination:cId,argument_digest:'ab'},reservationArgs:{spender:{owner:cId,subaccount:[]},amount:1n}};f.view.render(f.root);
+ assert.match(f.root.textContent,/exact fixed marker owner, subaccount and below-fee allowance/);assert.ok(!f.root.textContent.includes('Its spender is the management principal'));assert.match(f.root.textContent,/Exact atomic dispatch reservation/);assert.match(f.root.textContent,new RegExp(cId));
+ }finally{f.close();}
+});
