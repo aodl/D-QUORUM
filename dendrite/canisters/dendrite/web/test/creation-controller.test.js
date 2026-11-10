@@ -461,3 +461,13 @@ test('cancellation while a proposal reply arrives preserves its proof without di
   assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);assert.equal(f.controller.hasCapability('CallBootstrap'),false);
  });
 });
+
+test('installation publishes its independently verified module observation immediately',async t=>{
+ const f=await recoveryFixture(t,'stable');let installed=false;
+ f.state.bootstrapSystem={controllers:[owner]};f.controller.observed.system=f.state.bootstrapSystem;
+ f.actors.management.canister_status=async()=>({version:installed?1n:0n,module_hash:installed?[f.controller.plan.bootstrap_sha256]:[],settings:{controllers:[owner],compute_allocation:0n,memory_allocation:0n,freezing_threshold:2592000n},cycles:2000000000000n});
+ f.actors.management.install_code=async args=>{assert.deepEqual(args.mode,{install:null});installed=true;f.state.bootstrapSystem={moduleHash:f.controller.plan.bootstrap_sha256,controllers:[owner]};};
+ await f.controller.install();
+ assert.deepEqual(f.controller.observed.system.moduleHash,f.controller.plan.bootstrap_sha256,'an old empty-module observation must not describe a verified successful installation');
+ assert.equal(f.controller.receipt.checkpoints.filter(row=>row.kind==='Installed').length,1);
+});
