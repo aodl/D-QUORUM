@@ -18,6 +18,12 @@ import {buildManageNeuronProposal,buildDirectManagerOperation,encodeManageNeuron
 const governance=Principal.fromText(NNS_GOVERNANCE_CANISTER_ID),cmcId=Principal.fromText(CMC_CANISTER_ID);
 const variant=v=>Object.keys(v??{})[0];
 const same=(a,b)=>bytesHex(a)===bytesHex(b);
+function originalRefusalAudit(state,intent,code){
+  const id=intent.request_binding?.request_id;if(!id)return undefined;
+  return state.proposal_refusals?.[0]?.find(a=>a.error_type>=3&&a.error_type<=8&&(code===undefined||a.error_type===code)
+    &&a.request_id&&a.reservation?.request_id?.[0]&&same(a.request_id,hexBytes(id))&&same(a.reservation.request_id[0],hexBytes(id))
+    &&same(a.reservation.intent_id,hexBytes(intent.id))&&same(a.reservation.request_digest,hexBytes(intent.argument_digest)));
+}
 const nanos=()=>BigInt(Date.now())*1_000_000n;
 const asPrincipal=Principal.from;
 const sole=(state,owner)=>state.controllers.length===1&&state.controllers[0].toText()===owner.toText();
@@ -294,7 +300,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
           if(Number.isInteger(code)&&code>=3&&code<=8){
             const w=proof.witness.request;
             const result=unwrap(await bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(operationId),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
-            if(!result.proposal_refusals?.[0]?.some(a=>same(a.reservation.intent_id,hexBytes(operationId))&&a.error_type===code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
+            if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
             observed.state=result;const e=Error(command.Error.error_message);e.knownRejected=true;throw e;
           }
           throw Error("Governance returned an unaudited or ambiguous refusal; retain the original proposal reservation.");
@@ -334,11 +340,11 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       const command=proof.value.command?.[0],id=command?.MakeProposal?.proposal_id?.[0]?.id;
       if(id){unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposal:id}}));check();settleCreationIntent(receipt,intent.id,"Confirmed",{proposal_id:String(id)});receipt.bootstrap_witness=(await bootstrapStatusWithWitness(actorFor("CallBootstrap").bootstrap,plan.revision)).witness;}
       else if(command?.Error&&command.Error.error_type>=3&&command.Error.error_type<=8){const w=proof.witness.request,result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
-        if(!result.proposal_refusals?.[0]?.some(a=>same(a.request_id,hexBytes(intent.request_binding.request_id))))throw Error("Original refusal audit was not replicated.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");}
+        if(!originalRefusalAudit(result,intent,command.Error.error_type))throw Error("Original refusal audit was not replicated.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");}
       else throw Error("Original outcome is not an audited successful creation or no-creation refusal; retain its identity.");
     });},
     async reconcileProposalRefusal(){return run(async check=>{fullWorkflow();identity();const intent=receipt.intents.find(i=>["Registration","Rehearsal"].includes(i.kind)&&["Unknown","Prepared"].includes(i.state));
-      if(!intent)throw Error("No original proposal refusal awaits reconciliation.");const s=await state(),audit=s.proposal_refusals?.[0]?.find(a=>same(a.reservation.intent_id,hexBytes(intent.id))&&same(a.reservation.request_digest,hexBytes(intent.argument_digest)));
+      if(!intent)throw Error("No original proposal refusal awaits reconciliation.");const s=await state(),audit=originalRefusalAudit(s,intent);
       if(audit){check();settleCreationIntent(receipt,intent.id,"Rejected");return;}
       const proof=intent.reply_witness;if(!proof)throw Error("No certified refusal reply was saved. Retain the dispatched reservation and inspect its original proposal history.");
       if(proof.request.arg!==intent.argument||proof.request_id!==intent.request_binding?.request_id)throw Error("Refusal proof differs from the original request.");
@@ -346,7 +352,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       const verified=await verifyCreationWitness(proof,{agent,canisterId:NNS_GOVERNANCE_CANISTER_ID,owner:plan.owner,methodName:"manage_neuron",includeSystemState:true}),code=verified.value.command?.[0]?.Error?.error_type;
       if(!Number.isInteger(code)||code<3||code>8||bytesHex(verified.system.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[NNS_GOVERNANCE_CANISTER_ID])throw Error("Original response is not a pinned, audited no-creation refusal.");check();const w=proof.request;
       const result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.certificate)}}}));
-      if(!result.proposal_refusals?.[0]?.some(a=>same(a.reservation.intent_id,hexBytes(intent.id))&&a.error_type===code))throw Error("Replicated refusal audit is unavailable; original reservation remains unresolved.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");});},
+      if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; original reservation remains unresolved.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");});},
     async cancelUnsentProposalReservation({confirmed:approved=false}={}){return run(async check=>{fullWorkflow();identity();if(!approved)throw Error("Explicitly review cancellation of the undispatched reservation.");const s=await state(),r=s.external_proposal?.[0];
       if(!r||r.dispatched||r.proposal_id.length)throw Error("Only a reservation proven undispatched can be released; an NNS proposal is not cancelled by this action.");check();
       unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{CancelReservedProposal:r.intent_id}}));check();const intent=receipt.intents.find(i=>i.id===bytesHex(r.intent_id));if(intent&&["Prepared","Unknown"].includes(intent.state))settleCreationIntent(receipt,intent.id,"Rejected");observed.state=await state();});},

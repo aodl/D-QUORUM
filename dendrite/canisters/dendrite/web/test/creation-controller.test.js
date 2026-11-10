@@ -9,7 +9,8 @@ import {createCreationController} from "../src/creation-controller.js";
 import {CREATION_PROTOCOL_PINS,parseCreationPlan,planJson} from "../src/creation-plan.js";
 import {hexBytes,legacyAccount,sha256Hex,bytesHex,stakingSubaccount} from "../src/creation-accounts.js";
 import {fundingSubaccount} from "../src/creation-accounts.js";
-import {creationArgumentTypes,witnessRequestContent} from "../src/creation-protocol.js";
+import {creationArgumentTypes,witnessRequestContent,creationRequestBinding} from "../src/creation-protocol.js";
+import {idlFactory as nnsFactory} from "../../../../src/declarations/nns-governance/nns-governance.did.js";
 import {idlFactory as bootstrapFactory} from "../../../../src/declarations/bootstrap/bootstrap.did.js";
 import {buildManageNeuronProposal} from "../src/transaction.js";
 import {addCreationIntent,settleCreationIntent,newCreationReceipt,exportCreationReceipt} from "../src/creation-receipt.js";
@@ -281,4 +282,112 @@ test('already converted cycles permit a first create after 48 hours without dema
  const nonce=f.controller.plan.nonce,at=Date.now();t.mock.method(Date,'now',()=>at+48*3600000);f.state.rateTimestamp=BigInt(Math.floor(at/1000));
  f.actors.cycles.icrc2_allowance=async()=>({allowance:0n,expires_at:[]});await f.controller.prepareProvisioning();
  assert.equal(f.controller.prepared.intent.kind,'CreateCanister');assert.equal(f.controller.plan.nonce,nonce);assert.equal(f.controller.prepared.args.created_at_time[0],BigInt(Date.now())*1000000n);assert.equal(f.controller.observed.quote.cyclesOnly,true);assert.equal(f.state.transfers.length,1);assert.equal(f.state.mintEffects,1);
+});
+
+// Recording-only read_state orchestration: these certificates are deliberately
+// unsigned. The real certificate/protocol/browser lanes remain separate gates.
+function recordedOriginalReplies(t,f,results){
+ const reads=[];recordingFinancialCertificates(t,f.state);
+ const agent={rootKey:new Uint8Array(96),getPrincipal:async()=>owner,readState:async(_target,{paths})=>{
+  const id=bytesHex(paths[0][1]);reads.push(id);const result=results.get(id);
+  if(!result)throw Error('original reply pruned or unavailable');
+  const error=IDL.Variant({BadFee:IDL.Record({expected_fee:IDL.Nat}),InsufficientFunds:IDL.Record({balance:IDL.Nat}),TooOld:IDL.Null,CreatedInFuture:IDL.Record({ledger_time:IDL.Nat64}),Duplicate:IDL.Record({duplicate_of:IDL.Nat}),AllowanceChanged:IDL.Record({current_allowance:IDL.Nat}),Expired:IDL.Record({ledger_time:IDL.Nat64}),GenericError:IDL.Record({error_code:IDL.Nat,message:IDL.Text}),TemporarilyUnavailable:IDL.Null});
+  const certificate=recordingCertificate(undefined,70+reads.length);
+  f.state.certificates.set(bytesHex(certificate),IDL.encode([IDL.Variant({Ok:IDL.Nat,Err:error})],[result]));return {certificate};
+ }};
+ t.mock.method(Actor,'agentOf',()=>agent);t.mock.method(Actor,'canisterIdOf',()=>Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai'));
+ return reads;
+}
+test('original accepted payment readback resolves Ok or Duplicate after a long pause without another financial dispatch',async t=>{
+ for(const duplicate of [false,true])await t.test(duplicate?'duplicate block':'successful block',async t=>{
+  const f=fixture();await prepare(f);f.controller.export();f.state.lostPayment=true;
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/reply lost/);
+  const intent=f.controller.receipt.intents[0],binding=structuredClone(intent.request_binding),argument=intent.argument;
+  const reads=recordedOriginalReplies(t,f,new Map([[intent.reservation_binding.request_id,{Ok:100n}],[intent.request_binding.request_id,duplicate?{Err:{Duplicate:{duplicate_of:7n}}}:{Ok:7n}]]));
+  const at=Date.now();t.mock.method(Date,'now',()=>at+90*86400000);
+  await f.controller.readOriginalFinancialReply();assert.equal(intent.state,'Confirmed');assert.equal(intent.references.block_id,'7');assert.equal(intent.argument,argument);assert.deepEqual(intent.request_binding,binding);
+  assert.deepEqual(reads,[intent.reservation_binding.request_id,intent.request_binding.request_id]);assert.equal(f.state.transfers.length,1);assert.equal(f.state.approvalHashes.size,1);
+ });
+});
+test('only an original typed no-execution reply releases an unknown payment; pruned and generic outcomes keep it',async t=>{
+ for(const outcome of ['BadFee','GenericError','pruned'])await t.test(outcome,async t=>{
+  const f=fixture();await prepare(f);f.controller.export();f.actors.ledger.icrc1_transfer=async()=>{throw Error('recording response lost before its result was observed');};
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/response lost/);
+  const intent=f.controller.receipt.intents[0],results=new Map([[intent.reservation_binding.request_id,{Ok:100n}]]);
+  if(outcome!=='pruned')results.set(intent.request_binding.request_id,{Err:outcome==='BadFee'?{BadFee:{expected_fee:20000n}}:{GenericError:{error_code:99n,message:'not an authoritative no-execution proof'}}});
+  recordedOriginalReplies(t,f,results);
+  if(outcome==='BadFee'){await f.controller.readOriginalFinancialReply();assert.equal(intent.state,'Rejected');assert.ok(intent.reply_witness);}
+  else {await assert.rejects(()=>f.controller.readOriginalFinancialReply(),/unavailable|unresolved/);assert.equal(intent.state,'Unknown');}
+  assert.equal(f.state.transfers.length,0);assert.equal(f.state.approvalHashes.size,1);
+ });
+});
+test('an original rejected dispatch reservation releases no money and an ambiguous duplicate grants no dispatch',async t=>{
+ for(const ambiguous of [false,true])await t.test(ambiguous?'duplicate reservation':'definite reservation refusal',async t=>{
+  const f=fixture();await prepare(f);f.controller.export();f.actors.ledger.icrc2_approve=async()=>{throw Error('recording reservation response lost');};
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/reservation response lost/);
+  const intent=f.controller.receipt.intents[0],reads=recordedOriginalReplies(t,f,new Map([[intent.reservation_binding.request_id,{Err:ambiguous?{Duplicate:{duplicate_of:100n}}:{AllowanceChanged:{current_allowance:1n}}}]]));
+  if(ambiguous){await assert.rejects(()=>f.controller.readOriginalFinancialReply(),/ambiguous/);assert.equal(intent.state,'Unknown');}
+  else {await f.controller.readOriginalFinancialReply();assert.equal(intent.state,'Rejected');}
+  assert.deepEqual(reads,[intent.reservation_binding.request_id]);assert.equal(f.state.transfers.length,0);assert.equal(f.state.approvalHashes.size,0);
+ });
+});
+
+async function recordedProposalFixture(t,outcome){
+ const f=await recoveryFixture(t,'pending'),s=f.bootstrapState,p=f.controller.plan,govId=Principal.fromText('rrkah-fqaaa-aaaaa-aaaaq-cai');
+ s.pending=[];s.neuron_id=[600n];s.public_visibility_confirmed=true;s.phase={RecoverableTestReady:null};f.controller.receipt.neuron_id='600';
+ const manager={id:[{id:11n}],controller:[owner],hot_keys:[],visibility:[2],followees:[],cached_neuron_stake_e8s:10000000000n,neuron_fees_e8s:0n};
+ const neuron={...manager,id:[{id:600n}],controller:[f.c],account:stakingSubaccount(f.c,p.nonce),followees:p.following.map(row=>[row.topic,{followees:row.followees.map(id=>({id}))}])};
+ f.gov.list_neurons=async args=>({full_neurons:[args.neuron_ids[0]===600n?neuron:manager],total_pages_available:[1n]});
+ const createReply=IDL.encode([IDL.Variant({Ok:IDL.Record({block_id:IDL.Nat,canister_id:IDL.Principal})})],[{Ok:{block_id:7n,canister_id:f.c}}]);
+ const nnsSignature=nnsFactory({IDL})._fields.find(([name])=>name==='manage_neuron')[1],statusSignature=bootstrapFactory({IDL})._fields.find(([name])=>name==='status')[1];
+ let calls=0,lastTarget;const returned=outcome==='refused'||outcome==='ambiguous'?{command:[{Error:{error_type:outcome==='refused'?5:12,error_message:'recorded typed Governance outcome'}}]}:{command:[{MakeProposal:{message:[],proposal_id:outcome==='missing-id'?[]:[{id:9n}]}}]};
+ const govReply=IDL.encode(nnsSignature.retTypes,[returned]);
+ const agent={rootKey:new Uint8Array(96),getPrincipal:async()=>owner,addTransform(){},update:async(target,options)=>{
+  lastTarget=target;const isGov=target.toText()===govId.toText();if(isGov)calls++;
+  const details=isGov?witnessRequestContent(f.controller.receipt.intents.at(-1).request_binding.request):{request_type:'call',canister_id:target,sender:owner,method_name:options.methodName,arg:options.arg,ingress_expiry:BigInt(Date.now()+240000)*1000000n,nonce:Uint8Array.of(9)};
+  return {requestDetails:details,reply:isGov?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]),rawCertificate:recordingCertificate(undefined,isGov?2:3)};
+ },readState:async()=>({certificate:recordingCertificate(undefined,lastTarget?.toText()===govId.toText()?2:3)})};
+ t.mock.method(HttpAgent,'from',async()=>agent);t.mock.method(HttpAgent,'create',async()=>agent);
+ t.mock.method(Actor,'agentOf',()=>agent);t.mock.method(Actor,'canisterIdOf',actor=>actor===f.gov?govId:f.c);t.mock.method(Actor,'interfaceOf',actor=>actor===f.gov?nnsFactory({IDL}):bootstrapFactory({IDL}));
+ t.mock.method(Certificate,'create',async options=>{const tag=Cbor.decode(options.certificate).signature[0];return {lookup_path(path){const field=new TextDecoder().decode(path.at(-1));let value;
+  if(field==='reply')value=tag===1?createReply:tag===2?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]);else if(field==='status')value=new TextEncoder().encode('replied');else if(field==='module_hash')value=tag===2?hexBytes(CREATION_PROTOCOL_PINS.modules[govId.toText()]):p.bootstrap_sha256;else if(field==='controllers')value=Cbor.encode([owner.toUint8Array()]);else{let n=BigInt(Date.now())*1000000n,a=[];do{const b=Number(n&127n);n>>=7n;a.push(b|(n?128:0));}while(n);value=Uint8Array.from(a);}return {status:LookupPathStatus.Found,value};}};});
+ f.actors.bootstrap.advance=async({step})=>{
+  if(step.ReserveProposal)s.external_proposal=[{...step.ReserveProposal,created_at:BigInt(Math.floor(Date.now()/1000))}];
+  if(step.MarkProposalDispatched)s.external_proposal[0].dispatched=true;
+  if(step.ResolveProposal){if(outcome==='resolve-lost'&&!f.state.repairResolution)throw Error('recorded bootstrap resolution reply lost');s.external_proposal[0].proposal_id=[step.ResolveProposal];}
+  if(step.ResolveProposalRefusal){if(f.state.loseRefusal)throw Error('recorded refusal audit unavailable');assert.equal(outcome,'refused');const reservation=s.external_proposal[0];assert.deepEqual(reservation.request_id[0],hexBytes(f.controller.receipt.intents.at(-1).request_binding.request_id));s.proposal_refusals=[[{reservation,request_id:reservation.request_id[0],certificate_digest:new Uint8Array(32),reply_digest:new Uint8Array(32),error_type:5}]];s.external_proposal=[];}
+  return {Ok:s};
+ };
+ return {...f,calls:()=>calls};
+}
+test('proposal adapter retains exact created, definitively refused and ambiguous reservation outcomes',async t=>{
+ for(const outcome of ['created','refused','ambiguous','missing-id','resolve-lost'])await t.test(outcome,async t=>{
+  const f=await recordedProposalFixture(t,outcome);await f.controller.prepareNnsProposal('Rehearsal',11n);const intent=f.controller.prepared.intent;f.controller.export();
+  if(outcome==='created'){await f.controller.dispatch({saved:true,confirmed:true});assert.equal(intent.state,'Confirmed');assert.equal(intent.references.proposal_id,'9');assert.ok(f.controller.receipt.bootstrap_witness);}
+  else {await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/recorded|ambiguous|omitted/);assert.equal(intent.state,outcome==='refused'?'Rejected':'Unknown');}
+  assert.equal(f.calls(),1);assert.ok(intent.reply_witness);assert.equal(intent.request_binding.request_id,intent.reply_witness.request_id);
+  if(outcome==='refused'){assert.equal(f.bootstrapState.external_proposal.length,0);assert.equal(f.bootstrapState.proposal_refusals[0][0].error_type,5);await f.controller.prepareNnsProposal('Rehearsal',11n);assert.notEqual(f.controller.prepared.intent.id,intent.id);}
+  if(['ambiguous','missing-id','resolve-lost'].includes(outcome)){assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);await assert.rejects(()=>f.controller.prepareNnsProposal('Rehearsal',11n),/unresolved|Reconcile/);assert.equal(f.calls(),1);}
+ });
+});
+test('replicated refusal audit settles only the original full ingress, including after a lost local checkpoint',async t=>{
+ for(const changed of [false,true])await t.test(changed?'same arguments with another ingress stay unknown':'original replicated audit survives lost local proof',async t=>{
+  const f=await recordedProposalFixture(t,'refused');await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/recorded typed/);
+  const intent=f.controller.receipt.intents.at(-1);intent.state='Unknown';intent.reply_witness=null;
+  if(changed)intent.request_binding=creationRequestBinding({owner,destination:intent.destination,methodName:'manage_neuron',argument:hexBytes(intent.argument),nonce:new Uint8Array(32).fill(99)});
+  if(changed){await assert.rejects(()=>f.controller.reconcileProposalRefusal(),/No certified refusal/);assert.equal(intent.state,'Unknown');}
+  else {await f.controller.reconcileProposalRefusal();assert.equal(intent.state,'Rejected');}
+  assert.equal(f.calls(),1,'audit reconciliation never resubmits Governance');
+ });
+});
+test('a lost successful proposal resolution reads only its original accepted request and binds the same proposal',async t=>{
+ const f=await recordedProposalFixture(t,'resolve-lost');await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/resolution reply lost/);
+ const intent=f.controller.receipt.intents.at(-1),id=intent.request_binding.request_id;assert.equal(intent.state,'Unknown');f.state.repairResolution=true;
+ await f.controller.readOriginalProposalReply();assert.equal(intent.state,'Confirmed');assert.equal(intent.references.proposal_id,'9');assert.equal(intent.request_binding.request_id,id);assert.equal(f.calls(),1);
+});
+
+test('an original no-creation reply can be read again after its bootstrap audit submission was interrupted',async t=>{
+ const f=await recordedProposalFixture(t,'refused');f.state.loseRefusal=true;await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/audit unavailable/);
+ const intent=f.controller.receipt.intents.at(-1);assert.equal(intent.state,'Unknown');assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);f.state.loseRefusal=false;
+ await f.controller.readOriginalProposalReply();assert.equal(intent.state,'Rejected');assert.equal(f.bootstrapState.external_proposal.length,0);assert.equal(f.calls(),1);
 });
