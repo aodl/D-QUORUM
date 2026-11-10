@@ -299,13 +299,13 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
         const reserved=await bootstrap.advance({revision:plan.revision,step:{ReserveProposal:{request_id:[hexBytes(intent.request_binding.request_id)],kind:{[kind]:null},intent_id:hexBytes(operationId),request_digest:hexBytes(intent.argument_digest),proposer:manager,revision:plan.revision,created_at:0n,proposal_id:[],dispatched:false}}});
         if(reserved.Err){const e=Error(reserved.Err);e.knownRejected=true;throw e;}
         check();unwrap(await bootstrap.advance({revision:plan.revision,step:{MarkProposalDispatched:hexBytes(operationId)}}));check();
-        const proof=await creationProposalWithWitness(actor,request,intent.request_binding),response=proof.value,command=response.command?.[0];intent.reply_witness=proof.witness;
+        const proof=await creationProposalWithWitness(actor,request,intent.request_binding),response=proof.value,command=response.command?.[0];intent.reply_witness=proof.witness;check();
         if(command?.Error){
           const code=command.Error.error_type;
           if(Number.isInteger(code)&&code>=3&&code<=8){
             const w=proof.witness.request;
             const result=unwrap(await bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(operationId),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
-            if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
+            check();if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
             observed.state=result;const e=Error(command.Error.error_message);e.knownRejected=true;throw e;
           }
           throw Error("Governance returned an unaudited or ambiguous refusal; retain the original proposal reservation.");

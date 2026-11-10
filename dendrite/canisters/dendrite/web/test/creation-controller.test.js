@@ -349,7 +349,7 @@ async function recordedProposalFixture(t,outcome,production=false){
  let calls=0,lastTarget;const returned=outcome==='refused'||outcome==='ambiguous'?{command:[{Error:{error_type:outcome==='refused'?5:12,error_message:'recorded typed Governance outcome'}}]}:{command:[{MakeProposal:{message:[],proposal_id:outcome==='missing-id'?[]:[{id:9n}]}}]};
  const govReply=IDL.encode(nnsSignature.retTypes,[returned]);
  const agent={rootKey:new Uint8Array(96),getPrincipal:async()=>owner,addTransform(){},update:async(target,options)=>{
-  lastTarget=target;const isGov=target.toText()===govId.toText();if(isGov)calls++;
+  lastTarget=target;const isGov=target.toText()===govId.toText();if(isGov){calls++;if(f.state.cancelAfterGov)await f.controller.cancelCapabilities();}
   const details=isGov?witnessRequestContent(f.controller.receipt.intents.at(-1).request_binding.request):{request_type:'call',canister_id:target,sender:owner,method_name:options.methodName,arg:options.arg,ingress_expiry:BigInt(Date.now()+240000)*1000000n,nonce:Uint8Array.of(9)};
   return {requestDetails:details,reply:isGov?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]),rawCertificate:recordingCertificate(undefined,isGov?2:3)};
  },readState:async()=>({certificate:recordingCertificate(undefined,lastTarget?.toText()===govId.toText()?2:3)})};
@@ -358,6 +358,7 @@ async function recordedProposalFixture(t,outcome,production=false){
  t.mock.method(Certificate,'create',async options=>{const tag=Cbor.decode(options.certificate).signature[0];return {lookup_path(path){const field=new TextDecoder().decode(path.at(-1));let value;
   if(field==='reply')value=tag===1?createReply:tag===2?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]);else if(field==='status')value=new TextEncoder().encode('replied');else if(field==='module_hash')value=tag===2?hexBytes(CREATION_PROTOCOL_PINS.modules[govId.toText()]):p.bootstrap_sha256;else if(field==='controllers')value=Cbor.encode([owner.toUint8Array()]);else{let n=BigInt(Date.now())*1000000n,a=[];do{const b=Number(n&127n);n>>=7n;a.push(b|(n?128:0));}while(n);value=Uint8Array.from(a);}return {status:LookupPathStatus.Found,value};}};});
  f.actors.bootstrap.advance=async({step})=>{
+  (f.state.bootstrapSteps??=[]).push(Object.keys(step)[0]);
   if(step.ReserveProposal&&outcome==='reserve-refused')return {Err:'recorded bootstrap reservation refused'};
   if(step.ReserveProposal)s.external_proposal=[{...step.ReserveProposal,created_at:BigInt(Math.floor(Date.now()/1000))}];
   if(step.MarkProposalDispatched){s.external_proposal[0].dispatched=true;if(outcome==='mark-lost')throw Error('recorded dispatch grant reply lost');}
@@ -450,4 +451,13 @@ test('production default-account acknowledgement discloses observed and later IC
  assert.equal(f.state.transfers.length,0);assert.equal(f.calls(),0);
  await f.controller.prepareNnsProposal('Registration',11n);f.controller.receipt.intents.at(-1).state='Unknown';
  await assert.rejects(()=>f.controller.acknowledgeDefaultIcp({confirmed:true}),/unresolved/);assert.equal(f.state.transfers.length,0);
+});
+
+test('cancellation while a proposal reply arrives preserves its proof without dispatching a new bootstrap mutation',async t=>{
+ for(const outcome of ['created','refused'])await t.test(outcome,async t=>{
+  const f=await recordedProposalFixture(t,outcome);await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();f.state.cancelAfterGov=true;
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/interrupted|revoked/);const intent=f.controller.receipt.intents.at(-1);
+  assert.equal(intent.state,'Unknown');assert.ok(intent.reply_witness);assert.equal(f.calls(),1);assert.deepEqual(f.state.bootstrapSteps,['ReserveProposal','MarkProposalDispatched']);
+  assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);assert.equal(f.controller.hasCapability('CallBootstrap'),false);
+ });
 });
