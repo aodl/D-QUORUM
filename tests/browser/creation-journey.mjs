@@ -166,7 +166,10 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   if(await page.$$eval('button',els=>els.some(el=>/Review optional payment|Review next provisioning request|Sign exact creation request/.test(el.textContent))))throw Error('A second tab gained replacement payment authority');
   const second=(await save()).value.intents.at(-1);if(second.id!==original.id||second.request_binding.request_id!==original.request_binding.request_id||second.state!=='Unknown')throw Error('Second tab replaced the original payment identity');
   await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
-  await page.close();page=ownerPage;await page.bringToFront();
+  // Return the retained hardware window while both documents still exist;
+  // otherwise a later owner reload cannot recover its public WindowProxy.
+  const secondaryPage=page;page=ownerPage;await reloadIdentityDocument(user);
+  await secondaryPage.close();await page.bringToFront();
   await press('Search next bounded page for the original payment');await idle();saved=await save();const confirmed=saved.value.intents.at(-1);
   if(confirmed.id!==original.id||confirmed.created_at_time!==original.created_at_time||confirmed.request_binding.request_id!==original.request_binding.request_id||confirmed.state!=='Confirmed')throw Error('Permanent-block recovery replaced or repeated the original payment');
   await writeEvidence(`${directory}/creation-stake-payment-recovered.json`,JSON.stringify(saved.value));
