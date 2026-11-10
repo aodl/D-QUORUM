@@ -60,6 +60,8 @@ struct RefusalState {
 // creation, registration, rehearsal and finalisation remains independently tested.
 #[derive(CandidType)]
 struct FeeEconomics {
+    neurons_fund_economics: Option<FundEconomics>,
+    voting_power_economics: Option<g::VotingPowerEconomics>,
     neuron_minimum_stake_e8s: u64,
     max_proposals_to_keep_per_topic: u32,
     neuron_management_fee_per_proposal_e8s: u64,
@@ -68,6 +70,50 @@ struct FeeEconomics {
     neuron_spawn_dissolve_delay_seconds: u64,
     minimum_icp_xdr_rate: u64,
     maximum_node_provider_rewards_e8s: u64,
+}
+// Only the native economics fault needs these pinned validation fields. The
+// legacy synthetic seed omits them; provide valid values before changing fees.
+#[derive(CandidType)]
+struct DecimalValue {
+    human_readable: Option<String>,
+}
+#[derive(CandidType)]
+struct PercentageValue {
+    basis_points: Option<u64>,
+}
+#[derive(CandidType)]
+struct FundCurve {
+    contribution_threshold_xdr: Option<DecimalValue>,
+    one_third_participation_milestone_xdr: Option<DecimalValue>,
+    full_participation_milestone_xdr: Option<DecimalValue>,
+}
+#[derive(CandidType)]
+struct FundEconomics {
+    max_theoretical_neurons_fund_participation_amount_xdr: Option<DecimalValue>,
+    neurons_fund_matched_funding_curve_coefficients: Option<FundCurve>,
+    minimum_icp_xdr_rate: Option<PercentageValue>,
+    maximum_icp_xdr_rate: Option<PercentageValue>,
+}
+fn fixture_fund_economics() -> FundEconomics {
+    let decimal = |v: &str| {
+        Some(DecimalValue {
+            human_readable: Some(v.into()),
+        })
+    };
+    FundEconomics {
+        max_theoretical_neurons_fund_participation_amount_xdr: decimal("1000000"),
+        neurons_fund_matched_funding_curve_coefficients: Some(FundCurve {
+            contribution_threshold_xdr: decimal("100"),
+            one_third_participation_milestone_xdr: decimal("1000"),
+            full_participation_milestone_xdr: decimal("10000"),
+        }),
+        minimum_icp_xdr_rate: Some(PercentageValue {
+            basis_points: Some(100),
+        }),
+        maximum_icp_xdr_rate: Some(PercentageValue {
+            basis_points: Some(1000000),
+        }),
+    }
 }
 #[derive(CandidType)]
 enum FeeAction {
@@ -100,11 +146,160 @@ struct FeeResult {
     status: i32,
     executed_timestamp_seconds: u64,
 }
+// Real Governance membership mutations are labelled native fault injection;
+// the positive rehearsal votes still come from three independent II browsers.
+fn membership_fault(
+    pic: &pocket_ic::PocketIc,
+    identities: &[Principal],
+    target: u64,
+    managers: &[u64],
+) {
+    let rows = public_neuron(pic, target)
+        .followees
+        .into_iter()
+        .map(|(topic, row)| g::Following {
+            topic: Some(topic),
+            followees: Some(if topic == 1 {
+                managers.iter().map(|id| g::NeuronId { id: *id }).collect()
+            } else {
+                row.followees
+            }),
+        })
+        .collect();
+    let response: g::ManageResponse = update(
+        pic,
+        GOVERNANCE,
+        identities[0],
+        "manage_neuron",
+        g::request(
+            11,
+            g::Command::MakeProposal(Box::new(g::MakeProposal {
+                title: Some("Isolated current membership fault".into()),
+                summary: "Native real-Governance negative control, not a browser authority claim"
+                    .into(),
+                url: String::new(),
+                action: Some(g::ActionRequest::ManageNeuron(Box::new(g::request(
+                    target,
+                    g::Command::SetFollowing(g::SetFollowing {
+                        topic_following: Some(rows),
+                    }),
+                )))),
+            })),
+        ),
+    );
+    let Some(g::ResponseCommand::MakeProposal(result)) = response.command else {
+        panic!("membership fault refused: {:?}", response.command)
+    };
+    let id = result.proposal_id.unwrap().id;
+    for (index, owner) in identities.iter().enumerate().take(3).skip(1) {
+        let result: g::ManageResponse = update(
+            pic,
+            GOVERNANCE,
+            *owner,
+            "manage_neuron",
+            VoteRequest {
+                neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId {
+                    id: 11 + index as u64,
+                })),
+                command: Some(VoteCommand::RegisterVote(Vote {
+                    vote: 1,
+                    proposal: Some(g::NeuronId { id }),
+                })),
+            },
+        );
+        assert!(matches!(
+            result.command,
+            Some(g::ResponseCommand::RegisterVote(_))
+        ));
+    }
+    let proposal: Option<FeeResult> =
+        update(pic, GOVERNANCE, identities[0], "get_proposal_info", id);
+    assert_eq!(proposal.unwrap().status, 4);
+    assert_eq!(
+        public_neuron(pic, target)
+            .followees
+            .iter()
+            .find(|(topic, _)| *topic == 1)
+            .unwrap()
+            .1
+            .followees
+            .iter()
+            .map(|id| id.id)
+            .collect::<Vec<_>>(),
+        managers
+    );
+}
+fn membership_boundary(
+    pic: &pocket_ic::PocketIc,
+    directory: &Path,
+    child: &mut Child,
+    identities: &[Principal],
+    target: u64,
+    stage: &str,
+) {
+    let requested = signal(
+        directory,
+        &format!("creation-membership-{stage}-requested"),
+        child,
+    );
+    let before = public_neuron(pic, 11).neuron_fees_e8s;
+    membership_fault(pic, identities, target, &[11, 12, 13, 14, 16]);
+    publish(
+        directory,
+        &format!("creation-membership-{stage}-changed"),
+        serde_json::json!({"stage":stage,"current_managers":[11,12,13,14,16],"classification":"native real Governance membership fault; no added creator authority"}),
+    );
+    let blocked = signal(
+        directory,
+        &format!("creation-membership-{stage}-blocked"),
+        child,
+    );
+    assert_eq!(blocked["blocked"], true);
+    assert_eq!(blocked["original_intent"], requested["original_intent"]);
+    if let Some(id) = requested["proposal"].as_str() {
+        let proposal: Option<CreationProposal> = update(
+            pic,
+            GOVERNANCE,
+            identities[0],
+            "get_proposal_info",
+            id.parse::<u64>().unwrap(),
+        );
+        let proposal = proposal.unwrap();
+        assert_eq!(proposal.status, if stage == "after" { 4 } else { 1 });
+        assert_eq!(
+            proposal.latest_tally.unwrap().total,
+            5,
+            "historical electorate count is retained despite present membership change"
+        );
+        assert_eq!(
+            proposal.ballots.len(),
+            1,
+            "creator still sees only its own manager ballot"
+        );
+    }
+    membership_fault(pic, identities, target, &[11, 12, 13, 14, 15]);
+    assert_eq!(
+        public_neuron(pic, 11).neuron_fees_e8s,
+        before + 20_000,
+        "only the two explicitly injected membership proposals incur these fees"
+    );
+    publish(
+        directory,
+        &format!("creation-membership-{stage}-restored"),
+        serde_json::json!({"restored":true,"historical_membership_limit":"A change away and back is not disproved by aggregate execution and fresh current configuration."}),
+    );
+}
 fn management_fee_fault(pic: &pocket_ic::PocketIc, identities: &[Principal], fee: u64) {
     fixture_global_action(
         pic,
         identities,
         FeeAction::ManageNetworkEconomics(FeeEconomics {
+            neurons_fund_economics: Some(fixture_fund_economics()),
+            voting_power_economics: Some(g::VotingPowerEconomics {
+                start_reducing_voting_power_after_seconds: Some(15_778_800),
+                clear_following_after_seconds: Some(2_629_800),
+                neuron_minimum_dissolve_delay_to_vote_seconds: Some(15_778_800),
+            }),
             neuron_minimum_stake_e8s: 100_000_000,
             max_proposals_to_keep_per_topic: 100,
             neuron_management_fee_per_proposal_e8s: fee,
@@ -603,6 +798,10 @@ pub fn coordinate(
         );
     }
     if production {
+        membership_boundary(pic, directory, child, &identities, t, "before");
+    }
+    let rehearsal_fee_baseline = public_neuron(pic, 11).neuron_fees_e8s;
+    if production {
         let unknown = signal(directory, "creation-rehearsal-unknown", child);
         let intent = unknown["intents"].as_array().unwrap().last().unwrap();
         assert_eq!(intent["state"], "Unknown");
@@ -621,7 +820,7 @@ pub fn coordinate(
         );
         assert_eq!(
             public_neuron(pic, 11).neuron_fees_e8s,
-            10_000,
+            rehearsal_fee_baseline + 10_000,
             "exactly one accepted management proposal fee before reconciliation"
         );
         publish(
@@ -629,6 +828,9 @@ pub fn coordinate(
             "creation-rehearsal-unknown-verified",
             serde_json::json!({"unknown_retained":true,"proposal_fee_e8s":10_000}),
         );
+    }
+    if production {
+        membership_boundary(pic, directory, child, &identities, t, "during");
     }
     let rehearsal = signal(directory, "creation-rehearsal", child);
     verify_proposal(
@@ -671,6 +873,9 @@ pub fn coordinate(
         "creation-rehearsal-verified",
         serde_json::json!({"target":t,"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
     );
+    if production {
+        membership_boundary(pic, directory, child, &identities, t, "after");
+    }
     if !production {
         let _: serde_json::Value = signal(directory, "creation-dissolving", child);
         let n = public_neuron(pic, t);
@@ -886,4 +1091,52 @@ pub fn coordinate(
         "creation-browser-verified",
         serde_json::json!({"profile":scenario,"target":t,"controller":c.to_text(),"no_coordinator_creation_claim_configuration_or_finalisation":true}),
     );
+}
+
+#[test]
+#[ignore = "real pinned Governance native economics/refusal regression; not an II authority test"]
+fn real_creation_proposal_fee_refusal_contract() {
+    let pic = real_pic();
+    let at = now(&pic);
+    let owners: Vec<_> = (1..=5).map(user).collect();
+    let neurons = owners
+        .iter()
+        .enumerate()
+        .map(|(index, owner)| {
+            let mut n = seed(11 + index as u64, *owner, at);
+            n.followees = vec![fs(1, &[11, 12, 13, 14, 15])];
+            n
+        })
+        .collect();
+    install_real(
+        &pic,
+        neurons,
+        vec![],
+        artifact("governance-canister"),
+        artifact("ledger-canister"),
+    );
+    management_fee_fault(&pic, &owners, 10_100_000_000);
+    let request = || {
+        g::request(11, g::Command::MakeProposal(Box::new(g::MakeProposal {
+        title: Some("Native fee refusal probe".into()), summary: "Exact real protocol fee check; native fixture senders do not prove II browser authority".into(), url: String::new(),
+        action: Some(g::ActionRequest::ManageNeuron(Box::new(g::request(11,g::Command::RefreshVotingPower(g::Empty {}))))),
+    })))
+    };
+    let before = public_neuron(&pic, 11).neuron_fees_e8s;
+    let result: g::ManageResponse = update(&pic, GOVERNANCE, owners[0], "manage_neuron", request());
+    assert!(matches!(
+        result.command,
+        Some(g::ResponseCommand::Error(g::GovernanceError {
+            error_type: 14,
+            ..
+        }))
+    ));
+    assert_eq!(public_neuron(&pic, 11).neuron_fees_e8s, before);
+    management_fee_fault(&pic, &owners, 10_000);
+    let result: g::ManageResponse = update(&pic, GOVERNANCE, owners[0], "manage_neuron", request());
+    assert!(matches!(
+        result.command,
+        Some(g::ResponseCommand::MakeProposal(_))
+    ));
+    assert_eq!(public_neuron(&pic, 11).neuron_fees_e8s, before + 10_000);
 }

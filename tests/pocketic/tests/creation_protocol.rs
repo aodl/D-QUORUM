@@ -1677,7 +1677,7 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
         approval.clone(),
     );
     assert!(
-        matches!(denied, Err(ApprovalError::GenericError { error_code, .. }) if error_code == Nat::from(100001u64))
+        matches!(denied, Err(ApprovalError::GenericError { error_code, .. }) if error_code == 100001u64)
     );
     assert_eq!(
         before_approval,
@@ -1710,7 +1710,7 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
     let competitor: Result<Nat, ApprovalError> =
         update(&pic, cycles_ledger(), owner, "icrc2_approve", approval);
     assert!(
-        matches!(competitor, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
+        matches!(competitor, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == 1u64)
     );
     assert_eq!(
         &before_approval.0 - &cycles_balance(&pic, owner, Some(funding_sub.clone())).0,
@@ -1929,7 +1929,7 @@ fn real_creation_dispatch_reservation_compare_and_set() {
     let second: Result<Nat, ApprovalError> =
         update(&pic, LEDGER, owner, "icrc2_approve", competitor);
     assert!(
-        matches!(second, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
+        matches!(second, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == 1u64)
     );
     let base = l::TransferArg {
         from_subaccount: None,

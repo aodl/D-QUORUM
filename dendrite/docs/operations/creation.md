@@ -53,9 +53,9 @@ fresh target configuration before signing its single reviewed Yes vote.
 
 An executed exact-target RefreshVotingPower proposal with a consistent aggregate
 majority proves Governance executed that action with its recorded electorate.
-Individual voter identities may remain filtered. The aggregate count and fresh
+Individual voter identities may remain filtered. Browser acceptance uses five distinct II application principals: the creator controls only one manager and the other participants sign their own votes. Native real-Governance membership fault proposals change and restore topic-1 membership before, during and after rehearsal; those injected votes are labelled separately from the positive browser quorum. The aggregate count and fresh
 following do not establish historical electorate identities or uninterrupted
-membership. A presently changed management configuration blocks readiness. An
+membership. A presently changed management configuration blocks new rehearsal fee review, independent team voting and sealing/readiness. An
 unobserved change away and back cannot be ruled out by these APIs; the workflow
 must not describe its rehearsal as proof of continuous membership or independent
 human ownership. Missing/pruned execution evidence blocks automatic finalisation.

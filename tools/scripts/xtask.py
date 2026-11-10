@@ -149,6 +149,7 @@ def creation_recording():
 def creation_protocol():
     run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-historical-proof.test.js'],kind='behaviour',name='genuine archived certificate verification: historical provenance, not live permissions')
     prepare_bootstrap();suite('creation_protocol')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','browser_creation::real_creation_proposal_fee_refusal_contract','--nocapture'],kind='behaviour',name='native pinned Governance economics repair and typed fee refusal; not II authority')
 
 def creation_browser():
     prepare_bootstrap();prepare()

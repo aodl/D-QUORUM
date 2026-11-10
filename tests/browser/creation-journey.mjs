@@ -162,6 +162,16 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  await page.setViewport({width:1280,height:900});await page.emulateMediaFeatures([]);
  const propose=async(kind,manager)=>{await fill('creation-proposer',String(manager));await press(kind==='registration'?'Review global known-neuron registration proposal':'Review benign manager refresh proposal');await idle();await signPrepared();return (await save()).value.intents.at(-1).references.proposal_id;};
  const vote=async(manager,id)=>{if(production&&manager!==fixture.managers[0]){const exported=await save(),participant=participants[fixture.managers.indexOf(manager)],ownerPage=page;page=participant.page;try{await page.bringToFront();await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-team-receipt]');await(await page.$('[name=creation-team-receipt]')).uploadFile(exported.file);await idle();await fill('creation-team-manager',String(manager));await press('Review exact creation Yes vote');await idle();await page.click('[name=creation-team-consent]');await press('Sign exact manager creation vote');await idle();}finally{page=ownerPage;}return;}await fill('creation-proposer',String(manager));await fill('creation-proposal',id);await press('Review manager Yes vote');await idle();await signPrepared();};
+ const membershipProbe=async(stage,action,proposal)=>{
+  const before=(await save()).value,original=before.intents.at(-1)?.id;
+  await writeEvidence(`${directory}/creation-membership-${stage}-requested.json`,JSON.stringify({original_intent:original,proposal}));
+  await waitSignal(`creation-membership-${stage}-changed`);
+  let reason;try{await action();}catch(error){if(!/Creation UI blocked:.*following/i.test(error.message))throw error;reason=error.message;}
+  if(!reason)throw Error(`Changed membership at ${stage} did not block its exact readiness check`);
+  const after=(await save()).value;if(after.intents.at(-1)?.id!==original||after.sealed_witness)throw Error('Membership negative control replaced its intent or sealed the creation');
+  await writeEvidence(`${directory}/creation-membership-${stage}-blocked.json`,JSON.stringify({blocked:true,original_intent:original,reason}));
+  await waitSignal(`creation-membership-${stage}-restored`);await refresh();
+ };
  let registration;if(production){
   // A real pinned validation refusal must clear only its original certified
   // reservation. A different real NNS proposal creates the name collision only
@@ -182,6 +192,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   if(!refused||intent.kind!=='Rehearsal'||intent.state!=='Rejected'||!intent.reply_witness)throw Error('Real insufficient-funds refusal did not settle the exact rehearsal reservation');
   await writeEvidence(`${directory}/creation-rehearsal-refused.json`,JSON.stringify(saved.value));await waitSignal('creation-rehearsal-fee-restored');await refresh();
  }
+ if(production)await membershipProbe('before',async()=>{await press('Review benign manager refresh proposal');await idle();});
  let rehearsal;
  if(production){
   await fill('creation-proposer',String(fixture.managers[0]));await press('Review benign manager refresh proposal');await idle();
@@ -194,6 +205,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   if(settled.id!==original.id||settled.request_binding.request_id!==original.request_binding.request_id||settled.state!=='Confirmed')throw Error('Lost reply reconciliation replaced its original request');
   rehearsal=settled.references.proposal_id;
  }else rehearsal=await propose('rehearsal',fixture.managers[0]);
+ if(production)await membershipProbe('during',()=>vote(fixture.managers[1],rehearsal),rehearsal);
  if(production)for(const manager of fixture.managers.slice(1,3))await vote(manager,rehearsal);
  await writeEvidence(`${directory}/creation-rehearsal.json`,JSON.stringify({proposal:rehearsal,registration,receipt:(await save()).value}));const rehearsalClock=await waitSignal('creation-rehearsal-verified');
  if(!production){saved=await save();const renewed=await renewParticipants(rehearsalClock,saved);await writeEvidence(`${directory}/creation-recoverable-90-day-resumed.json`,JSON.stringify(renewed));}
@@ -212,6 +224,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   await page.screenshot({path:`${directory}/creation-recoverable.png`});
  }else{
   await press('Review unused controller-account funds');await idle();await page.click('[name=creation-default-icp-consent]');await press('Acknowledge unused controller-account funds');await idle();
+  await fill('creation-proposal',rehearsal);await membershipProbe('after',async()=>{await press('Verify executed quorum and seal finalisation');await idle();},rehearsal);
   await fill('creation-proposal',rehearsal);await press('Verify executed quorum and seal finalisation');await idle();saved=await save();await writeEvidence(`${directory}/creation-sealed.json`,JSON.stringify(saved.value));await waitSignal('creation-sealed-dust-injected');await press('Stop and verify quiescence');await idle();
   saved=await save();const c=saved.value.canister_id,t=saved.value.neuron_id;await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of bootstrap code');await idle();await signPrepared();
   await refresh();saved=await save();await writeEvidence(`${directory}/creation-code-removed.json`,JSON.stringify(saved.value));const clock=await waitSignal('creation-code-removal-verified');
