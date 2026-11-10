@@ -225,32 +225,70 @@ fn local_frontend(
     retain_ii_device: bool,
     historical_bootstrap: bool,
 ) -> Vec<u8> {
+    const HISTORICAL_FRONTEND_SOURCE: &str = "97343f8dbb714a0a12f90a474805518c83017184";
+    const HISTORICAL_BOOTSTRAP: &str =
+        "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265";
     let source = directory.join("source");
     fs::create_dir_all(&source).unwrap();
-    let listed = Command::new("git")
-        .args([
+    let mut listing = Command::new("git");
+    if historical_bootstrap {
+        listing.args([
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            HISTORICAL_FRONTEND_SOURCE,
+            "--",
+            "dendrite/",
+        ]);
+    } else {
+        listing.args([
             "ls-files",
             "--cached",
             "--others",
             "--exclude-standard",
             "-z",
             "dendrite/",
-        ])
-        .current_dir(root())
-        .output()
-        .unwrap();
+        ]);
+    }
+    let listed = listing.current_dir(root()).output().unwrap();
     assert!(listed.status.success());
+    let mut source_files = std::collections::BTreeMap::new();
     for file in listed.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
         let file = std::str::from_utf8(file).unwrap();
         assert!(!file.ends_with(".pem") && !file.split('/').any(|p| p.starts_with(".env")));
         // Development diagnostics may have a reviewed old generated asset staged
         // for deletion. Full qualification independently requires a clean source.
-        if !root().join(file).is_file() {
+        if !historical_bootstrap && !root().join(file).is_file() {
             continue;
         }
         let target = source.join(file.strip_prefix("dendrite/").unwrap());
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::copy(root().join(file), target).unwrap();
+        let content = if historical_bootstrap {
+            let old = Command::new("git")
+                .args(["show", &format!("{HISTORICAL_FRONTEND_SOURCE}:{file}")])
+                .current_dir(root())
+                .output()
+                .unwrap();
+            assert!(
+                old.status.success(),
+                "reviewed historical frontend source is unavailable"
+            );
+            old.stdout
+        } else {
+            fs::read(root().join(file)).unwrap()
+        };
+        source_files.insert(file.to_string(), hex::encode(Sha256::digest(&content)));
+        fs::write(target, content).unwrap();
+    }
+    if historical_bootstrap {
+        for file in ["package.json", "package-lock.json"] {
+            assert_eq!(
+                fs::read(source.join(file)).unwrap(),
+                fs::read(root().join("dendrite").join(file)).unwrap(),
+                "historical frontend requires its exact reviewed npm dependency lock"
+            );
+        }
     }
     std::os::unix::fs::symlink(
         root().join("dendrite/node_modules"),
@@ -277,25 +315,61 @@ fn local_frontend(
         let mut cmd = Command::new("node");
         cmd.arg(root().join("tests/browser/build-creation-fixture.mjs"))
             .arg(&source);
-        if historical_bootstrap {
-            cmd.arg("--reviewed-v1-bootstrap");
-        }
         cmd
     } else {
         let mut cmd = Command::new("npm");
         cmd.args(["run", "build"]);
         cmd
     };
-    build.current_dir(&source).env(
-        "DENDRITE_BOOTSTRAP_RELEASE_DIR",
-        std::env::var_os("DENDRITE_BOOTSTRAP_RELEASE_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| root().join("dendrite/target/bootstrap-release")),
-    );
+    build.current_dir(&source);
+    if historical_bootstrap {
+        let compiled = directory.join("historical-bootstrap-input");
+        fs::create_dir_all(&compiled).unwrap();
+        let wasm = fs::read(root().join(format!(
+            "dendrite/canisters/bootstrap/compat/{HISTORICAL_BOOTSTRAP}.wasm"
+        )))
+        .unwrap();
+        assert_eq!(hex::encode(Sha256::digest(&wasm)), HISTORICAL_BOOTSTRAP);
+        fs::write(compiled.join("bootstrap.wasm"), wasm).unwrap();
+        fs::copy(
+            source.join("canisters/bootstrap/bootstrap.did"),
+            compiled.join("bootstrap.did"),
+        )
+        .unwrap();
+        fs::copy(
+            source.join("src/declarations/bootstrap/policy.json"),
+            compiled.join("policy.json"),
+        )
+        .unwrap();
+        build
+            .env_remove("DENDRITE_BOOTSTRAP_RELEASE_DIR")
+            .env("DENDRITE_BOOTSTRAP_COMPILED_DIR", compiled);
+    } else {
+        build.env(
+            "DENDRITE_BOOTSTRAP_RELEASE_DIR",
+            std::env::var_os("DENDRITE_BOOTSTRAP_RELEASE_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| root().join("dendrite/target/bootstrap-release")),
+        );
+    }
     for (key, value) in config.as_object().unwrap() {
         build.env(key, value.as_str().unwrap());
     }
     assert!(build.status().unwrap().success());
+    if historical_bootstrap {
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(source.join("target/bootstrap-release/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["sha256"], HISTORICAL_BOOTSTRAP);
+        fs::write(directory.join("historical-bootstrap-policy.json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "classification":"actual reviewed historical frontend source, with current recorded native-window infrastructure only; no canonical production-byte claim",
+            "historical_frontend_source":HISTORICAL_FRONTEND_SOURCE,
+            "source_files":source_files,
+            "npm_dependency_lock_identical":true,
+            "manifest":manifest
+        })).unwrap()).unwrap();
+    }
     let mut probe = Command::new("node");
     probe
         .arg(root().join("tests/browser/build-scope-probe.mjs"))
