@@ -109,8 +109,8 @@ async function wrongProvider(){
  await context.close();
 }
 // Only setup-channel failures can restart once before manager authority exists.
-// Creation retains its native hardware window while the real SDK rejects and
-// replaces a closed channel; a failed signer or identity is never substituted.
+// A failed unbound setup context is discarded before any principal acquires
+// manager authority. Bound participants never receive this retry.
 // All identities are provisioned before manager authority or mutations exist.
 async function authenticate(index){
  let retained;
@@ -119,7 +119,10 @@ async function authenticate(index){
   try{return await authenticateAttempt(index,retained);}
   catch(error){
    if(!error.iiChannelFailure||attempt===1)throw error;
-   if(scenario.startsWith('creation-')&&error.retainedNative&&!error.retainedNative.popup.isClosed())retained=error.retainedNative;else{await applicationPages[pageIndex].browserContext().close();retained=undefined;}
+   // No manager, plan or funds exist until every participant is authenticated.
+   // A closed channel leaves II's pending request tied to that failed client;
+   // discard this unbound context rather than reusing its stale authorization.
+   await applicationPages[pageIndex].browserContext().close();retained=undefined;
    const retry={index,failedAttempt:attempt+1,heading:error.iiChannelFailure,freshContext:!retained,nativeWindowRetained:!!retained};
    authenticationRetries.push(retry);
    console.error(JSON.stringify({phase:'II setup retry',...retry}));

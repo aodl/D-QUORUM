@@ -355,6 +355,9 @@ pub fn coordinate(
         stake,
     );
     if !production {
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(31 * 86_400));
+        pic.auto_progress();
         let next = upgraded_frontend
             .expect("reviewed V1 browser creation requires an actual frontend rollover");
         let controller = pic.get_controllers(verifier)[0];
@@ -600,10 +603,15 @@ pub fn coordinate(
             100_000_000,
         );
     }
+    if !production {
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(59 * 86_400));
+        pic.auto_progress();
+    }
     publish(
         directory,
         "creation-rehearsal-verified",
-        serde_json::json!({"target":t}),
+        serde_json::json!({"target":t,"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
     );
     if !production {
         let _: serde_json::Value = signal(directory, "creation-dissolving", child);

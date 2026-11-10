@@ -67,7 +67,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  for(let i=0;i<3;i++){await press('Review next provisioning request');await idle();await signPrepared();if(production&&i===1){saved=await save();await writeEvidence(`${directory}/creation-converted-before-first-create.json`,JSON.stringify(saved.value));const clock=await waitSignal('creation-first-create-clock');await renewParticipants(clock,saved);}}
  await reauthenticate('Consent to controller management capability');await refresh();await press('Install the pinned bootstrap (install only)');await idle();
  await reauthenticate('Consent to exact bootstrap capability');await refresh();saved=await save();
- await writeEvidence(`${directory}/creation-controller-installed.json`,JSON.stringify(saved.value));const stakeClock=await waitSignal('creation-stake-funded');if(production)await renewParticipants(stakeClock,saved);
+ await writeEvidence(`${directory}/creation-controller-installed.json`,JSON.stringify(saved.value));const stakeClock=await waitSignal('creation-stake-funded');await renewParticipants(stakeClock,saved);
  // Actual application heap and credentials are discarded. Only the downloaded
  // non-secret receipt is restored; this does not pretend to restart hardware.
  await page.reload({waitUntil:'domcontentloaded'});await page.waitForSelector('button');await reauthenticate('Sign in with Internet Identity');
@@ -133,7 +133,8 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   rehearsal=settled.references.proposal_id;
  }else rehearsal=await propose('rehearsal',fixture.managers[0]);
  if(production)for(const manager of fixture.managers.slice(1,3))await vote(manager,rehearsal);
- await writeEvidence(`${directory}/creation-rehearsal.json`,JSON.stringify({proposal:rehearsal,registration,receipt:(await save()).value}));await waitSignal('creation-rehearsal-verified');
+ await writeEvidence(`${directory}/creation-rehearsal.json`,JSON.stringify({proposal:rehearsal,registration,receipt:(await save()).value}));const rehearsalClock=await waitSignal('creation-rehearsal-verified');
+ if(!production){saved=await save();const renewed=await renewParticipants(rehearsalClock,saved);await writeEvidence(`${directory}/creation-recoverable-90-day-resumed.json`,JSON.stringify(renewed));}
  if(!production){if(await page.$$eval('button',els=>els.some(el=>/removal of every controller|Verify executed quorum and seal/.test(el.textContent))))throw Error('Test profile exposed irreversible finalisation');
   // Discard historical creation evidence deliberately. The recovery-only path
   // must prove current approved C/P/plan/T bindings through real signed calls,
