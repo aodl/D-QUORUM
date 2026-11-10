@@ -51,6 +51,8 @@ test("recovery-only import requires its explicit checkbox and limits visible act
   find(f.root,'creation-recovery-only').checked=true;const next=find(f.root,'creation-receipt');next.files=[{size:2,text:async()=>'{}'}];await next.emit('change');assert.deepEqual(f.calls.at(-1),{name:'import',args:['{}',{recoveryOnly:true,confirmed:true}]});
  }finally{f.close();}
  const production=mount({production:true,phase:'Sealed',recoveryOnly:true});try{
+  assert.match(production.root.textContent,/Consent to controller management and the exact bootstrap capability/);
+  assert.ok(!button(production.root,'Start reviewed recovery dissolution'));
   production.c.observed.recoveryBound=true;production.view.render(production.root);
   assert.match(production.root.textContent,/Recovery only — P still controls C/);
   assert.ok(!labels(production.root).some(s=>/removal of|seal finalisation|registration proposal|provisioning request|Commit the reviewed lock|Advance one reviewed/.test(s)));

@@ -247,7 +247,9 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   // without weakening certificate freshness or allowing finalisation.
   const recoveryValue=(await save()).value;recoveryValue.creation_witness=null;recoveryValue.sealed_witness=null;
   const recoveryFile=`${receipts}/recovery-without-history.json`;await writeEvidence(recoveryFile,exportCreationReceipt(recoveryValue));
-  await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity');await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await page.click('[name=creation-recovery-only]');await(await page.$('[name=creation-receipt]')).uploadFile(recoveryFile);await idle();await capabilities();await refresh();
+  await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity');await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await page.click('[name=creation-recovery-only]');await(await page.$('[name=creation-receipt]')).uploadFile(recoveryFile);
+  await page.waitForFunction(canister=>{const root=document.querySelector('.creation-workflow');return root?.getAttribute('aria-busy')==='false'&&(root.querySelector('[role=alert]')||root.innerText.includes('Recovery only — P still controls C')&&root.innerText.includes(`Controller C: ${canister}`));},{timeout:90000},recoveryValue.canister_id);
+  await idle();await capabilities();await refresh();
   if(!await page.$eval('.creation-workflow',el=>el.innerText.includes('Recovery only — P still controls C')))throw Error('Explicit current-binding recovery mode was not established');
   await page.click('[name=creation-dissolution-consent]');await press('Start reviewed recovery dissolution');await idle();await writeEvidence(`${directory}/creation-dissolving.json`,JSON.stringify((await save()).value));
   await press('Review return of leftover workflow ICP');await idle();await signPrepared();saved=await save();
