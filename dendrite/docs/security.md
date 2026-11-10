@@ -124,7 +124,7 @@ with fresh checks at both steps and an unavoidable non-atomic gap. See
 | `pocket-ic 15.0.0` | Workspace development only | Required local consensus scenarios; remove on compatible replacement |
 | `backoff 0.4.0` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
 | `instant 0.1.13` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
-| `serde_cbor 0.11.2` | Official certification libraries and PocketIC | Not directly used by application code; review when certification reachability changes |
+| `serde_cbor 0.11.2` | Official certification libraries, PocketIC, and direct bootstrap refusal-certificate decoding | RUSTSEC-2021-0127 unmaintained dependency; the bootstrap accepts only owner-authenticated proofs bounded to 8 KiB and verifies the root signature, pinned Governance module and original ingress. Dendrite maintainers must review on codec/certification replacement or by 2026-12-04. |
 
 Automated dependency reachability fails if `pocket-ic`, `backoff`, or `instant` enters
 the production Wasm normal/build tree. Lockfiles, advisory scans, reproducible

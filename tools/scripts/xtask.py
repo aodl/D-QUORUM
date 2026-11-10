@@ -80,9 +80,10 @@ def run(args,kind='validator',name=None,show=True):
     print('+ '+' '.join(map(str,args)),flush=True)
     process=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     lines=[]
-    for line in process.stdout:
-        lines.append(line)
-        if show:print(line,end='',flush=True)
+    with process.stdout:
+        for line in process.stdout:
+            lines.append(line)
+            if show:print(line,end='',flush=True)
     process.wait()
     class Result:pass
     p=Result();p.returncode=process.returncode;p.stdout=''.join(lines)
