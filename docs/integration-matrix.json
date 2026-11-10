@@ -167,7 +167,9 @@
       "mandatory": true,
       "tests": [
         "unused ICP return reconciles the original fixed-account block after losing its reply",
-        "two browser plans restored from the same receipt preserve the same monetary timestamp and explicit fee",
+        "two tabs with different fresh timestamps can dispatch only one financial request through the shared reservation",
+        "a first payment after a 48-hour planning pause gets a fresh attempt timestamp and keeps the staking nonce",
+        "a certified first-dispatch BadFee refusal survives receipt reload and permits one fresh reviewed fee-bounded attempt",
         "current-controller recovery needs explicit consent and fresh C P plan and Governance bindings without historical proof",
         "recovery-only import cannot enable full workflow methods or change its on-chain fixed recipient",
         "recovery-only resume rejects absent unknown or differently controlled code and a changed target"
