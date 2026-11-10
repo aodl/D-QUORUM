@@ -162,14 +162,17 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       ||!sealed.system.moduleHash||!same(sealed.system.moduleHash,boundModule())||!sole(sealed.system,plan.owner)||s.sealed_controller_changes?.length!==1)throw Error("Historical sealed state/module/controller proof mismatch.");
     return s;
   }
+  function verifyTargetFollowing(n){
+    const map=new Map(n.followees);for(const f of plan.following){if(map.get(f.topic)?.followees.map(id=>id.id).join(",")!==f.followees.join(","))throw Error("Following changed after review.");}
+    if(n.followees.some(([topic,row])=>row.followees.length&&!plan.following.some(f=>f.topic===topic)))throw Error("Unexpected target following.");
+  }
   async function readiness({codeRemoved=false,quiescent=false,intentId}={}){
     fullWorkflow();if(variant(plan.profile)!=="ProductionCandidate")throw Error("Recoverable test neurons cannot finalise.");guard(intentId);await preflight();
     const s=codeRemoved||quiescent?await verifyHistoricalProvenance():await state();if(s.pending.length||s.external_proposal?.[0]?.proposal_id.length===0)throw Error("An outgoing bootstrap or external proposal operation remains unresolved.");
     await verifyC({empty:codeRemoved,installed:!codeRemoved});const management=actorFor("ManageBootstrap").management;verifySealedControllerChanges(s,await controllerHistory(),{codeRemoved});const n=await target();
     observed.controllerIcpBalance=await readControllerIcp(ownCanister());if(!acknowledgedDefaultIcp(receipt))throw Error("Explicitly acknowledge abandonment of C's unused default ICP balance and any later deposits before teardown. No stake or workflow funds are covered by this acknowledgement.");
     if(n.hot_keys.length||n.not_for_profit||n.visibility?.[0]!==2)throw Error("Target authority/visibility changed.");
-    const map=new Map(n.followees);for(const f of plan.following){if(map.get(f.topic)?.followees.map(id=>id.id).join(",")!==f.followees.join(","))throw Error("Following changed after review.");}
-    if(n.followees.some(([topic,row])=>row.followees.length&&!plan.following.some(f=>f.topic===topic)))throw Error("Unexpected target following.");
+    verifyTargetFollowing(n);
     const metadata=unwrap(await(await getNnsActor()).get_neuron_info(BigInt(receipt.neuron_id))).known_neuron_data?.[0];
     verifyCreationRegistrationMetadata(plan,metadata);
     if(!s.rehearsal_proposal[0])throw Error("An executed management rehearsal has not been established.");
@@ -285,6 +288,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(s.external_proposal?.length)throw Error("Reconcile the original reserved proposal and begin a fresh reviewed phase before another proposal fee.");
       if(kind==="Registration"&&(variant(plan.profile)!=="ProductionCandidate"||!plan.metadata.length||variant(s.phase)!=="AwaitingRegistration"))throw Error("Registration requires a configured production candidate and reviewed metadata.");
       if(kind==="Rehearsal"&&(!plan.managers.includes(manager)||(variant(plan.profile)==="ProductionCandidate"&&variant(s.phase)!=="Rehearsing")))throw Error("Begin the registered candidate's rehearsal checkpoint and select an existing target manager.");
+      if(kind==="Rehearsal")verifyTargetFollowing(t);
       const full=(await actor.list_neurons(listRequest(manager))).full_neurons?.[0],owner=plan.owner.toText();
       if(full?.id?.[0]?.id!==manager||!(full.controller?.[0]?.toText()===owner||full.hot_keys?.some(p=>p.toText()===owner)))throw Error("This II principal has no observed proposer controller/hotkey authority.");
       const economics=await actor.get_network_economics_parameters(),fee=kind==="Registration"?economics.reject_cost_e8s:economics.neuron_management_fee_per_proposal_e8s;
@@ -365,7 +369,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     async reviewDefaultIcp(){return run(async check=>{guard();await verifyC();await target();observed.controllerIcpBalance=await readControllerIcp(ownCanister());check();});},
     async acknowledgeDefaultIcp({confirmed:approved=false}={}){return run(async check=>{guard();if(!approved||observed.controllerIcpBalance===undefined||!receipt.canister_id||!receipt.neuron_id||variant(plan.profile)!=="ProductionCandidate")throw Error("Explicitly acknowledge the unused default-account balance and future arrivals for exact C/T.");await verifyC();await target();observed.controllerIcpBalance=await readControllerIcp(ownCanister());check();if(!acknowledgedDefaultIcp(receipt))checkpointCreation(receipt,"DefaultIcpAcknowledged",defaultIcpAcknowledgement(receipt));savedDigest=undefined;});},
     async readiness(){return run(async check=>{const result=await readiness();check();return result;});},
-    async seal(proposalId){return run(async check=>{guard();await state();await verifyRehearsal(proposalId,observed.state.rehearsal_started_at[0]);check();unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{Seal:proposalId}}));check();
+    async seal(proposalId){return run(async check=>{guard();await state();verifyTargetFollowing(await target());await verifyRehearsal(proposalId,observed.state.rehearsal_started_at[0]);check();unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{Seal:proposalId}}));check();
       const proof=await bootstrapStatusWithWitness(actorFor("CallBootstrap").bootstrap,plan.revision);if(variant(unwrap(proof.value).phase)!=="Sealed")throw Error("Bootstrap did not seal.");receipt.sealed_witness=proof.witness;await readiness();checkpointCreation(receipt,"Sealed",{witness:proof.witness.request_id});savedDigest=undefined;});},
     async stop(){return run(async check=>{const ready=await readiness();if(savedDigest!==receiptContentDigest(receipt))throw Error("Export the final sealed receipt before stopping/uninstalling.");check();const m=actorFor("ManageBootstrap").management;await m.stop_canister({canister_id:ownCanister()});check();const status=await m.canister_status({canister_id:ownCanister()});verifySealedControllerChanges(ready.s,await controllerHistory());if(variant(status.status)!=="stopped")throw Error("Canister is not confirmed quiescent.");observed.stopped=true;});},
     async prepareUninstall({typedCanister,typedNeuron,confirmed:approved=false}={}){return run(async check=>{guard();if(!approved||typedCanister!==receipt.canister_id||typedNeuron!==receipt.neuron_id)throw Error("Confirm the complete exact C and T identities separately for code removal.");

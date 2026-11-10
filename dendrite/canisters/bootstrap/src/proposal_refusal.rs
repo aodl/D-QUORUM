@@ -94,14 +94,6 @@ struct Error {
     error_message: String,
 }
 
-// Exact pinned ErrorType discriminants. make_proposal returns these before
-// charging/inserting; after insertion it returns Ok even if execution fails.
-// Preserve the existing narrow validation refusals and explicitly add the two
-// reviewed repairable preconditions (governance.proto: 11 and 14).
-pub fn audited_no_creation_error(code: i32) -> bool {
-    matches!(code, 3..=8 | 11 | 14)
-}
-
 pub fn verify(
     s: &State,
     p: &ProposalRefusalProof,

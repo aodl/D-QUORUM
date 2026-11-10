@@ -480,3 +480,10 @@ test('pinned proposal refusal discriminants preserve exact replicated audit clas
   await f.controller.prepareNnsProposal('Rehearsal',11n);
  });
 });
+
+test('changed target membership blocks a new rehearsal before another fee or reservation',async t=>{
+ const f=await recordedProposalFixture(t,'created');
+ f.neuron.followees.find(([topic])=>topic===1)[1].followees=[{id:16n}];
+ await assert.rejects(()=>f.controller.prepareNnsProposal('Rehearsal',11n),/Following changed/);
+ assert.equal(f.controller.prepared,undefined);assert.equal(f.calls(),0);assert.equal(f.bootstrapState.external_proposal.length,0);
+});

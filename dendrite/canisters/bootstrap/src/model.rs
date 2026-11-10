@@ -491,7 +491,7 @@ impl State {
                             || r.request_id.len() != 32
                             || r.certificate_digest.len() != 32
                             || r.reply_digest.len() != 32
-                            || !crate::proposal_refusal::audited_no_creation_error(r.error_type)
+                            || !audited_no_creation_error(r.error_type)
                     })
             })
             || (self.phase == Phase::Sealed && self.sealed_controller_changes.is_none())
@@ -677,4 +677,12 @@ pub fn migrate_checkpoint(
         state.version = STATE_VERSION;
     }
     Ok(())
+}
+
+// Exact pinned ErrorType discriminants. make_proposal returns these before
+// charging/inserting; after insertion it returns Ok even if execution fails.
+// Preserve the existing narrow validation refusals and explicitly add the two
+// reviewed repairable preconditions (governance.proto: 11 and 14).
+pub fn audited_no_creation_error(code: i32) -> bool {
+    matches!(code, 3..=8 | 11 | 14)
 }
