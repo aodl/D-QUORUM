@@ -338,7 +338,7 @@ test('an original rejected dispatch reservation releases no money and an ambiguo
 });
 
 const productionInput={...input,profile:'ProductionCandidate',defaultNeuronId:'18422777432977120264',managers:['11','12','13','14','15'],committedTopics:[4],delegates:{4:['11','12','13']},metadata:{name:'Recording provisional candidate',description:'P retains replaceable code and authority',links:[]}};
-async function recordedProposalFixture(t,outcome,production=false){
+async function recordedProposalFixture(t,outcome,production=false,refusalCode=14){
  const f=await recoveryFixture(t,'pending',production?productionInput:input),s=f.bootstrapState,p=f.controller.plan,govId=Principal.fromText('rrkah-fqaaa-aaaaa-aaaaq-cai');
  s.pending=[];s.neuron_id=[600n];s.public_visibility_confirmed=true;s.phase=production?{AwaitingRegistration:null}:{RecoverableTestReady:null};f.controller.receipt.neuron_id='600';
  const manager={id:[{id:11n}],controller:[owner],hot_keys:[],visibility:[2],followees:[],cached_neuron_stake_e8s:10000000000n,neuron_fees_e8s:0n,dissolve_state:[{DissolveDelaySeconds:63115200n}],deciding_voting_power:[500n]};
@@ -346,7 +346,7 @@ async function recordedProposalFixture(t,outcome,production=false){
  f.gov.list_neurons=async args=>({full_neurons:args.neuron_ids.map(id=>id===600n?neuron:{...manager,id:[{id}],followees:[[4,{followees:[{id:18422777432977120264n}]}]]}),total_pages_available:[1n]});
  const createReply=IDL.encode([IDL.Variant({Ok:IDL.Record({block_id:IDL.Nat,canister_id:IDL.Principal})})],[{Ok:{block_id:7n,canister_id:f.c}}]);
  const nnsSignature=nnsFactory({IDL})._fields.find(([name])=>name==='manage_neuron')[1],statusSignature=bootstrapFactory({IDL})._fields.find(([name])=>name==='status')[1];
- let calls=0,lastTarget;const returned=outcome==='refused'||outcome==='ambiguous'?{command:[{Error:{error_type:outcome==='refused'?5:12,error_message:'recorded typed Governance outcome'}}]}:{command:[{MakeProposal:{message:[],proposal_id:outcome==='missing-id'?[]:[{id:9n}]}}]};
+ let calls=0,lastTarget;const returned=outcome==='refused'||outcome==='ambiguous'?{command:[{Error:{error_type:outcome==='refused'?refusalCode:12,error_message:'recorded typed Governance outcome'}}]}:{command:[{MakeProposal:{message:[],proposal_id:outcome==='missing-id'?[]:[{id:9n}]}}]};
  const govReply=IDL.encode(nnsSignature.retTypes,[returned]);
  const agent={rootKey:new Uint8Array(96),getPrincipal:async()=>owner,addTransform(){},update:async(target,options)=>{
   lastTarget=target;const isGov=target.toText()===govId.toText();if(isGov){calls++;if(f.state.cancelAfterGov)await f.controller.cancelCapabilities();}
@@ -363,7 +363,7 @@ async function recordedProposalFixture(t,outcome,production=false){
   if(step.ReserveProposal)s.external_proposal=[{...step.ReserveProposal,created_at:BigInt(Math.floor(Date.now()/1000))}];
   if(step.MarkProposalDispatched){s.external_proposal[0].dispatched=true;if(outcome==='mark-lost')throw Error('recorded dispatch grant reply lost');}
   if(step.ResolveProposal){if(outcome==='resolve-lost'&&!f.state.repairResolution)throw Error('recorded bootstrap resolution reply lost');s.external_proposal[0].proposal_id=[step.ResolveProposal];}
-  if(step.ResolveProposalRefusal){if(f.state.loseRefusal)throw Error('recorded refusal audit unavailable');assert.equal(outcome,'refused');const reservation=s.external_proposal[0];assert.deepEqual(reservation.request_id[0],hexBytes(f.controller.receipt.intents.at(-1).request_binding.request_id));s.proposal_refusals=[[{reservation,request_id:reservation.request_id[0],certificate_digest:new Uint8Array(32),reply_digest:new Uint8Array(32),error_type:5}]];s.external_proposal=[];}
+  if(step.ResolveProposalRefusal){if(f.state.loseRefusal)throw Error('recorded refusal audit unavailable');assert.equal(outcome,'refused');const reservation=s.external_proposal[0];assert.deepEqual(reservation.request_id[0],hexBytes(f.controller.receipt.intents.at(-1).request_binding.request_id));s.proposal_refusals=[[{reservation,request_id:reservation.request_id[0],certificate_digest:new Uint8Array(32),reply_digest:new Uint8Array(32),error_type:refusalCode}]];s.external_proposal=[];}
   return {Ok:s};
  };
  return {...f,manager,neuron,calls:()=>calls};
@@ -374,7 +374,7 @@ test('proposal adapter retains exact created, definitively refused and ambiguous
   if(outcome==='created'){await f.controller.dispatch({saved:true,confirmed:true});assert.equal(intent.state,'Confirmed');assert.equal(intent.references.proposal_id,'9');assert.ok(f.controller.receipt.bootstrap_witness);}
   else {await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/recorded|ambiguous|omitted/);assert.equal(intent.state,outcome==='refused'?'Rejected':'Unknown');}
   assert.equal(f.calls(),1);assert.ok(intent.reply_witness);assert.equal(intent.request_binding.request_id,intent.reply_witness.request_id);
-  if(outcome==='refused'){assert.equal(f.bootstrapState.external_proposal.length,0);assert.equal(f.bootstrapState.proposal_refusals[0][0].error_type,5);await f.controller.prepareNnsProposal('Rehearsal',11n);assert.notEqual(f.controller.prepared.intent.id,intent.id);}
+  if(outcome==='refused'){assert.equal(f.bootstrapState.external_proposal.length,0);assert.equal(f.bootstrapState.proposal_refusals[0][0].error_type,14);await f.controller.prepareNnsProposal('Rehearsal',11n);assert.notEqual(f.controller.prepared.intent.id,intent.id);}
   if(['ambiguous','missing-id','resolve-lost'].includes(outcome)){assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);await assert.rejects(()=>f.controller.prepareNnsProposal('Rehearsal',11n),/unresolved|Reconcile/);assert.equal(f.calls(),1);}
  });
 });
@@ -470,4 +470,13 @@ test('installation publishes its independently verified module observation immed
  await f.controller.install();
  assert.deepEqual(f.controller.observed.system.moduleHash,f.controller.plan.bootstrap_sha256,'an old empty-module observation must not describe a verified successful installation');
  assert.equal(f.controller.receipt.checkpoints.filter(row=>row.kind==='Installed').length,1);
+});
+
+test('pinned proposal refusal discriminants preserve exact replicated audit classification',async t=>{
+ for(const code of [3,11,14])await t.test(`audited code ${code}`,async t=>{
+  const f=await recordedProposalFixture(t,'refused',false,code);await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/recorded typed/);
+  assert.equal(f.controller.receipt.intents.at(-1).state,'Rejected');assert.equal(f.bootstrapState.proposal_refusals[0][0].error_type,code);
+  await f.controller.prepareNnsProposal('Rehearsal',11n);
+ });
 });

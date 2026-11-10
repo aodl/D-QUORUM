@@ -64,7 +64,13 @@ fixed destination/method, original arguments, ingress expiry and nonce, and requ
 that ID to equal the reservation recorded before dispatch. A legacy reservation
 without that binding cannot be force-cleared. Root BLS
 verification, the exact pinned Governance module and audited pre-insertion error
-codes are required. External/unknown/malformed outcomes remain reserved. The
+codes are required. The pinned enum uses `PreconditionFailed = 11` and
+`InsufficientFunds = 14` (6 and 5 are different errors). These two repairable
+refusals and the existing narrow 3–8 validation refusals are accepted only with
+the original certified MakeProposal reply. In pinned `governance.rs::make_proposal`,
+validation, authority and funding checks precede fee charging and insertion;
+after insertion the method returns the proposal ID even if execution fails.
+External/unknown/malformed outcomes remain reserved. The
 terminal audit retains the original reservation and request/certificate/reply
 digests (at most 16 terminal rows). There is no force-clear switch.
 

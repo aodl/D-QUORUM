@@ -94,6 +94,14 @@ struct Error {
     error_message: String,
 }
 
+// Exact pinned ErrorType discriminants. make_proposal returns these before
+// charging/inserting; after insertion it returns Ok even if execution fails.
+// Preserve the existing narrow validation refusals and explicitly add the two
+// reviewed repairable preconditions (governance.proto: 11 and 14).
+pub fn audited_no_creation_error(code: i32) -> bool {
+    matches!(code, 3..=8 | 11 | 14)
+}
+
 pub fn verify(
     s: &State,
     p: &ProposalRefusalProof,
@@ -182,7 +190,7 @@ pub fn verify(
     // Pinned governance.rs make_proposal checks these before charging/insertion.
     // After insertion it returns Ok(proposal_id), including execution failures.
     // External(12), malformed, unknown and future codes are deliberately unresolved.
-    if !(3..=8).contains(&error.error_type) || error.error_message.len() > 8192 {
+    if !audited_no_creation_error(error.error_type) || error.error_message.len() > 8192 {
         return Err("Governance outcome is not an audited no-creation refusal".into());
     }
     Ok(ProposalRefusalAudit {

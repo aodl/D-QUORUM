@@ -18,9 +18,10 @@ import {buildManageNeuronProposal,buildDirectManagerOperation,encodeManageNeuron
 const governance=Principal.fromText(NNS_GOVERNANCE_CANISTER_ID),cmcId=Principal.fromText(CMC_CANISTER_ID);
 const variant=v=>Object.keys(v??{})[0];
 const same=(a,b)=>bytesHex(a)===bytesHex(b);
+const auditedProposalRefusal=code=>Number.isInteger(code)&&((code>=3&&code<=8)||code===11||code===14);
 function originalRefusalAudit(state,intent,code){
   const id=intent.request_binding?.request_id;if(!id)return undefined;
-  return state.proposal_refusals?.[0]?.find(a=>a.error_type>=3&&a.error_type<=8&&(code===undefined||a.error_type===code)
+  return state.proposal_refusals?.[0]?.find(a=>auditedProposalRefusal(a.error_type)&&(code===undefined||a.error_type===code)
     &&a.request_id&&a.reservation?.request_id?.[0]&&same(a.request_id,hexBytes(id))&&same(a.reservation.request_id[0],hexBytes(id))
     &&same(a.reservation.intent_id,hexBytes(intent.id))&&same(a.reservation.request_digest,hexBytes(intent.argument_digest)));
 }
@@ -302,7 +303,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
         const proof=await creationProposalWithWitness(actor,request,intent.request_binding),response=proof.value,command=response.command?.[0];intent.reply_witness=proof.witness;check();
         if(command?.Error){
           const code=command.Error.error_type;
-          if(Number.isInteger(code)&&code>=3&&code<=8){
+          if(auditedProposalRefusal(code)){
             const w=proof.witness.request;
             const result=unwrap(await bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(operationId),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
             check();if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
@@ -344,7 +345,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       const proof=await readCreationRequestWitness(await getNnsActor(),intent.request_binding);if(bytesHex(proof.system.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[NNS_GOVERNANCE_CANISTER_ID])throw Error("Original reply has an unreviewed Governance module.");check();intent.reply_witness=proof.witness;
       const command=proof.value.command?.[0],id=command?.MakeProposal?.proposal_id?.[0]?.id;
       if(id){unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposal:id}}));check();settleCreationIntent(receipt,intent.id,"Confirmed",{proposal_id:String(id)});receipt.bootstrap_witness=(await bootstrapStatusWithWitness(actorFor("CallBootstrap").bootstrap,plan.revision)).witness;}
-      else if(command?.Error&&command.Error.error_type>=3&&command.Error.error_type<=8){const w=proof.witness.request,result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
+      else if(command?.Error&&auditedProposalRefusal(command.Error.error_type)){const w=proof.witness.request,result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
         if(!originalRefusalAudit(result,intent,command.Error.error_type))throw Error("Original refusal audit was not replicated.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");}
       else throw Error("Original outcome is not an audited successful creation or no-creation refusal; retain its identity.");
     });},

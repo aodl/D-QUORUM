@@ -1,0 +1,9 @@
+{
+  "classification": "Actual II browser-signed pinned Governance name-collision reply; real BLS certificate. Reservation reconstructed from exported original request for native verifier tests; not a captured stable checkpoint or completed journey.",
+  "source": "94ed685",
+  "world": "browser-world-creation-production-2073358",
+  "receipt_sha256": "7d6b73a3a8f86356ea153b51aef727f71ea9ff7f46f0642524ebccc39ae34052",
+  "fixture_sha256": "275e14a2607b31dbc0b560e16d705c1f53ac80270db77cf35490e0c3b00fdc9e",
+  "request_id": "5290ba00f6b4e4cbf76bcefe738ae8b91bd9fb57ea532cf1a3872ecca1d565f1",
+  "error_type": 11
+}

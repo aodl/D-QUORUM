@@ -505,7 +505,7 @@ pub fn coordinate(
         assert!(state.external_proposal.is_none());
         let audit = state.proposal_refusals.unwrap();
         assert_eq!(audit.len(), 1);
-        assert_eq!(audit[0].error_type, 6);
+        assert_eq!(audit[0].error_type, 11);
         assert_eq!(
             audit[0].request_id,
             hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()
@@ -534,7 +534,7 @@ pub fn coordinate(
             "classification":"genuine browser-signed Governance refusal accepted by the actual approved bootstrap; public stable state and proof only; this checkpoint alone is not full browser qualification",
             "controller":c.to_text(),"creator":p.to_text(),"neuron":t,"image_sha256":hex::encode(Sha256::digest(&image)),
             "proof_sha256":hex::encode(Sha256::digest(&proof)),"bootstrap_sha256":hex::encode(pic.canister_status(c,Some(p)).unwrap().module_hash.unwrap()),
-            "now_ns":pic.get_time().as_nanos_since_unix_epoch(),"error_type":6
+            "now_ns":pic.get_time().as_nanos_since_unix_epoch(),"error_type":11
         })).unwrap()).unwrap();
         // Explicitly labelled native upgrade fault, after browser-created C and
         // an actual signed Governance refusal. No provisioning/finalisation substitution.
@@ -585,7 +585,7 @@ pub fn coordinate(
         assert!(state.external_proposal.is_none());
         let audits = state.proposal_refusals.unwrap();
         assert_eq!(audits.len(), 2);
-        assert_eq!(audits[1].error_type, 5);
+        assert_eq!(audits[1].error_type, 14);
         assert_eq!(
             audits[1].request_id,
             hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()

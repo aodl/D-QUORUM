@@ -491,7 +491,7 @@ impl State {
                             || r.request_id.len() != 32
                             || r.certificate_digest.len() != 32
                             || r.reply_digest.len() != 32
-                            || !(3..=8).contains(&r.error_type)
+                            || !crate::proposal_refusal::audited_no_creation_error(r.error_type)
                     })
             })
             || (self.phase == Phase::Sealed && self.sealed_controller_changes.is_none())

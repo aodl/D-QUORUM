@@ -1216,3 +1216,53 @@ fn genuine_reviewed_v1_image_migrates_without_replacing_pending_claim_identity()
     assert_eq!(original.pending, pending);
     original.validate_restored(original.controller).unwrap();
 }
+
+#[test]
+fn real_browser_registration_refusal_verifies_without_discarding_ambiguous_requests() {
+    #[derive(candid::CandidType, candid::Deserialize)]
+    struct Fixture {
+        owner: Principal,
+        reservation: ExternalProposal,
+        proof: ProposalRefusalProof,
+        now_ns: u64,
+    }
+    let fixture: Fixture = candid::decode_one(include_bytes!(
+        "../fixtures/real-registration-name-refusal.bin"
+    ))
+    .unwrap();
+    // This reservation is reconstructed from the exported original request, not
+    // represented as an independently captured stable checkpoint.
+    let mut p = plan(true);
+    p.owner = fixture.owner;
+    let mut state = State::new(p, Principal::from_slice(&[1, 1])).unwrap();
+    state.external_proposal = Some(fixture.reservation);
+    let verify = |s: &State, proof: &ProposalRefusalProof| {
+        crate::proposal_refusal::verify(s, proof, fixture.now_ns)
+    };
+    let audit = verify(&state, &fixture.proof).unwrap();
+    assert_eq!(audit.error_type, 11); // pinned PreconditionFailed, not 6
+    let mut changed = state.clone();
+    changed.plan.owner = Principal::anonymous();
+    assert!(verify(&changed, &fixture.proof).is_err());
+    changed = state.clone();
+    changed.external_proposal.as_mut().unwrap().request_id = Some(vec![0; 32]);
+    assert!(verify(&changed, &fixture.proof).is_err());
+    changed.external_proposal.as_mut().unwrap().request_id = None;
+    assert!(verify(&changed, &fixture.proof).is_err());
+    let mut forged = fixture.proof.clone();
+    forged.nonce = Some(vec![0; 32]);
+    assert!(verify(&state, &forged).is_err());
+    let mut cert: ic_certification::Certificate =
+        serde_cbor::from_slice(&fixture.proof.certificate).unwrap();
+    cert.signature[0] ^= 1;
+    forged = fixture.proof;
+    forged.certificate = serde_cbor::to_vec(&cert).unwrap();
+    assert!(verify(&state, &forged).is_err());
+    state.external_proposal = None;
+    state.proposal_refusals = Some(vec![audit]);
+    assert!(
+        state
+            .validate_restored(Principal::from_slice(&[1, 1]))
+            .is_ok()
+    );
+}

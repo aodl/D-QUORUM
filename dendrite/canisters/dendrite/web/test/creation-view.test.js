@@ -163,3 +163,14 @@ test("signed-out planning and unavailable authority or funding evidence never im
   f.c.observed.quote={fee:10000n,cyclesFee:100000000n,rate:{xdr_permyriad_per_icp:50000n,timestamp_seconds:1n},estimatedGrossCycles:5000000000000n,estimatedDepositCredit:4999900000000n,estimatedRemainingCycles:2999800000000n};f.c.observed.stakeBalance=f.c.plan.stake_e8s;f.view.render(f.root);assert.match(f.root.textContent,/deposit fee/);assert.match(f.root.textContent,/exact reviewed amount is present/);
  }finally{f.close();}
 });
+
+test("NNS dispatch errors survive clearing and rerendering the exact review",async()=>{
+ const f=mount({production:true});try{
+  f.c.prepared={details:"Exact registration",args:{},intent:{id:"original",destination:cId,argument_digest:"ab"},nnsReview:{kind:"DirectCreationRegistration",details:[],request:{},operation:"Registration"}};
+  f.c.dispatch=async()=>{f.c.prepared=undefined;f.c.receipt.intents=[{id:"original",kind:"Registration",state:"Unknown"}];f.view.render(f.root);throw Error("Certified refusal audit unavailable; preserve original identity");};
+  f.view.render(f.root);await button(f.root,"Submit exact reviewed request").click();
+  assert.match(f.root.textContent,/Certified refusal audit unavailable; preserve original identity/);
+  assert.ok(walk(f.root).some(n=>n.attributes.role==="alert"&&n.textContent.includes("Certified refusal audit unavailable")));
+  assert.match(f.root.textContent,/Interrupted\/unknown Registration/);assert.ok(!button(f.root,"Submit exact reviewed request"));
+ }finally{f.close();}
+});
