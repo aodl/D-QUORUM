@@ -36,14 +36,35 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   // Recover the public hardware-window reference in a fresh application heap.
   await identity.evaluate(origin=>{if(window.opener&&!window.opener.closed)window.opener.postMessage('dendrite-native-window-reference-v1',origin);},origin);
   await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
-  await identity.bringToFront();await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});
-  await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
   // Mirror normal named-popup opening for the active application document.
-  // Link the new II document after navigation, which can reset its opener.
+  // Link after navigation resets the opener, but before II scripts capture it.
   // Only WindowProxy references cross this test-only handshake, never RPC data.
-  await identity.evaluate(origin=>{globalThis.creationNativeOpenerLinked=false;const receive=event=>{if(event.origin===origin&&event.data==='dendrite-native-opener-v1'&&event.source){window.removeEventListener('message',receive);window.opener=event.source;globalThis.creationNativeOpenerLinked=true;}};window.addEventListener('message',receive);},origin);
-  await page.evaluate(providerOrigin=>{const target=globalThis.creationNativeSignerWindow??window.opener?.creationNativeSignerWindow;target.postMessage('dendrite-native-opener-v1',providerOrigin);},providerOrigin);
-  await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
+  const linkCurrentDocument=async()=>{
+   await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
+   await identity.evaluate(origin=>{globalThis.creationNativeOpenerLinked=false;const receive=event=>{if(event.origin===origin&&event.data==='dendrite-native-opener-v1'&&event.source){window.removeEventListener('message',receive);window.opener=event.source;globalThis.creationNativeOpenerLinked=true;}};window.addEventListener('message',receive);},origin);
+   await page.evaluate(providerOrigin=>{const target=globalThis.creationNativeSignerWindow??window.opener?.creationNativeSignerWindow;target.postMessage('dendrite-native-opener-v1',providerOrigin);},providerOrigin);
+   await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
+  };
+  await identity.bringToFront();
+  if(page===participant.page){await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});await linkCurrentDocument();return;}
+  // Chrome's virtual hardware stays in this II target. Hold only its script
+  // loading during the public opener handoff; never alter script bytes or RPCs.
+  await identity.setCacheEnabled(false);await identity.setRequestInterception(true);
+  let hold=true,scriptSeen,deadline;const scripts=[],ready=new Promise(resolve=>scriptSeen=resolve);
+  const request=req=>{if(hold&&req.resourceType()==='script'){scripts.push(req);scriptSeen();}else void req.continue();};
+  identity.on('request',request);
+  const navigation=identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});navigation.catch(()=>{});
+  const release=async()=>{hold=false;for(const req of scripts)if(!req.isInterceptResolutionHandled())await req.continue();};
+  try{
+   await Promise.race([ready,new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('Native II opener handoff did not observe script loading')),5000);})]);
+   clearTimeout(deadline);await linkCurrentDocument();await release();await navigation;
+  }finally{
+   clearTimeout(deadline);await release();identity.off('request',request);
+   await identity.setRequestInterception(false);await identity.setCacheEnabled(true);
+  }
+  const policyFile=`${directory}/sdk-window-policy.json`,policy=JSON.parse(await readFile(policyFile,'utf8'));
+  policy.secondary_document_handoff={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
+  await writeEvidence(policyFile,JSON.stringify(policy,null,2));
  }
 
  async function reauthenticate(label,participant=user){

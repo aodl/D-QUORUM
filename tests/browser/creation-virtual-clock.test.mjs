@@ -23,7 +23,7 @@ test('terminal II authentication failure reaches bounded setup recovery without 
  }
 });
 
-test('native II window handoff closes document channels before navigation and links the new II document after navigation',async()=>{
+test('native II window handoff links the new document before releasing its scripts and closes each document channel once',async()=>{
  const source=await readFile(new URL('./creation-journey.mjs',import.meta.url),'utf8');
  const start=source.indexOf('async function reloadIdentityDocument(participant){'),end=source.indexOf('\n async function reauthenticate(',start);
  assert.ok(start>=0&&end>start);
@@ -35,10 +35,12 @@ test('native II window handoff closes document channels before navigation and li
    });
   },waitForFunction:async()=>{}});
   const owner=document('owner'),page=secondary?document('secondary'):owner;
-  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',goto:async()=>events.push('navigate II')};
-  const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL});
+  let handler,continued=false,finishNavigation;
+  const script={resourceType:()=> 'script',isInterceptResolutionHandled:()=>continued,continue:async()=>{continued=true;events.push('release II script');finishNavigation();}};
+  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',setCacheEnabled:async()=>{},setRequestInterception:async()=>{},on:(_,fn)=>handler=fn,off:()=>{},goto:()=>{events.push('navigate II');if(secondary){const result=new Promise(resolve=>finishNavigation=resolve);handler(script);return result;}return Promise.resolve();}};
+  const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL,setTimeout,clearTimeout,directory:'public-evidence',readFile:async()=> '{}',writeEvidence:async()=>{}});
   await reload({page:owner,nativeDevice:{popup:identity}});
-  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document']:['closed owner','navigate II','link current II document']);
+  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document','release II script']:['closed owner','navigate II','link current II document']);
  }
 });
 
