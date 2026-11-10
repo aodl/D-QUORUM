@@ -1470,11 +1470,13 @@ fn browser_world(scenario: &str) {
         "browser-system.log",
         "ii-failure.json",
         "authentication-retries.json",
+        "creation-reauthentication-retries.json",
         "review.json",
         "submitted.json",
         "voted.json",
         "scope-probe.json",
         "sdk-window-policy.json",
+        "browser-scheduling-policy.json",
         "creation-principal.json",
         "creation-plan.json",
         "creation-controller-installed.json",
@@ -1493,6 +1495,8 @@ fn browser_world(scenario: &str) {
         "clock-offset-ns",
         "creation-historical-frontend-migrated.json",
         "creation-recoverable-90-day-resumed.json",
+        "creation-stake-payment-unknown.json",
+        "creation-stake-payment-recovered.json",
         "creation-31-day-resumed.json",
         "creation-90-day-resumed.json",
         "creation-sealed.json",
@@ -1545,7 +1549,12 @@ fn browser_world(scenario: &str) {
         }
     }
     for (variant, prefix) in [("upgrade", "upgraded"), ("corrupt-http", "corrupt-http")] {
-        for filename in ["local-build.json", "dendrite-local.wasm"] {
+        for filename in [
+            "local-build.json",
+            "dendrite-local.wasm",
+            "sdk-window-policy.json",
+            "historical-bootstrap-policy.json",
+        ] {
             let path = directory.join(variant).join(filename);
             if path.exists() {
                 fs::copy(path, evidence.join(format!("{prefix}-{filename}"))).unwrap();

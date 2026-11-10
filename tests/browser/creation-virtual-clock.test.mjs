@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {advanceCreationBrowserClocks,installCreationClockBeforeResume} from './creation-virtual-clock.mjs';
+import {advanceCreationBrowserClocks,installCreationClockBeforeResume,installCreationPageClock} from './creation-virtual-clock.mjs';
 
 test('coordinated local time changes Date construction and now while preserving explicit timestamps and future popup clocks',async()=>{
  const realm=vm.createContext({}),scripts=[];
@@ -18,6 +18,12 @@ test('coordinated local time changes Date construction and now while preserving 
  assert.equal(commands[0].name,'Page.addScriptToEvaluateOnNewDocument');
  const popup=vm.createContext({});vm.runInContext(commands[0].args.source,popup);
  assert.ok(Math.abs(vm.runInContext('Date.now()',popup)-(Date.now()+90*86400000))<1000);
+ const lateRealm=vm.createContext({}),lateScripts=[];
+ await installCreationPageClock({evaluateOnNewDocument:async(fn,offset)=>lateScripts.push(`(${fn})(${offset})`),evaluate:async(fn,offset)=>vm.runInContext(`(${fn})(${offset})`,lateRealm)});
+ assert.ok(Math.abs(vm.runInContext('Date.now()',lateRealm)-(Date.now()+90*86400000))<1000);
+ const navigated=vm.createContext({});for(const script of lateScripts)vm.runInContext(script,navigated);
+ assert.ok(Math.abs(vm.runInContext('new Date().getTime()',navigated)-(Date.now()+90*86400000))<1000);
+ assert.equal(vm.runInContext('new Date(123).getTime()',navigated),123,'old explicit operation timestamps are never renewed');
  assert.equal(scripts.length,2);
  await assert.rejects(()=>advanceCreationBrowserClocks(participants,Date.now()-1000));
  await assert.rejects(()=>advanceCreationBrowserClocks(participants,Date.now()+121*86400000));

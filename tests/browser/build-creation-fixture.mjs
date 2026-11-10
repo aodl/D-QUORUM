@@ -9,6 +9,8 @@ import {pathToFileURL} from 'node:url';
 const source=resolve(process.argv[2]),{buildFrontend}=await import(pathToFileURL(`${source}/canisters/dendrite/web/build-frontend.mjs`));
 const historical=process.argv[3]==='--reviewed-v1-bootstrap';
 if(process.argv.length>3&&!historical)throw Error('Only the reviewed V1 fixture selection is supported');
+const providerOrigin=new URL(process.env.DENDRITE_IDENTITY_PROVIDER).origin;
+if(process.env.DENDRITE_BUILD_MODE!=='local'||!new URL(providerOrigin).hostname.endsWith('.localhost'))throw Error('Native window retention is local-test infrastructure only');
 let transformed=0,historicalTransforms=0;
 await buildFrontend({plugins:[{name:'creation-native-authenticator-window',setup(build){
 if(historical)build.onLoad({filter:/creation-controller\.js$/},async({path})=>{
@@ -27,7 +29,7 @@ build.onLoad({filter:/@icp-sdk\/auth\/dist\/esm\/client\/auth-client\.js$/},asyn
  if(original.split(needle).length!==2)throw Error('Pinned AuthClient constructor changed; review native-device retention before testing');
  if(original.split('new PostMessageTransport({').length!==2)throw Error('Pinned AuthClient transport constructor changed');
  const windowProvider=`window: { open(url, name, features) {
-   const resident = globalThis.creationNativeSignerWindow;
+   const resident = globalThis.creationNativeSignerWindow ?? (() => { try { return globalThis.window.opener?.creationNativeSignerWindow; } catch { return undefined; } })();
    const existing = resident && !resident.closed ? resident : globalThis.window.open('', name, features);
    if (!existing) return existing;
    globalThis.creationNativeSignerWindow = existing;
@@ -41,9 +43,17 @@ build.onLoad({filter:/@icp-sdk\/auth\/dist\/esm\/client\/auth-client\.js$/},asyn
  // each other's status messages in this pinned SDK. Share only its transport
  // signer; AuthClient still requests a new genuine II delegation to each fresh
  // nonextractable key. No identity/delegation or capability is shared here.
- const contents=original.replace(needle,'globalThis.creationNativeSigner ??= new Signer({ autoCloseTransportChannel: false,').replace('new PostMessageTransport({',`new PostMessageTransport({ ${windowProvider}`);
- await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{window:'real named II window without repeat navigation; native device stays resident after real channel closure; close listeners still reject failed requests'},original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(contents).digest('hex')},null,2));
- transformed++;return {contents:`globalThis.creationNativeAuthenticatorWindow = true;\n${contents}`,loader:'js'};
+ const contents=original.replace(needle,'globalThis.creationNativeSigner ??= new Signer({ autoCloseTransportChannel: false,').replace('new PostMessageTransport({',`new PostMessageTransport({ closeOnEstablishTimeout: false, closeOnPendingTimeout: false, ${windowProvider}`);
+ const fixtureContents=`globalThis.creationNativeAuthenticatorWindow = true;
+globalThis.addEventListener('message', event => {
+ if (event.origin === ${JSON.stringify(providerOrigin)} && event.data === 'dendrite-native-window-reference-v1' && event.source) {
+  globalThis.creationNativeSignerWindow = event.source;
+  globalThis.creationNativeWindowLinked = true;
+ }
+});
+${contents}`;
+ await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{closeOnEstablishTimeout:false,closeOnPendingTimeout:false,window:'retained real II target; public WindowProxy handoff after document restart and same-origin secondary document; no SDK envelope forwarding; channel close/listeners and timeouts unchanged'},original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(fixtureContents).digest('hex')},null,2));
+ transformed++;return {contents:fixtureContents,loader:'js'};
  });}}]});
 if(transformed!==1)throw Error('Native-authenticator fixture option was not applied exactly once');
 

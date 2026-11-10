@@ -340,14 +340,18 @@ pub fn coordinate(
     if production {
         browser_clock::advance(pic, directory, Duration::from_secs(48 * 3600));
     }
-    let stake_block = transfer_external(
-        pic,
-        l::Account {
-            owner: GOVERNANCE,
-            subaccount: Some(subaccount.clone()),
-        },
-        stake,
-    );
+    let mut stake_block = if production {
+        transfer_external(
+            pic,
+            l::Account {
+                owner: GOVERNANCE,
+                subaccount: Some(subaccount.clone()),
+            },
+            stake,
+        )
+    } else {
+        0
+    };
     if !production {
         browser_clock::advance(pic, directory, Duration::from_secs(31 * 86_400));
         let next = upgraded_frontend
@@ -373,10 +377,79 @@ pub fn coordinate(
     }
     publish(
         directory,
-        "creation-stake-funded",
-        serde_json::json!({"block":stake_block,"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+        if production {
+            "creation-stake-funded"
+        } else {
+            "creation-stake-ready"
+        },
+        serde_json::json!({"external_block":production.then_some(stake_block),"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
     );
+    let uncertain_payment = if !production {
+        let receipt = signal(directory, "creation-stake-payment-unknown", child);
+        let intent = receipt["intents"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(intent["kind"], "PayStake");
+        assert_eq!(intent["state"], "Unknown");
+        let balance: candid::Nat = query(
+            pic,
+            LEDGER,
+            "icrc1_balance_of",
+            l::Account {
+                owner: GOVERNANCE,
+                subaccount: Some(subaccount.clone()),
+            },
+        );
+        assert_eq!(
+            balance,
+            candid::Nat::from(stake),
+            "lost signed payment actually funded the original staking account"
+        );
+        browser_clock::advance(pic, directory, Duration::from_secs(59 * 86_400));
+        publish(
+            directory,
+            "creation-financial-90-day-clock",
+            serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+        );
+        Some(intent)
+    } else {
+        None
+    };
     let configured = signal(directory, "creation-configured", child);
+    if let Some(original) = uncertain_payment {
+        let confirmed = configured["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == original["id"])
+            .unwrap();
+        for field in [
+            "id",
+            "argument",
+            "created_at_time",
+            "request_binding",
+            "reservation_binding",
+        ] {
+            assert_eq!(confirmed[field], original[field]);
+        }
+        assert_eq!(confirmed["state"], "Confirmed");
+        stake_block = receipt_id(&confirmed["references"], "block_id");
+        let history: l::History = query(
+            pic,
+            LEDGER,
+            "query_blocks",
+            l::BlocksArgs {
+                start: 0,
+                length: 100,
+            },
+        );
+        assert!(history.chain_length <= 100);
+        let destination = l::account_id(GOVERNANCE, Some(&subaccount));
+        assert_eq!(history.blocks.iter().filter(|b| matches!(&b.transaction.operation, Some(l::Operation::Transfer { to, .. }) if *to == destination)).count(), 1, "late recovery and a second authenticated tab did not stake twice");
+    }
     let t = receipt_id(&configured, "neuron_id");
     let n = public_neuron(pic, t);
     assert_eq!(n.controller, Some(c));
@@ -593,9 +666,6 @@ pub fn coordinate(
             100_000_000,
         );
     }
-    if !production {
-        browser_clock::advance(pic, directory, Duration::from_secs(59 * 86_400));
-    }
     publish(
         directory,
         "creation-rehearsal-verified",
@@ -631,7 +701,7 @@ pub fn coordinate(
         );
         assert_eq!(history.blocks.len(), 1);
         assert!(
-            matches!(&history.blocks[0].transaction.operation,Some(l::Operation::Transfer{from,to,amount,fee,..}) if *from==l::account_id(p,Some(&bucket)) && *to==l::account_id(p,None) && amount.e8s==399_990_000 && fee.e8s==10_000)
+            matches!(&history.blocks[0].transaction.operation,Some(l::Operation::Transfer{from,to,amount,fee,..}) if *from==l::account_id(p,Some(&bucket)) && *to==l::account_id(p,None) && amount.e8s==500_000_000-receipt_id(&plan["plan"], "funding_budget_e8s")-stake-30_000 && fee.e8s==10_000)
         );
         assert_eq!(public_neuron(pic, t).cached_neuron_stake_e8s, stake);
         assert_eq!(pic.get_controllers(c), vec![p]);
@@ -806,7 +876,9 @@ pub fn coordinate(
         "cycles_after_journey":remaining_cycles.to_string(),"observed_execution_and_storage_cycles":installed_cycles.saturating_sub(remaining_cycles).to_string(),
         "reviewed_reserve":installed["plan"]["cycle_reserve"],"remaining_P_cycles_ledger_balance":pool_cycles.to_string(),
         "remaining_P_workflow_ICP_e8s":ledger_balance.to_string(),"stake_e8s":stake.to_string(),
-        "external_workflow_funding_block":funding_block,"external_stake_funding_block":stake_block,
+        "external_workflow_funding_block":funding_block,"external_stake_funding_block":production.then_some(stake_block),
+        "browser_stake_funding_block":(!production).then_some(stake_block),
+        "stake_funding_route":if production {"external-wallet fixture"} else {"real scoped browser transfer; reply lost; permanent-block reconciliation after 90-day pause"},
         "refund_scope":if production {"unused P-owned ICP/cycles remain; locked stake stays in T"}else{"unused workflow ICP returned; locked stake still waits actual seven-day recovery"}
     })).unwrap()).unwrap();
     publish(

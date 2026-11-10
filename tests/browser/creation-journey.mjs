@@ -1,4 +1,4 @@
-import {advanceCreationBrowserClocks} from './creation-virtual-clock.mjs';
+import {advanceCreationBrowserClocks,installCreationPageClock} from './creation-virtual-clock.mjs';
 // Real compiled UI only. Public receipts/IDs cross the coordinator boundary;
 // II credentials, passkeys and delegation material never leave Chrome.
 import {mkdir,readdir,readFile,stat} from 'node:fs/promises';
@@ -26,41 +26,77 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  async function fill(name,value){console.error(JSON.stringify({phase:'creation field',name}));await page.bringToFront();await page.$eval(`[name="${name}"]`,el=>{el.value='';});await page.type(`[name="${name}"]`,value);}
  async function save(){const previous=new Map(await Promise.all((await readdir(receipts)).filter(n=>n.endsWith('.json')).map(async n=>[n,(await stat(`${receipts}/${n}`)).mtimeMs])));await press('Save creation receipt');
   for(let i=0;i<200;i++){for(const n of(await readdir(receipts)).filter(n=>n.endsWith('.json'))){const file=`${receipts}/${n}`;if((await stat(file)).mtimeMs!==previous.get(n)){try{const json=await readFile(file,'utf8'),value=JSON.parse(json);return {file,json,value};}catch{}}}await pause(50);}throw Error('Actual receipt download did not complete');}
- async function signPrepared({holdController=false,holdProposal=false,holdRegistration=false,loseProposal=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController||holdProposal||holdRegistration||loseProposal)await page.evaluate(async mode=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm(mode);},holdController?'holdController':loseProposal?'lose':'hold');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdRegistration){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-registration-reserved.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-registration-name-conflicted');await page.evaluate(()=>fixtureMutationFault.release());}if(holdProposal){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-rehearsal-fee-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-rehearsal-fee-raised');await page.evaluate(()=>fixtureMutationFault.release());}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
- async function reauthenticate(label,participant=user){let popup=(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
+ async function signPrepared({holdController=false,holdProposal=false,holdRegistration=false,loseProposal=false,losePayment=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController||holdProposal||holdRegistration||loseProposal||losePayment)await page.evaluate(async mode=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm(mode);},losePayment?'losePayment':holdController?'holdController':loseProposal?'lose':'hold');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdRegistration){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-registration-reserved.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-registration-name-conflicted');await page.evaluate(()=>fixtureMutationFault.release());}if(holdProposal){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-rehearsal-fee-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-rehearsal-fee-raised');await page.evaluate(()=>fixtureMutationFault.release());}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
+ const authenticationRestarts=[];
+ async function reloadIdentityDocument(participant){
+  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
+  const identity=participant.nativeDevice.popup,providerOrigin=new URL(identity.url()).origin;
+  // Recover the public hardware-window reference in a fresh application heap.
+  await identity.evaluate(origin=>{if(window.opener&&!window.opener.closed)window.opener.postMessage('dendrite-native-window-reference-v1',origin);},origin);
+  await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
+  // Mirror normal named-popup opening for the active application document.
+  // Only WindowProxy references cross this test-only handshake, never RPC data.
+  await identity.evaluate(origin=>{globalThis.creationNativeOpenerLinked=false;const receive=event=>{if(event.origin===origin&&event.data==='dendrite-native-opener-v1'&&event.source){window.removeEventListener('message',receive);window.opener=event.source;globalThis.creationNativeOpenerLinked=true;}};window.addEventListener('message',receive);},origin);
+  await page.evaluate(providerOrigin=>{const target=globalThis.creationNativeSignerWindow??window.opener?.creationNativeSignerWindow;target.postMessage('dendrite-native-opener-v1',providerOrigin);},providerOrigin);
+  await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
+  await identity.bringToFront();await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});
+  await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
+ }
+
+ async function reauthenticate(label,participant=user){
+  const requestedLabel=label;
+  for(let attempt=0;attempt<2;attempt++){
+   try{return await reauthenticateOnce(label,participant,requestedLabel);}catch(error){
+    if(attempt||!error.iiSessionFailure||participant.nativeDevice.popup.isClosed())throw error;
+    await page.waitForFunction(label=>Array.from(document.querySelectorAll('button')).some(b=>!b.disabled&&[label,'Try again'].includes(b.textContent.trim())),{timeout:45000},label);
+    await reloadIdentityDocument(participant);
+    authenticationRestarts.push({principal:participant.principal,label,reason:error.iiSessionFailure,attempt:attempt+1,original_hardware_retained:true});
+    await writeEvidence(`${directory}/creation-reauthentication-retries.json`,JSON.stringify(authenticationRestarts));
+    const present=await page.$$eval('button',(buttons,label)=>buttons.some(b=>!b.disabled&&b.textContent.trim()===label),label);if(!present)label='Try again';
+   }
+  }
+ }
+ async function reauthenticateOnce(label,participant=user,requestedLabel=label){
+  await reloadIdentityDocument(participant);
+  let popup=(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
   if(participant.nativeDevice.popup.isClosed())throw Error('Native passkey window was closed; the hardware surrogate is unavailable.');
   // As during initial setup, only this person's physical-device surrogate
   // may answer a discoverable passkey request in Chrome's shared process.
   for(const other of participants)if(other!==participant&&!other.nativeDevice.popup.isClosed()){await other.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:other.nativeDevice.authenticatorId,enabled:false});await other.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:other.nativeDevice.authenticatorId,isUserVerified:false});}
   await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});
   await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});
+  const link=await participant.nativeDevice.popup.evaluate(({origin})=>{const current={path:location.pathname,name:window.name,opener_alive:!!window.opener&&!window.opener.closed};if(current.opener_alive)window.opener.postMessage('dendrite-native-window-reference-v1',origin);return current;},{origin});
+  console.error(JSON.stringify({phase:'creation native window link',...link}));
+  if(link.opener_alive)await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
   const opened=p=>popup=p;page.once('popup',opened);await press(label);
   // The actual II frontend may reuse its own fresh session. Never export a
   // virtual authenticator credential/private key to manufacture the same P.
-  for(let i=0;i<180;i++){const state=await page.$eval('body',el=>({text:el.textContent,busy:el.querySelector('.creation-workflow')?.getAttribute('aria-busy'),error:el.querySelector('.creation-workflow [role=alert]')?.textContent}));
-   if(state.error)throw Error(`Creation authentication failed: ${state.error}`);
-   const profile={'Consent to funding capability':'FundProvisioning','Consent to controller management capability':'ManageBootstrap','Consent to exact bootstrap capability':'CallBootstrap'}[label];
-   if(profile?state.text.includes(`${profile}: active`)&&state.busy==='false':state.text.includes(`Dendrite principal: ${participant.principal}`)){page.off('popup',opened);await page.bringToFront();return;}
+  for(let i=0;i<180;i++){const state=await page.$eval('body',el=>({text:el.textContent,busy:el.querySelector('.creation-workflow')?.getAttribute('aria-busy'),error:el.querySelector('.creation-workflow [role=alert]')?.textContent,retryAvailable:Array.from(el.querySelectorAll('button')).some(b=>!b.disabled&&b.textContent.trim()==='Try again')}));
+   const profile={'Consent to funding capability':'FundProvisioning','Consent to controller management capability':'ManageBootstrap','Consent to exact bootstrap capability':'CallBootstrap'}[requestedLabel];
+   if(!state.error&&(profile?state.text.includes(`${profile}: active`)&&state.busy==='false':state.text.includes(`Dendrite principal: ${participant.principal}`))){page.off('popup',opened);await page.bringToFront();return;}
    // AuthClient may reuse the still-open II window. Its native virtual
    // authenticator stays in that window; no credential is extracted or copied.
    popup=popup&&!popup.isClosed()?popup:(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
    if(!popup){await pause(100);continue;}
-   try{const labels=await popup.$$eval('button',els=>els.map(el=>el.textContent.trim()));
+   try{const {labels,headings}=await popup.evaluate(()=>({labels:Array.from(document.querySelectorAll('button'),el=>el.textContent.trim()),headings:Array.from(document.querySelectorAll('h1,h2'),el=>el.textContent.trim())}));
+    const failure=headings.find(h=>['Unable to connect','Connection closed','Authentication failed'].includes(h));if(failure&&(state.error||state.retryAvailable)){page.off('popup',opened);const error=Error(`Real II authentication failed: ${failure}`);error.iiSessionFailure=failure;throw error;}
+    if(state.error){page.off('popup',opened);const error=Error(`Creation authentication failed: ${state.error}`);error.iiSessionFailure="Application rejected capability authentication";throw error;}
     if(i%10===0)console.error(JSON.stringify({phase:'creation II reauthentication',label,labels,headings:await popup.$$eval('h1,h2,[role=alert]',els=>els.map(el=>el.textContent.trim().slice(0,300)))}));
-    if(labels.includes('Authenticating...')){await popup.bringToFront();}
+    if(labels.includes('Authenticating...')){await popup.bringToFront();await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});if(i%10===0)console.error(JSON.stringify({phase:'creation passkey presence',original_hardware_window:popup===participant.nativeDevice.popup,principal:participant.principal}));}
     else if(labels.includes('Continue'))await click(popup,'Continue');else if(labels.includes('Authorize'))await click(popup,'Authorize');else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
     else {const remembered=labels.find(v=>v.includes(`Synthetic manager ${participants.indexOf(participant)}`));if(remembered)await click(popup,remembered);}
    }catch(e){if(!popup.isClosed()&&!/Execution context/.test(e.message))throw e;}await pause(500);}
   page.off('popup',opened);throw Error('Real II reauthentication prerequisite unavailable: the original P was not re-established; no key export or substituted identity was used.');}
- async function renewParticipants(clock,saved){
+ async function renewParticipants(clock,saved,{all=false}={}){
   const observation=await advanceCreationBrowserClocks(participants,clock.now_ms);
-  for(const participant of participants){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});
+  const renewed=all?participants:[user];
+  for(const participant of renewed){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});
    // Discard II's old document/session heap as a restarted browser would. The
    // native authenticator remains in the same target; no passkey is exported.
-   await participant.nativeDevice.popup.reload({waitUntil:'domcontentloaded'});
+   await reloadIdentityDocument(participant);
    await reauthenticate('Sign in with Internet Identity',participant);}
   page=user.page;await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
-  return {...observation,credentials_renewed:true,principals:participants.map(p=>p.principal)};
+  return {...observation,credentials_renewed:true,renewed_principals:renewed.map(p=>p.principal),principals:participants.map(p=>p.principal)};
  }
  async function capabilities(){for(const [profile,label]of[['FundProvisioning','Consent to funding capability'],['ManageBootstrap','Consent to controller management capability'],['CallBootstrap','Consent to exact bootstrap capability']]){
    if(profile!=='FundProvisioning'&&!await page.$eval('.creation-workflow',el=>!el.innerText.includes('Controller C: not provisioned')))continue;
@@ -74,7 +110,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  for(let i=0;i<3;i++){await press('Review next provisioning request');await idle();await signPrepared();if(production&&i===1){saved=await save();await writeEvidence(`${directory}/creation-converted-before-first-create.json`,JSON.stringify(saved.value));const clock=await waitSignal('creation-first-create-clock');await renewParticipants(clock,saved);}}
  await reauthenticate('Consent to controller management capability');await refresh();await press('Install the pinned bootstrap (install only)');await idle();
  await reauthenticate('Consent to exact bootstrap capability');await refresh();saved=await save();
- await writeEvidence(`${directory}/creation-controller-installed.json`,JSON.stringify(saved.value));const stakeClock=await waitSignal('creation-stake-funded');await renewParticipants(stakeClock,saved);
+ await writeEvidence(`${directory}/creation-controller-installed.json`,JSON.stringify(saved.value));const stakeClock=await waitSignal(production?'creation-stake-funded':'creation-stake-ready');await renewParticipants(stakeClock,saved);
  // Actual application heap and credentials are discarded. Only the downloaded
  // non-secret receipt is restored; this does not pretend to restart hardware.
  await page.reload({waitUntil:'domcontentloaded'});await page.waitForSelector('button');await reauthenticate('Sign in with Internet Identity');
@@ -87,10 +123,29 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   if(after.canister_id!==before.canister_id||after.plan.nonce!==before.plan.nonce||after.plan.creation_id!==before.plan.creation_id||after.plan.bootstrap_sha256!==before.plan.bootstrap_sha256||after.bootstrap_upgrade?.state!=='Confirmed')throw Error('Historical frontend rollover replaced an original creation binding');
   await writeEvidence(`${directory}/creation-historical-frontend-migrated.json`,JSON.stringify(after));
  }
+ if(!production){
+  await press("Review optional payment from P's workflow balance");await idle();let interrupted=false;
+  try{await signPrepared({losePayment:true});}catch(error){interrupted=/Creation UI blocked:/.test(error.message);if(!interrupted)throw error;}
+  saved=await save();const original=saved.value.intents.at(-1),fault=await page.evaluate(()=>fixtureMutationFault.state());
+  if(!interrupted||original.kind!=='PayStake'||original.state!=='Unknown'||fault.lostReplies!==1)throw Error('Accepted payment loss did not retain its original uncertain identity');
+  await writeEvidence(`${directory}/creation-stake-payment-unknown.json`,JSON.stringify(saved.value));
+  const clock=await waitSignal('creation-financial-90-day-clock');await renewParticipants(clock,saved);
+  // A second genuine session can import the receipt, but cannot prepare new
+  // spending while the original payment remains uncertain.
+  const ownerPage=page,nextPage=new Promise(resolve=>ownerPage.once('popup',resolve));
+  await ownerPage.evaluate(()=>window.open('about:blank','dendrite-creation-second-recovery'));page=await nextPage;await installCreationPageClock(page);await page.goto(origin,{waitUntil:'domcontentloaded'});await page.waitForSelector('button');await reauthenticate('Sign in with Internet Identity');
+  await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
+  if(await page.$$eval('button',els=>els.some(el=>/Review optional payment|Review next provisioning request|Sign exact creation request/.test(el.textContent))))throw Error('A second tab gained replacement payment authority');
+  const second=(await save()).value.intents.at(-1);if(second.id!==original.id||second.request_binding.request_id!==original.request_binding.request_id||second.state!=='Unknown')throw Error('Second tab replaced the original payment identity');
+  await page.close();page=ownerPage;await page.bringToFront();
+  await press('Search next bounded page for the original payment');await idle();saved=await save();const confirmed=saved.value.intents.at(-1);
+  if(confirmed.id!==original.id||confirmed.created_at_time!==original.created_at_time||confirmed.request_binding.request_id!==original.request_binding.request_id||confirmed.state!=='Confirmed')throw Error('Permanent-block recovery replaced or repeated the original payment');
+  await writeEvidence(`${directory}/creation-stake-payment-recovered.json`,JSON.stringify(saved.value));
+ }
  await press('Verify funding and claim the one bound neuron');await idle();for(let i=0;i<20;i++){const present=await page.$$eval('button',els=>els.some(el=>el.textContent==='Advance one reviewed configuration step'));if(!present)break;await press('Advance one reviewed configuration step');await idle();}
  if(production){await page.click('[name=creation-lock-confirmed]');await press('Commit the reviewed lock');await idle();}
  saved=await save();await writeEvidence(`${directory}/creation-configured.json`,JSON.stringify(saved.value));
- if(production){const clock=await waitSignal('creation-31-day-clock');const evidence=await renewParticipants(clock,saved);await writeEvidence(`${directory}/creation-31-day-resumed.json`,JSON.stringify(evidence));}
+ if(production){const clock=await waitSignal('creation-31-day-clock');const evidence=await renewParticipants(clock,saved,{all:true});await writeEvidence(`${directory}/creation-31-day-resumed.json`,JSON.stringify(evidence));}
  // Exercise the compiled wizard at narrow width and 200% page scale while
  // signing remains real. These are visual/accessibility actions, not mocks or
  // substitutes for the independent on-chain configuration oracle.
@@ -160,7 +215,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   await fill('creation-proposal',rehearsal);await press('Verify executed quorum and seal finalisation');await idle();saved=await save();await writeEvidence(`${directory}/creation-sealed.json`,JSON.stringify(saved.value));await waitSignal('creation-sealed-dust-injected');await press('Stop and verify quiescence');await idle();
   saved=await save();const c=saved.value.canister_id,t=saved.value.neuron_id;await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of bootstrap code');await idle();await signPrepared();
   await refresh();saved=await save();await writeEvidence(`${directory}/creation-code-removed.json`,JSON.stringify(saved.value));const clock=await waitSignal('creation-code-removal-verified');
-  await renewParticipants(clock,saved);await writeEvidence(`${directory}/creation-90-day-resumed.json`,JSON.stringify({now_ms:clock.now_ms,principals:participants.map(p=>p.principal)}));
+  await renewParticipants(clock,saved,{all:true});await writeEvidence(`${directory}/creation-90-day-resumed.json`,JSON.stringify({now_ms:clock.now_ms,principals:participants.map(p=>p.principal)}));
   await fill('confirm-controller',c);await fill('confirm-neuron',t);await page.click('[name=creation-risk-confirmed]');await press('Review removal of every controller');await idle();await signPrepared({holdController:true});await refresh();
   if(!await page.$eval('.creation-workflow',el=>el.innerText.includes('Finalised — Compliant')))throw Error('Fresh final report was not Compliant');
   if(await page.$eval('.creation-workflow',el=>/\b(?:FundProvisioning|ManageBootstrap|CallBootstrap): active/.test(el.textContent)))throw Error('Finalisation retained a local provisioning capability');

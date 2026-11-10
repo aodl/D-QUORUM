@@ -7,7 +7,7 @@ import {creationJourney} from './creation-journey.mjs';
 const directory=process.env.SYSTEM_BROWSER_COORDINATION;
 const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
-const launchOptions={executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
+const launchOptions={executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking',...(process.env.SYSTEM_BROWSER_SCENARIO?.startsWith('creation-')?['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']:[]),'--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
 const browser=await puppeteer.launch(launchOptions);
 // Harness wall budget only: five separate people reauthenticate at each virtual
 // time checkpoint. SDK channel, certificate and delegation limits stay intact.
@@ -16,6 +16,7 @@ const deadline=setTimeout(()=>{console.error(`signed browser test exceeded ${wal
 const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
 await containBrowserNetwork(browser,denied,{beforeResume:installCreationClockBeforeResume});
 const scenario=process.env.SYSTEM_BROWSER_SCENARIO;
+if(scenario.startsWith('creation-'))await writeEvidence(`${directory}/browser-scheduling-policy.json`,JSON.stringify({classification:'creation test execution only; browser power throttling disabled; protocol timeouts and expiry unchanged',flags:launchOptions.args.filter(arg=>/background-timer|renderer-background|occluded/.test(arg))}));
 if(!['scoped-signing','team-management','cancellation','wrong-provider','creation-recoverable','creation-production'].includes(scenario))throw Error('explicit local browser scenario required');
 const scopeProbeMode=scenario==='scoped-signing';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -151,7 +152,7 @@ async function authenticateAttempt(index,retained){
  }
 
  await popup.bringToFront();
- if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'native window closed by SDK',index,frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed',index})));}
+ if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'SDK channel closed; native hardware window retained',index,frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed',index})));}
  for(let i=0;i<120;i++){
   if(popup.isClosed())break;
   if(scenario.startsWith('creation-')&&await page.$eval('body',el=>el.innerText.includes('Dendrite principal:')))break;
@@ -161,7 +162,8 @@ async function authenticateAttempt(index,retained){
   // These are public control labels, never credential, delegation or recovery material.
   if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings,buttons:await popup.$$eval('button',buttons=>buttons.map(b=>({label:b.textContent.trim(),disabled:b.disabled,expanded:b.getAttribute('aria-expanded')})))}));
   const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
-  if(failureHeading&&(!retained||i>=3)){
+  const awaitingClientCompletion=scenario.startsWith('creation-')&&['Unable to connect','Connection closed','Authentication failed'].includes(failureHeading)&&!await page.$$eval('button',buttons=>buttons.some(b=>!b.disabled&&b.textContent.trim()==='Try again'));
+  if(failureHeading&&!awaitingClientCompletion&&(!retained||i>=3)){
    await popup.screenshot({path:`${directory}/ii-failure-${index}.png`});
    const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};
    await writeEvidence(`${directory}/ii-failure.json`,JSON.stringify(failure));

@@ -231,4 +231,12 @@ or bootstrap assets. The production journey includes a deliberately misaligned
 gateway check that must fail response verification before alignment is restored.
 The native virtual-authenticator target survives II document reloads, modelling
 retained hardware without exporting a passkey or extending an old credential.
+The local authenticator fixture retains its original II target through an
+origin-checked public window-reference handoff after application document reloads.
+It closes the previous SDK channel through `Signer.closeChannel()` before
+reloading that target. No SDK envelopes or credentials are forwarded by this
+handoff. Creation Chrome scheduling flags disable background power throttling;
+the two-second SDK disconnect timeout is unchanged. Newly opened application
+pages receive the virtual clock before loading the SDK, so they request fresh
+short-lived credentials at replica time rather than extending an old delegation.
 These checks do not establish browser qualification until their actual run passes.
