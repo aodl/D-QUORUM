@@ -138,9 +138,6 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   const clock=await waitSignal('creation-financial-90-day-clock');await renewParticipants(clock,saved);
   // A second genuine session can import the receipt, but cannot prepare new
   // spending while the original payment remains uncertain.
-  // The native-device fixture retains one II WindowProxy. Release its old SDK
-  // channel before handing that physical-device target to another document.
-  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
   const ownerPage=page,nextPage=new Promise(resolve=>ownerPage.once('popup',resolve));
   await ownerPage.evaluate(()=>window.open('about:blank','dendrite-creation-second-recovery'));page=await nextPage;await installCreationPageClock(page);await page.goto(origin,{waitUntil:'domcontentloaded'});await page.waitForSelector('button');await reauthenticate('Sign in with Internet Identity');
   await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
