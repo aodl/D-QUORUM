@@ -1,3 +1,5 @@
+#[path = "support/browser_clock.rs"]
+mod browser_clock;
 #[path = "support/browser_creation.rs"]
 mod browser_creation;
 #[path = "support/creation.rs"]
@@ -531,7 +533,14 @@ fn browser_world(scenario: &str) {
         .as_nanos() as u64;
     let domains = directory.join("domains.txt");
     fs::write(&domains, format!("id.ai.localhost:{}\n", ii_frontend_id())).unwrap();
-    let mut pic = builder()
+    let clock_server = scenario
+        .starts_with("creation-")
+        .then(|| browser_clock::ClockServer::start(&directory));
+    let mut world_builder = builder();
+    if let Some(clock) = &clock_server {
+        world_builder = world_builder.with_server_url(clock.url.parse().unwrap());
+    }
+    let mut pic = world_builder
         .with_initial_time(pocket_ic::Time::from_nanos_since_unix_epoch(host_time))
         .with_ii_subnet()
         .with_http_gateway(InstanceHttpGatewayConfig {
@@ -568,6 +577,9 @@ fn browser_world(scenario: &str) {
     ));
     pic.auto_progress();
     pic.make_live(Some(browser_port()));
+    if scenario == "creation-production" {
+        browser_clock::verify_gateway_freshness(&pic, &directory, verifier);
+    }
     let uid = Command::new("id").arg("-u").output().unwrap();
     let gid = Command::new("id").arg("-g").output().unwrap();
     let process_user = format!(
@@ -1475,6 +1487,10 @@ fn browser_world(scenario: &str) {
         "creation-post-final-management.json",
         "creation-resources.json",
         "historical-bootstrap-policy.json",
+        "clock-policy.json",
+        "pocketic-wall-clock.so",
+        "clock-freshness-negative.json",
+        "clock-offset-ns",
         "creation-historical-frontend-migrated.json",
         "creation-recoverable-90-day-resumed.json",
         "creation-31-day-resumed.json",

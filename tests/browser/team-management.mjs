@@ -166,7 +166,7 @@ async function authenticateAttempt(index,retained){
    const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};
    await writeEvidence(`${directory}/ii-failure.json`,JSON.stringify(failure));
    const error=Error(`Internet Identity authentication failed: ${failureHeading}`);
-   if(['Unable to connect','Connection closed'].includes(failureHeading)){error.iiChannelFailure=failureHeading;error.retainedNative={context,page,popup,cdp,authenticatorId};}
+   if(['Unable to connect','Connection closed'].includes(failureHeading)||(scenario.startsWith('creation-')&&failureHeading==='Authentication failed')){error.iiChannelFailure=failureHeading;error.retainedNative={context,page,popup,cdp,authenticatorId};}
    throw error;
   }
   if(labels.includes('Authenticating...')){await popup.bringToFront();await cdp.send('WebAuthn.setUserVerified',{authenticatorId,isUserVerified:true});await cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId,enabled:true});}

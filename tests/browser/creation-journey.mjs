@@ -29,6 +29,9 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  async function signPrepared({holdController=false,holdProposal=false,holdRegistration=false,loseProposal=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController||holdProposal||holdRegistration||loseProposal)await page.evaluate(async mode=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm(mode);},holdController?'holdController':loseProposal?'lose':'hold');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdRegistration){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-registration-reserved.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-registration-name-conflicted');await page.evaluate(()=>fixtureMutationFault.release());}if(holdProposal){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-rehearsal-fee-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-rehearsal-fee-raised');await page.evaluate(()=>fixtureMutationFault.release());}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
  async function reauthenticate(label,participant=user){let popup=(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
   if(participant.nativeDevice.popup.isClosed())throw Error('Native passkey window was closed; the hardware surrogate is unavailable.');
+  // As during initial setup, only this person's physical-device surrogate
+  // may answer a discoverable passkey request in Chrome's shared process.
+  for(const other of participants)if(other!==participant&&!other.nativeDevice.popup.isClosed()){await other.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:other.nativeDevice.authenticatorId,enabled:false});await other.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:other.nativeDevice.authenticatorId,isUserVerified:false});}
   await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});
   await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});
   const opened=p=>popup=p;page.once('popup',opened);await press(label);
@@ -51,7 +54,11 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   page.off('popup',opened);throw Error('Real II reauthentication prerequisite unavailable: the original P was not re-established; no key export or substituted identity was used.');}
  async function renewParticipants(clock,saved){
   const observation=await advanceCreationBrowserClocks(participants,clock.now_ms);
-  for(const participant of participants){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});await reauthenticate('Sign in with Internet Identity',participant);}
+  for(const participant of participants){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});
+   // Discard II's old document/session heap as a restarted browser would. The
+   // native authenticator remains in the same target; no passkey is exported.
+   await participant.nativeDevice.popup.reload({waitUntil:'domcontentloaded'});
+   await reauthenticate('Sign in with Internet Identity',participant);}
   page=user.page;await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
   return {...observation,credentials_renewed:true,principals:participants.map(p=>p.principal)};
  }

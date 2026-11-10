@@ -222,3 +222,13 @@ The frontend runtime SBOM annotates the signer component with the complete revie
 heartbeat build policy and retains its upstream package version. SBOM generation
 rechecks the actual pinned SDK source and transformed digest before writing this
 annotation and a separate checksummed build-policy record.
+
+Creation long-wait tests align the browser and the owned PocketIC process with
+explicit replica time jumps. `tests/browser/pocketic-wall-clock.c` changes only
+that process's real-time reads; monotonic timers and certificate/delegation limits
+remain unchanged. It is test infrastructure and is never embedded in application
+or bootstrap assets. The production journey includes a deliberately misaligned
+gateway check that must fail response verification before alignment is restored.
+The native virtual-authenticator target survives II document reloads, modelling
+retained hardware without exporting a passkey or extending an old credential.
+These checks do not establish browser qualification until their actual run passes.

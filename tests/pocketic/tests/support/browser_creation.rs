@@ -298,9 +298,7 @@ pub fn coordinate(
         500_000_000,
     );
     if production {
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(48 * 3600));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(48 * 3600));
         creation::refresh_provisioning_quote(pic);
     }
     publish(
@@ -311,9 +309,7 @@ pub fn coordinate(
     if production {
         let converted = signal(directory, "creation-converted-before-first-create", child);
         assert!(converted["canister_id"].is_null());
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(48 * 3600));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(48 * 3600));
         publish(
             directory,
             "creation-first-create-clock",
@@ -342,9 +338,7 @@ pub fn coordinate(
     let subaccount = l::staking_subaccount(c, nonce);
     let stake = receipt_id(&installed["plan"], "stake_e8s");
     if production {
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(48 * 3600));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(48 * 3600));
     }
     let stake_block = transfer_external(
         pic,
@@ -355,9 +349,7 @@ pub fn coordinate(
         stake,
     );
     if !production {
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(31 * 86_400));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(31 * 86_400));
         let next = upgraded_frontend
             .expect("reviewed V1 browser creation requires an actual frontend rollover");
         let controller = pic.get_controllers(verifier)[0];
@@ -406,9 +398,7 @@ pub fn coordinate(
         managers
     );
     if production {
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(31 * 86_400));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(31 * 86_400));
         publish(
             directory,
             "creation-31-day-clock",
@@ -604,9 +594,7 @@ pub fn coordinate(
         );
     }
     if !production {
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(59 * 86_400));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(59 * 86_400));
     }
     publish(
         directory,
@@ -686,9 +674,7 @@ pub fn coordinate(
             },
             1,
         );
-        pic.stop_progress();
-        pic.advance_time(Duration::from_secs(59 * 86_400));
-        pic.auto_progress();
+        browser_clock::advance(pic, directory, Duration::from_secs(59 * 86_400));
         publish(
             directory,
             "creation-code-removal-verified",
