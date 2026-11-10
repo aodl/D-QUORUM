@@ -36,13 +36,14 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   // Recover the public hardware-window reference in a fresh application heap.
   await identity.evaluate(origin=>{if(window.opener&&!window.opener.closed)window.opener.postMessage('dendrite-native-window-reference-v1',origin);},origin);
   await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
+  await identity.bringToFront();await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});
+  await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
   // Mirror normal named-popup opening for the active application document.
+  // Link the new II document after navigation, which can reset its opener.
   // Only WindowProxy references cross this test-only handshake, never RPC data.
   await identity.evaluate(origin=>{globalThis.creationNativeOpenerLinked=false;const receive=event=>{if(event.origin===origin&&event.data==='dendrite-native-opener-v1'&&event.source){window.removeEventListener('message',receive);window.opener=event.source;globalThis.creationNativeOpenerLinked=true;}};window.addEventListener('message',receive);},origin);
   await page.evaluate(providerOrigin=>{const target=globalThis.creationNativeSignerWindow??window.opener?.creationNativeSignerWindow;target.postMessage('dendrite-native-opener-v1',providerOrigin);},providerOrigin);
   await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
-  await identity.bringToFront();await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});
-  await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
  }
 
  async function reauthenticate(label,participant=user){

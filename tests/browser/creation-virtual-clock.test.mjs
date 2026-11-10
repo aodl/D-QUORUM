@@ -23,7 +23,7 @@ test('terminal II authentication failure reaches bounded setup recovery without 
  }
 });
 
-test('native II window handoff closes both document channels before navigation and closes a primary channel once',async()=>{
+test('native II window handoff closes document channels before navigation and links the new II document after navigation',async()=>{
  const source=await readFile(new URL('./creation-journey.mjs',import.meta.url),'utf8');
  const start=source.indexOf('async function reloadIdentityDocument(participant){'),end=source.indexOf('\n async function reauthenticate(',start);
  assert.ok(start>=0&&end>start);
@@ -35,10 +35,10 @@ test('native II window handoff closes both document channels before navigation a
    });
   },waitForFunction:async()=>{}});
   const owner=document('owner'),page=secondary?document('secondary'):owner;
-  const identity={evaluate:async()=>{},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',goto:async()=>events.push('navigate II')};
+  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',goto:async()=>events.push('navigate II')};
   const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL});
   await reload({page:owner,nativeDevice:{popup:identity}});
-  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II']:['closed owner','navigate II']);
+  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document']:['closed owner','navigate II','link current II document']);
  }
 });
 
