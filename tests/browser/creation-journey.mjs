@@ -46,9 +46,9 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
    await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
   };
   await identity.bringToFront();
-  if(page===participant.page){await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});await linkCurrentDocument();return;}
   // Chrome's virtual hardware stays in this II target. Hold only its script
-  // loading during the public opener handoff; never alter script bytes or RPCs.
+  // loading for owner and secondary handoffs alike: II must not initialize
+  // before the opener link is acknowledged. Never alter script bytes or RPCs.
   await identity.setCacheEnabled(false);
   let hold=true,scriptSeen,deadline;const scripts=[],ready=new Promise(resolve=>scriptSeen=resolve);
   const request=req=>{if(hold&&req.resourceType()==='script'){scripts.push(req);scriptSeen();}else void req.continue();};
@@ -63,7 +63,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
    await identity.setCacheEnabled(true);
   }
   const policyFile=`${directory}/sdk-window-policy.json`,policy=JSON.parse(await readFile(policyFile,'utf8'));
-  policy.secondary_document_handoff={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,network_guard_preserved:true,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
+  policy[page===participant.page?'owner_document_handoff':'secondary_document_handoff']={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,network_guard_preserved:true,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
   await writeEvidence(policyFile,JSON.stringify(policy,null,2));
  }
 

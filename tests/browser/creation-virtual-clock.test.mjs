@@ -37,11 +37,11 @@ test('native II window handoff links the new document before releasing its scrip
   const owner=document('owner'),page=secondary?document('secondary'):owner;
   let handler,continued=false,finishNavigation;
   const script={resourceType:()=> 'script',isInterceptResolutionHandled:()=>continued,continue:async()=>{continued=true;events.push('release II script');finishNavigation();}};
-  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',setCacheEnabled:async()=>{},setRequestInterception:async()=>assert.fail('the existing network guard must remain enabled'),goto:()=>{events.push('navigate II');if(secondary){const result=new Promise(resolve=>finishNavigation=resolve);handler(script);return result;}return Promise.resolve();}};
+  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',setCacheEnabled:async()=>{},setRequestInterception:async()=>assert.fail('the existing network guard must remain enabled'),goto:()=>{events.push('navigate II');assert.equal(typeof handler,'function','owner and secondary II scripts must be held before initialization');const result=new Promise(resolve=>finishNavigation=resolve);handler(script);return result;}};
   const holdIdentityScripts=(target,receive)=>{assert.equal(target,identity);handler=receive;return()=>{handler=undefined;};};
   const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL,setTimeout,clearTimeout,holdIdentityScripts,directory:'public-evidence',readFile:async()=> '{}',writeEvidence:async()=>{}});
   await reload({page:owner,nativeDevice:{popup:identity}});
-  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document','release II script']:['closed owner','navigate II','link current II document']);
+  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document','release II script']:['closed owner','navigate II','link current II document','release II script']);
  }
 });
 
