@@ -1550,6 +1550,7 @@ fn browser_world(scenario: &str) {
         "voted.json",
         "scope-probe.json",
         "sdk-window-policy.json",
+        "sdk-channel-lifetime-policy.json",
         "browser-scheduling-policy.json",
         "creation-principal.json",
         "creation-plan.json",
@@ -1641,6 +1642,7 @@ fn browser_world(scenario: &str) {
             "local-build.json",
             "dendrite-local.wasm",
             "sdk-window-policy.json",
+            "sdk-channel-lifetime-policy.json",
             "historical-bootstrap-policy.json",
         ] {
             let path = directory.join(variant).join(filename);

@@ -6,12 +6,13 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {retainedWindowTransportSource,retainedChannelPolicy} from './native-channel-lifetime.mjs';
 const source=resolve(process.argv[2]),{buildFrontend}=await import(pathToFileURL(`${source}/canisters/dendrite/web/build-frontend.mjs`));
 const historical=process.argv[3]==='--reviewed-v1-bootstrap';
 if(process.argv.length>3&&!historical)throw Error('Only the reviewed V1 fixture selection is supported');
 const providerOrigin=new URL(process.env.DENDRITE_IDENTITY_PROVIDER).origin;
 if(process.env.DENDRITE_BUILD_MODE!=='local'||!new URL(providerOrigin).hostname.endsWith('.localhost'))throw Error('Native window retention is local-test infrastructure only');
-let transformed=0,historicalTransforms=0,authorityTransforms=0;
+let transformed=0,historicalTransforms=0,authorityTransforms=0,transportTransforms=0;
 await buildFrontend({plugins:[{name:'creation-native-authenticator-window',setup(build){
 build.onLoad({filter:/creation-protocol\.js$/},async({path})=>{
  const original=await readFile(path,'utf8');
@@ -47,7 +48,14 @@ if(historical)build.onLoad({filter:/creation-controller\.js$/},async({path})=>{
  historicalTransforms++;return {contents:original.replace(needle,`const currentManifest=${JSON.stringify(manifest)};`),loader:'js'};
 });
 build.onLoad({filter:/@icp-sdk\/signer\/lib\/esm\/web\/postMessageChannel\.js$/},async({path})=>{
- const original=await readFile(path,'utf8');return {contents:original.replace('this.#options.signerWindow.close();','console.trace("creation-native-channel-close"); /* Keep native passkey hardware alive; channel close/listeners and all timeouts remain real. */'),loader:'js'};
+ const original=await readFile(path,'utf8');
+ if(original.split('this.#options.signerWindow.close();').length!==2)throw Error('Pinned channel closure changed; review native-device retention');
+ return {contents:original.replace('this.#options.signerWindow.close();','console.trace("creation-native-channel-close"); /* Keep native passkey hardware alive; SDK channel closure and all timeouts remain real. */'),loader:'js'};
+});
+build.onLoad({filter:/@icp-sdk\/signer\/lib\/esm\/web\/postMessageTransport\.js$/},async({path})=>{
+ const contents=retainedWindowTransportSource(await readFile(path,'utf8'));
+ await writeFile(`${source}/../sdk-channel-lifetime-policy.json`,JSON.stringify({...retainedChannelPolicy,fixture_sha256:createHash('sha256').update(contents).digest('hex')},null,2));
+ transportTransforms++;return {contents,loader:'js'};
 });
 build.onLoad({filter:/@icp-sdk\/auth\/dist\/esm\/client\/auth-client\.js$/},async({path})=>{
  const original=await readFile(path,'utf8'),needle='new Signer({';
@@ -77,10 +85,11 @@ globalThis.addEventListener('message', event => {
  }
 });
 ${contents}`;
- await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{closeOnEstablishTimeout:false,closeOnPendingTimeout:false,window:'retained real II target; public WindowProxy handoff after document restart and same-origin secondary document; no SDK envelope forwarding; channel close/listeners and timeouts unchanged'},original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(fixtureContents).digest('hex')},null,2));
+ await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{closeOnEstablishTimeout:false,closeOnPendingTimeout:false,window:'retained real II target; public WindowProxy handoff after document restart and same-origin secondary document; no SDK envelope forwarding; closed channel heartbeat subscription detached; all timeout values unchanged'},channel_lifetime:retainedChannelPolicy,original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(fixtureContents).digest('hex')},null,2));
  transformed++;return {contents:fixtureContents,loader:'js'};
  });}}]});
 if(transformed!==1)throw Error('Native-authenticator fixture option was not applied exactly once');
+if(transportTransforms!==1)throw Error('Retained channel heartbeat cleanup was not applied exactly once');
 
 if(historical&&historicalTransforms!==1)throw Error('Reviewed V1 selection was not applied exactly once');
 

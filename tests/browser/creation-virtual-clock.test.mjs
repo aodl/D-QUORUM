@@ -3,6 +3,63 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {advanceCreationBrowserClocks,installCreationClockBeforeResume,installCreationPageClock} from './creation-virtual-clock.mjs';
+import {retainedWindowTransportSource} from './native-channel-lifetime.mjs';
+import {reviewedHeartbeatSource} from '../../dendrite/canisters/dendrite/web/sdk-heartbeat-policy.mjs';
+
+test('actual SDK heartbeat ends with its channel when the native passkey window is retained',async()=>{
+ const sdk=new URL('../../dendrite/node_modules/@icp-sdk/signer/lib/esm/',import.meta.url);
+ const [heartbeat,transport,channel,rpc]=await Promise.all(['web/heartbeat/client.js','web/postMessageTransport.js','web/postMessageChannel.js','transport.js'].map(path=>readFile(new URL(path,sdk),'utf8')));
+ const withoutImports=source=>source.replace(/^import .*?;\n/gm,'').replace(/\bexport /g,'');
+ async function exercise(cleanup,heartbeatSource){
+  let now=0,next=0,polls=0,windowCloses=0,respond=true;
+  const timers=new Map(),listeners=new Set(),unrelated=()=>{};
+  listeners.add(unrelated);
+  const schedule=(fn,delay,interval=false)=>{const id=++next;timers.set(id,{fn,at:now+delay,delay,interval});return id;};
+  const dispatch=event=>{for(const listener of [...listeners])listener(event);};
+  const signerWindow={focus(){},close(){windowCloses++;},postMessage(request){
+   if(request.method!=='icrc29_status')return;
+   polls++;if(respond)schedule(()=>dispatch({source:signerWindow,origin:'http://ii.localhost',data:{jsonrpc:'2.0',id:request.id,result:'ready'}}),1);
+  }};
+  const window={open:()=>signerWindow,focus(){},addEventListener:(type,listener)=>{assert.equal(type,'message');listeners.add(listener);},removeEventListener:(type,listener)=>{assert.equal(type,'message');listeners.delete(listener);}};
+  const context=vm.createContext({URL,Date:{now:()=>now},crypto:{randomUUID:()=>String(++next)},setTimeout:(fn,delay)=>schedule(fn,delay),setInterval:(fn,delay)=>schedule(fn,delay,true),clearTimeout:id=>timers.delete(id),clearInterval:id=>timers.delete(id)});
+  vm.runInContext([rpc,heartbeatSource,cleanup?retainedWindowTransportSource(transport):transport,channel.replace('this.#options.signerWindow.close();','/* Retain actual native-device target, as in the browser fixture. */')].map(withoutImports).join('\n')+'\nglobalThis.Transport=PostMessageTransport;',context);
+  const transportInstance=new context.Transport({url:'http://ii.localhost',window,detectNonClickEstablishment:false});
+  const advance=milliseconds=>{
+   const end=now+milliseconds;
+   for(;;){
+    const due=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at||a[0]-b[0])[0];
+    if(!due)break;
+    const [id,timer]=due;now=timer.at;
+    if(timer.interval)timer.at+=timer.delay;else timers.delete(id);
+    timer.fn();
+   }
+   now=end;
+  };
+  const pending=transportInstance.establishChannel();advance(350);const first=await pending;
+  assert.equal(first.closed,false);assert.equal(listeners.size,2);
+  await first.close();assert.equal(first.closed,true);
+  const closedPolls=polls;advance(10000);
+  assert.equal(windowCloses,0,'virtual passkey target remains alive');
+  assert.ok(listeners.has(unrelated),'unrelated application listener remains registered');
+  if(!cleanup){assert.ok(polls>closedPolls+20,'negative control proves the retained closed channel keeps polling');return;}
+  assert.ok(polls<=closedPolls+1,'only the already scheduled final poll may drain');
+  assert.equal(listeners.size,1,'only this heartbeat subscription is removed');
+  const secondPending=transportInstance.establishChannel();advance(350);const second=await secondPending;
+  let response;const detach=second.addEventListener('response',value=>response=value);
+  dispatch({source:signerWindow,origin:'http://ii.localhost',data:{jsonrpc:'2.0',id:'rpc',result:'unaltered response'}});
+  assert.equal(response.result,'unaltered response','actual SDK response filtering remains active');
+  detach();advance(10000);assert.equal(second.closed,false,'old timers cannot close or detach the replacement channel');
+  assert.equal(listeners.size,2);await second.close();advance(10000);assert.equal(listeners.size,1);
+  const thirdPending=transportInstance.establishChannel();advance(350);const third=await thirdPending;
+  respond=false;advance(2500);
+  assert.equal(third.closed,true,'a real active-channel heartbeat disconnect still closes the channel at the SDK deadline');
+  assert.equal(listeners.size,1);
+ }
+ for(const heartbeatSource of [heartbeat,reviewedHeartbeatSource(heartbeat)]){
+  await exercise(false,heartbeatSource);
+  await exercise(true,heartbeatSource);
+ }
+});
 
 test('terminal II authentication failure reaches bounded setup recovery without waiting for an application retry button',async()=>{
  const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
