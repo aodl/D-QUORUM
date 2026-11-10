@@ -1,3 +1,4 @@
+import {creationProposalBeforeTitleRewrite} from "./creation-rehearsal.js";
 import {HttpAgent} from '@icp-sdk/core/agent';
 import {Principal} from '@icp-sdk/core/principal';
 import {IDL} from '@icp-sdk/core/candid';
@@ -40,7 +41,7 @@ export function createCreationTeamVote({bindings,getSession,getNnsActor,readSyst
   for(const f of p.following){const actual=n.followees.find(([t])=>t===f.topic)?.[1]?.followees.map(x=>x.id)??[];if(actual.join(',')!==f.followees.join(','))throw Error('Fresh target following differs from the reviewed managers/delegates.');}
   if(!m||!(m.controller?.[0]?.toText()===s.principal.toText()||m.hot_keys.some(x=>x.toText()===s.principal.toText())))throw Error('This II identity does not control the selected manager.');
   const id=reservation.proposal_id[0],proposal=(await actor.get_proposal_info(id))[0],original=IDL.decode([creationArgumentTypes.nns],new Uint8Array(intent.argument.match(/../g).map(x=>parseInt(x,16))))[0];
-  const reconstructed=buildDirectManagerOperation(reservation.proposer,{MakeProposal:proposal?.proposal?.[0]});
+  const payload=creationProposalBeforeTitleRewrite(proposal?.proposal?.[0],original.command?.[0]?.MakeProposal,intent.kind,r.neuron_id),reconstructed=buildDirectManagerOperation(reservation.proposer,{MakeProposal:payload});
   if(proposal?.id?.[0]?.id!==id||proposal.status!==1||proposal.proposer?.[0]?.id!==reservation.proposer||sha256Hex(IDL.encode([creationArgumentTypes.nns],[reconstructed]))!==intent.argument_digest)throw Error('Open proposal is not the exact certified reservation.');
   const action=proposal.proposal[0].action[0],target=action.RegisterKnownNeuron?.id?.[0]?.id??action.ManageNeuron?.neuron_id_or_subaccount?.[0]?.NeuronId?.id;
   if(target!==BigInt(r.neuron_id)||!(intent.kind==='Registration'?!!action.RegisterKnownNeuron:Object.keys(action.ManageNeuron?.command?.[0]??{}).join(',')==='RefreshVotingPower'))throw Error('Only exact creation registration or benign rehearsal votes are supported.');

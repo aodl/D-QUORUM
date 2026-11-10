@@ -2,7 +2,7 @@ import {dispatchSpender,dispatchReservation,validateDispatchReservation,financia
 import {createCreationTeamVote} from "./creation-team-vote.js";
 import {creationArtifact} from "./creation-compatibility.js";
 import {acknowledgedDefaultIcp,defaultIcpAcknowledgement} from "./creation-default-icp.js";
-import {verifyExecutedCreationRehearsal} from "./creation-rehearsal.js";
+import {verifyExecutedCreationRehearsal,creationProposalBeforeTitleRewrite} from "./creation-rehearsal.js";
 import {Actor,HttpAgent} from "@icp-sdk/core/agent";
 import {IDL} from "@icp-sdk/core/candid";
 import {Principal} from "@icp-sdk/core/principal";
@@ -187,7 +187,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     const r=s?.external_proposal?.[0],intent=r&&receipt.intents.find(i=>i.id===bytesHex(r.intent_id)&&i.kind==="Rehearsal"&&i.argument_digest===bytesHex(r.request_digest));
     if(!r?.dispatched||r.revision!==plan.revision||r.proposal_id[0]!==proposalId||!intent)throw Error("Rehearsal lacks this creation's exact replicated proposal reservation.");
     const p=(await(await getNnsActor()).get_proposal_info(proposalId))[0];
-    const request=IDL.decode([creationArgumentTypes.nns],hexBytes(intent.argument))[0],actual=buildDirectManagerOperation(r.proposer,{MakeProposal:p?.proposal?.[0]});
+    const request=IDL.decode([creationArgumentTypes.nns],hexBytes(intent.argument))[0],actual=buildDirectManagerOperation(r.proposer,{MakeProposal:creationProposalBeforeTitleRewrite(p?.proposal?.[0],request.command?.[0]?.MakeProposal,"Rehearsal",receipt.neuron_id)});
     if(request.neuron_id_or_subaccount[0]?.NeuronId?.id!==r.proposer||p?.proposer?.[0]?.id!==r.proposer||sha256Hex(IDL.encode([creationArgumentTypes.nns],[actual]))!==intent.argument_digest)throw Error("Executed proposal differs from the original exact rehearsal request.");
     return verifyExecutedCreationRehearsal(p,{proposalId,neuronId:BigInt(receipt.neuron_id),startedAt,managers:plan.managers});
   }
