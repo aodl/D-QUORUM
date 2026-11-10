@@ -7,7 +7,7 @@ import {creationArgumentTypes} from '../../dendrite/canisters/dendrite/web/src/c
 import {hexBytes} from '../../dendrite/canisters/dendrite/web/src/creation-accounts.js';
 import {exportCreationReceipt} from '../../dendrite/canisters/dendrite/web/src/creation-receipt.js';
 
-export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied}){
+export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied,holdIdentityScripts}){
  const production=scenario==='creation-production',user=await authenticate(0),participants=[user];
  if(production)for(let index=1;index<5;index++){
   // Chrome exposes native virtual authenticators across simultaneous II
@@ -49,21 +49,21 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   if(page===participant.page){await identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});await linkCurrentDocument();return;}
   // Chrome's virtual hardware stays in this II target. Hold only its script
   // loading during the public opener handoff; never alter script bytes or RPCs.
-  await identity.setCacheEnabled(false);await identity.setRequestInterception(true);
+  await identity.setCacheEnabled(false);
   let hold=true,scriptSeen,deadline;const scripts=[],ready=new Promise(resolve=>scriptSeen=resolve);
   const request=req=>{if(hold&&req.resourceType()==='script'){scripts.push(req);scriptSeen();}else void req.continue();};
-  identity.on('request',request);
+  const removeScriptHold=holdIdentityScripts(identity,request);
   const navigation=identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});navigation.catch(()=>{});
   const release=async()=>{hold=false;for(const req of scripts)if(!req.isInterceptResolutionHandled())await req.continue();};
   try{
    await Promise.race([ready,new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('Native II opener handoff did not observe script loading')),5000);})]);
    clearTimeout(deadline);await linkCurrentDocument();await release();await navigation;
   }finally{
-   clearTimeout(deadline);await release();identity.off('request',request);
-   await identity.setRequestInterception(false);await identity.setCacheEnabled(true);
+   clearTimeout(deadline);await release();removeScriptHold();
+   await identity.setCacheEnabled(true);
   }
   const policyFile=`${directory}/sdk-window-policy.json`,policy=JSON.parse(await readFile(policyFile,'utf8'));
-  policy.secondary_document_handoff={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
+  policy.secondary_document_handoff={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,network_guard_preserved:true,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
   await writeEvidence(policyFile,JSON.stringify(policy,null,2));
  }
 

@@ -37,8 +37,9 @@ test('native II window handoff links the new document before releasing its scrip
   const owner=document('owner'),page=secondary?document('secondary'):owner;
   let handler,continued=false,finishNavigation;
   const script={resourceType:()=> 'script',isInterceptResolutionHandled:()=>continued,continue:async()=>{continued=true;events.push('release II script');finishNavigation();}};
-  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',setCacheEnabled:async()=>{},setRequestInterception:async()=>{},on:(_,fn)=>handler=fn,off:()=>{},goto:()=>{events.push('navigate II');if(secondary){const result=new Promise(resolve=>finishNavigation=resolve);handler(script);return result;}return Promise.resolve();}};
-  const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL,setTimeout,clearTimeout,directory:'public-evidence',readFile:async()=> '{}',writeEvidence:async()=>{}});
+  const identity={evaluate:async fn=>{if(String(fn).includes('creationNativeOpenerLinked=false'))events.push('link current II document');},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',setCacheEnabled:async()=>{},setRequestInterception:async()=>assert.fail('the existing network guard must remain enabled'),goto:()=>{events.push('navigate II');if(secondary){const result=new Promise(resolve=>finishNavigation=resolve);handler(script);return result;}return Promise.resolve();}};
+  const holdIdentityScripts=(target,receive)=>{assert.equal(target,identity);handler=receive;return()=>{handler=undefined;};};
+  const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL,setTimeout,clearTimeout,holdIdentityScripts,directory:'public-evidence',readFile:async()=> '{}',writeEvidence:async()=>{}});
   await reload({page:owner,nativeDevice:{popup:identity}});
   assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II','link current II document','release II script']:['closed owner','navigate II','link current II document']);
  }
@@ -68,4 +69,17 @@ test('coordinated local time changes Date construction and now while preserving 
  assert.equal(scripts.length,2);
  await assert.rejects(()=>advanceCreationBrowserClocks(participants,Date.now()-1000));
  await assert.rejects(()=>advanceCreationBrowserClocks(participants,Date.now()+121*86400000));
+});
+
+test('actual browser network guard holds only local II scripts with one request owner and keeps nonlocal scripts denied',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function guard(page){'),end=source.indexOf('\nasync function routeToTarget(',start);assert.ok(start>=0&&end>start);
+ const listeners=new Map(),page={on:(name,fn)=>listeners.set(name,fn),setRequestInterception:async enabled=>assert.equal(enabled,true)};
+ const denied=[],events=[],identityScriptHolds=new WeakMap(),held=[];
+ identityScriptHolds.set(page,request=>held.push(request));
+ const guard=vm.runInNewContext(`(${source.slice(start,end)})`,{URL,denied,events,identityScriptHolds,preflightHolds:new Map(),origin:'http://app.localhost:4944'});await guard(page);
+ const request=(url,type)=>({continued:0,aborted:0,url:()=>url,resourceType:()=>type,continue(){assert.equal(++this.continued,1);},abort(){this.aborted++;}});
+ const script=request('http://id.ai.localhost:4944/entry.js','script');listeners.get('request')(script);assert.equal(held.length,1);assert.equal(script.continued,0);held[0].continue();assert.equal(script.continued,1);
+ const fetch=request('http://id.ai.localhost:4944/api/status','fetch');listeners.get('request')(fetch);assert.equal(fetch.continued,1);assert.equal(held.length,1);
+ const remote=request('https://outside.invalid/entry.js','script');listeners.get('request')(remote);assert.equal(remote.aborted,1);assert.equal(remote.continued,0);assert.equal(held.length,1);assert.deepEqual(denied,['https://outside.invalid']);
 });

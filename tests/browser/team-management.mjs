@@ -23,7 +23,9 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function writeEvidence(path,bytes){await writeFile(path+'.tmp',bytes);await rename(path+'.tmp',path);}
 async function click(page,label){await page.bringToFront();const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label){await b.click();return true;}}return false;}
 async function waitSignal(name){for(let n=0;n<1200;n++){try{return JSON.parse(await readFile(`${directory}/${name}.json`,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}await pause(500);}throw Error(`coordinator timeout: ${name}`);}
-async function guard(page){page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
+const identityScriptHolds=new WeakMap();
+function holdIdentityScripts(page,hold){if(identityScriptHolds.has(page))throw Error('Native II scripts already held');identityScriptHolds.set(page,hold);return()=>identityScriptHolds.delete(page);}
+async function guard(page){page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {const identityHold=identityScriptHolds.get(page);if(identityHold&&r.resourceType()==='script'){identityHold(r);return;}if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
 async function routeToTarget(page){await page.evaluate(()=>{location.hash='';});await page.evaluate(()=>{location.hash='#/neuron/100';});await page.waitForSelector('.control-panel',{timeout:90000});}
 async function reviewManagers(page,manager){
  await page.select('.control-panel select',String(manager));await page.select('select[name=topic]','1');
@@ -212,7 +214,7 @@ try{
  if(scenario==='cancellation'){await cancellation();if(denied.length||events.length)throw Error('cancelled login reached Governance or nonlocal network');console.log('Actual II popup closure terminates without a transaction signer');}
  else if(scenario==='wrong-provider'){await wrongProvider();console.log('Actual wrong-provider configuration failed without a transaction session');}
  else if(scopeProbeMode){await waitSignal('provisioned');await authenticate(0);console.log('Actual II signed child accepted for Governance and denied for a working non-Governance destination');}
- else if(scenario.startsWith('creation-')){await creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied});}
+ else if(scenario.startsWith('creation-')){await creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied,holdIdentityScripts});}
  else {
  const users=[];for(let i=0;i<4;i++)users.push(await authenticate(i));
  await writeEvidence(`${directory}/principals.json`,JSON.stringify(users.map(u=>u.principal)));
