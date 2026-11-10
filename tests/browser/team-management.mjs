@@ -162,7 +162,7 @@ async function authenticateAttempt(index,retained){
   // These are public control labels, never credential, delegation or recovery material.
   if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings,buttons:await popup.$$eval('button',buttons=>buttons.map(b=>({label:b.textContent.trim(),disabled:b.disabled,expanded:b.getAttribute('aria-expanded')})))}));
   const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
-  const awaitingClientCompletion=scenario.startsWith('creation-')&&['Unable to connect','Connection closed','Authentication failed'].includes(failureHeading)&&!await page.$$eval('button',buttons=>buttons.some(b=>!b.disabled&&b.textContent.trim()==='Try again'));
+  const awaitingClientCompletion=scenario.startsWith('creation-')&&['Unable to connect','Connection closed'].includes(failureHeading)&&!await page.$$eval('button',buttons=>buttons.some(b=>!b.disabled&&b.textContent.trim()==='Try again'));
   if(failureHeading&&!awaitingClientCompletion&&(!retained||i>=3)){
    await popup.screenshot({path:`${directory}/ii-failure-${index}.png`});
    const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};

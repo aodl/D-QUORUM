@@ -82,7 +82,7 @@ class BrowserSetupRecovery(unittest.TestCase):
         # Only setup outcomes and browser-context disposal are scripted here.
         source=(xtask.ROOT/'tests/browser/team-management.mjs').read_text()
         start=source.index('async function authenticate(index){')
-        end=source.index('async function authenticateAttempt(index){',start)
+        end=source.index('async function authenticateAttempt(index,retained){',start)
         function=source[start:end]
         script="""
 const applicationPages=[],authenticationRetries=[],receipts=[];

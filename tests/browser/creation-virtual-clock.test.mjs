@@ -1,7 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {readFile} from 'node:fs/promises';
 import {advanceCreationBrowserClocks,installCreationClockBeforeResume,installCreationPageClock} from './creation-virtual-clock.mjs';
+
+test('terminal II authentication failure reaches bounded setup recovery without waiting for an application retry button',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const expression=source.match(/const awaitingClientCompletion=(.+);/)[1];
+ const evaluate=async(scenario,failureHeading,retryVisible)=>vm.runInNewContext(`(async()=>(${expression}))()`,{
+  scenario,failureHeading,page:{$$eval:async()=>retryVisible},
+ });
+ for(const retryVisible of [false,true]){
+  assert.equal(await evaluate('creation-production','Authentication failed',retryVisible),false);
+  for(const heading of ['Invalid request','Unverified origin','Unsupported browser','Attribute sharing failed']){
+   assert.equal(await evaluate('creation-production',heading,retryVisible),false);
+  }
+ }
+ for(const heading of ['Unable to connect','Connection closed']){
+  assert.equal(await evaluate('creation-production',heading,false),true);
+  assert.equal(await evaluate('creation-production',heading,true),false);
+  assert.equal(await evaluate('team-management',heading,false),false);
+ }
+});
 
 test('coordinated local time changes Date construction and now while preserving explicit timestamps and future popup clocks',async()=>{
  const realm=vm.createContext({}),scripts=[];
