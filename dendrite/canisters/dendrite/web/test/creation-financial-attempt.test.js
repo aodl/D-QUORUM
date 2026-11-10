@@ -32,3 +32,13 @@ test('typed first-dispatch refusals remain distinct from duplicate, refund and a
  for(const error of [{Duplicate:{duplicate_of:1n}},{GenericError:{error_code:1n,message:'definitely failed'}},{TemporarilyUnavailable:null},{FailedToCreate:{fee_block:[1n],refund_block:[2n],error:'refunded'}}])assert.equal(financialRefusal({Err:error},'CreateCanister'),undefined);
  assert.equal(financialRefusal({Ok:1n},'PayStake'),undefined);
 });
+test('untrusted saved ingress rejects malformed shape, timestamp range and nonce encoding before dispatch authority',()=>{
+ const {argument,binding}=request(),expected={owner,destination,methodName:'icrc1_transfer',argument};
+ assert.throws(()=>validateCreationRequestBinding(null,expected),/Missing original/);
+ for(const change of [
+  b=>b.extra='ignored',b=>b.request=null,b=>b.request.request_type='query',
+  b=>b.request.ingress_expiry='0',b=>b.request.ingress_expiry='01',b=>b.request.ingress_expiry='-1',b=>b.request.ingress_expiry='18446744073709551616',
+  b=>b.request.nonce=null,b=>b.request.nonce='00',b=>b.request.nonce='zz'.repeat(32),
+ ]){const altered=structuredClone(binding);change(altered);assert.throws(()=>validateCreationRequestBinding(altered,expected));}
+ assert.equal(validateCreationRequestBinding(binding,expected),binding,'rejection checks never mutate the original identity');
+});

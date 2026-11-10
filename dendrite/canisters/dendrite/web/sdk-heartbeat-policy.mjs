@@ -14,3 +14,10 @@ export function reviewedHeartbeatSource(original){
  if(hash(result)!==heartbeatPolicy.patched_sha256)throw Error('Reviewed heartbeat output digest changed.');return result;
 }
 export function signerHeartbeatPolicy(){return {name:'reviewed-signer-heartbeat-policy',setup(build){build.onLoad({filter:/@icp-sdk\/signer\/lib\/esm\/web\/heartbeat\/client\.js$/},async({path})=>({contents:reviewedHeartbeatSource(await readFile(path,'utf8')),loader:'js'}));}};}
+export function annotateHeartbeatSbom(input){
+ const sbom=structuredClone(input),components=sbom.components?.filter(c=>c.group==='@icp-sdk'&&c.name==='signer');
+ if(components?.length!==1||components[0].version!==heartbeatPolicy.package_version)throw Error('SBOM must identify exactly the reviewed signer version.');
+ const component=components[0],name='dendrite:signer-heartbeat-build-policy';
+ component.properties=(component.properties??[]).filter(p=>p.name!==name);
+ component.properties.push({name,value:JSON.stringify(heartbeatPolicy)});return sbom;
+}

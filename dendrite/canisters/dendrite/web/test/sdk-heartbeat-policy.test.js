@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {reviewedHeartbeatSource,heartbeatPolicy} from '../sdk-heartbeat-policy.mjs';
+import {reviewedHeartbeatSource,heartbeatPolicy,annotateHeartbeatSbom} from '../sdk-heartbeat-policy.mjs';
 const sourceUrl=new URL('./web/heartbeat/client.js',import.meta.resolve('@icp-sdk/signer'));
 const original=await readFile(sourceUrl,'utf8'),reviewed=reviewedHeartbeatSource(original);
 async function load(source){const resolved=source.replace("'../../transport.js'",JSON.stringify(new URL('../../transport.js',sourceUrl).href));return (await import(`data:text/javascript;base64,${Buffer.from(resolved).toString('base64')}`)).HeartbeatClient;}
@@ -30,4 +30,10 @@ test('foreign ready messages cannot schedule heartbeat amplification; actual SDK
 test('delayed matching responses survive stale same-window replies without disabling freshness',t=>{
  const healthy=observe(t,Reviewed,false),faulty=observe(t,Original,false);
  assert.equal(healthy.afterNoise,2);assert.equal(faulty.afterNoise,3);assert.equal(healthy.beforeFreshExpiry,0);assert.equal(faulty.beforeFreshExpiry,1);assert.equal(healthy.afterFreshExpiry,1);
+});
+
+test('runtime SBOM records the exact build transform without relabelling the upstream package',()=>{
+ const input={components:[{group:'@icp-sdk',name:'signer',version:'5.4.0',properties:[{name:'upstream',value:'retained'}]}]},result=annotateHeartbeatSbom(input);
+ assert.equal(input.components[0].properties.length,1);assert.equal(result.components[0].version,'5.4.0');assert.equal(result.components[0].properties[1].value,JSON.stringify(heartbeatPolicy));assert.deepEqual(annotateHeartbeatSbom(result),result);
+ for(const bad of [{components:[]},{components:[...input.components,...input.components]},{components:[{...input.components[0],version:'5.4.1'}]}])assert.throws(()=>annotateHeartbeatSbom(bad),/reviewed signer/);
 });

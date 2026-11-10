@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {Principal} from '@icp-sdk/core/principal';
 import {IDL} from '@icp-sdk/core/candid';
 import {HttpAgent,Certificate,Cbor,LookupPathStatus} from '@icp-sdk/core/agent';
+import {createCreationController} from '../src/creation-controller.js';
 import {createCreationTeamVote} from '../src/creation-team-vote.js';
 import {createCreationPlan,creationPlanDigest,CREATION_PROTOCOL_PINS} from '../src/creation-plan.js';
 import {newCreationReceipt,addCreationIntent,settleCreationIntent,exportCreationReceipt} from '../src/creation-receipt.js';
@@ -31,8 +32,9 @@ function fixture(t,kind='Rehearsal'){
   return {lookup_path(path){const field=new TextDecoder().decode(path.at(-1)),value=field==='status'?new TextEncoder().encode('replied'):field==='reply'?reply:field==='module_hash'?hexBytes(manifest.sha256):field==='controllers'?Cbor.encode([P.toUint8Array()]):leb(BigInt(Date.now())*1000000n);return {status:LookupPathStatus.Found,value};}};});
  f.target={id:[{id:600n}],controller:[C],account:stakingSubaccount(C,p.nonce),hot_keys:[],visibility:[2]};f.managerHotkeys=[];f.proposalPayload={...request.command[0].MakeProposal};
  const actor={list_neurons:async args=>({full_neurons:args.neuron_ids[0]===600n?[{...f.target,followees:f.following}]:[{id:[{id:12n}],controller:[f.managerOwner],hot_keys:f.managerHotkeys}]}),get_proposal_info:async()=>[{id:[{id:9n}],status:f.status,proposer:[{id:11n}],proposal:[f.proposalPayload]}],manage_neuron:async request=>{f.votes.push(request);if(f.afterVote)f.afterVote();return f.voteError?{command:[{Error:{error_type:12,error_message:'recording unknown'}}]}:{command:[{RegisterVote:{}}]};}};
+ const readSystem=async id=>(typeof id==='string'?id:id.toText())===C.toText()?{moduleHash:f.module,controllers:f.controllers}:{moduleHash:hexBytes(CREATION_PROTOCOL_PINS.modules['rrkah-fqaaa-aaaaa-aaaaq-cai'])};
  const voting=createCreationTeamVote({bindings,currentManifest:manifest,getSession:()=>({principal:f.principal,validate(){if(f.expired)throw Error('expired actual session');}}),getNnsActor:async()=>{if(f.actorBarrier)await f.actorBarrier;return actor;},readSystem:async id=>(typeof id==='string'?id:id.toText())===C.toText()?{moduleHash:f.module,controllers:f.controllers}:{moduleHash:hexBytes(CREATION_PROTOCOL_PINS.modules['rrkah-fqaaa-aaaaa-aaaaq-cai'])},getGeneration:()=>f.generation,ensureActive(){if(!f.active)throw Error('route departed');}});
- return {...f,actor,request,control:f,voting,json:()=>exportCreationReceipt(r),receipt:r,state};
+ return {...f,readSystem,actor,request,control:f,voting,json:()=>exportCreationReceipt(r),receipt:r,state};
 }
 test('another creator-independent principal can review and sign only its own exact manager Yes vote',async t=>{
  const f=fixture(t);f.voting.import(f.json());const prepared=await f.voting.prepare(12n);assert.equal(prepared.principal,participant.toText());assert.equal(prepared.id,9n);assert.equal(f.control.votes.length,0);await assert.rejects(()=>f.voting.submit(),/Explicitly/);await f.voting.submit({confirmed:true});assert.equal(f.control.votes.length,1);assert.equal(f.control.votes[0].neuron_id_or_subaccount[0].NeuronId.id,12n);assert.equal(f.control.votes[0].command[0].RegisterVote.proposal[0].id,9n);assert.equal(f.receipt.plan.owner,P.toText());
@@ -79,4 +81,26 @@ test('route or identity changes during evidence collection cannot publish a prep
  const f=fixture(t);f.voting.import(f.json());await f.voting.prepare(12n);f.control.voteError=true;
  await assert.rejects(()=>f.voting.submit({confirmed:true}),/unknown or refused/);assert.equal(f.control.votes.length,1);assert.equal(f.voting.prepared,undefined);
  await assert.rejects(()=>f.voting.submit({confirmed:true}),/Explicitly review/);assert.equal(f.control.votes.length,1);
+});
+
+test('independent team UI shares the existing controller operation guard and route cancellation',async t=>{
+ const f=fixture(t);globalThis.__DENDRITE_BOOTSTRAP_MANIFEST__=manifest;
+ const controller=createCreationController({bindings,getSession:()=>({principal:participant,validate(){}}),getNnsActor:async()=>{if(f.control.actorBarrier)await f.control.actorBarrier;return f.actor;},getService:async()=>({}),transport:{readSystem:f.readSystem}});
+ await controller.teamVote.import(f.json());assert.ok(controller.teamVote.imported);
+ let release;f.control.actorBarrier=new Promise(resolve=>release=resolve);
+ const preparing=controller.teamVote.prepare(12n);assert.equal(controller.busy,true);
+ await assert.rejects(()=>controller.teamVote.import(f.json()),/Another creation operation/);
+ await assert.rejects(()=>controller.teamVote.submit({confirmed:true}),/Another creation operation/);
+ release();await preparing;assert.equal(controller.busy,false);assert.equal(controller.teamVote.prepared.manager,12n);
+ f.control.actorBarrier=new Promise(resolve=>release=resolve);
+ const voting=controller.teamVote.submit({confirmed:true});assert.equal(controller.busy,true);
+ await controller.deactivate();release();await assert.rejects(()=>voting,/route changed|cancelled|interrupted/i);
+ assert.equal(controller.busy,false);assert.equal(controller.teamVote.imported,undefined);assert.equal(f.control.votes.length,0);
+});
+test('sign-out capability cancellation drops a prepared team actor and requires a new explicit review',async t=>{
+ const f=fixture(t);globalThis.__DENDRITE_BOOTSTRAP_MANIFEST__=manifest;
+ const controller=createCreationController({bindings,getSession:()=>({principal:participant,validate(){}}),getNnsActor:async()=>f.actor,getService:async()=>({}),transport:{readSystem:f.readSystem}});
+ await controller.teamVote.import(f.json());await controller.teamVote.prepare(12n);assert.ok(controller.teamVote.prepared);
+ await controller.cancelCapabilities();assert.equal(controller.teamVote.prepared,undefined);assert.equal(controller.teamVote.imported,undefined);
+ await assert.rejects(()=>controller.teamVote.submit({confirmed:true}),/Explicitly review/);assert.equal(f.control.votes.length,0);
 });

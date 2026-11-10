@@ -16,8 +16,9 @@ export function createCreationTeamVote({bindings,getSession,getNnsActor,readSyst
  let imported,prepared;
  function session(){ensureActive();const s=getSession();if(!s)throw Error('Sign in with your own Internet Identity.');s.validate();return s;}
  async function evidence(manager){
-  const s=session(),generation=getGeneration(),actor=await getNnsActor();
+  const s=session(),generation=getGeneration();
   const check=()=>{session();if(generation!==getGeneration()||s.principal.toText()!==getSession().principal.toText())throw Error('Creation vote cancelled by route or identity change.');};
+  const actor=await getNnsActor();check();
   if(!imported)throw Error('Import a proposal receipt first.');
   const {receipt:r,plan:p}=imported;
   if(!p.managers.includes(manager)||!r.canister_id||!r.neuron_id||!r.creation_witness||!r.bootstrap_witness)throw Error('Exact creation and proposal provenance is required.');

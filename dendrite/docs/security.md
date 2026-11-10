@@ -212,3 +212,8 @@ build. Timeout durations, delegation expiry and certificate checks are unchanged
 Focused SDK tests include unpatched negative controls; they are not replica or
 II authentication evidence. Same-origin script compromise remains within the
 provisional controller trust boundary described above.
+
+The frontend runtime SBOM annotates the signer component with the complete reviewed
+heartbeat build policy and retains its upstream package version. SBOM generation
+rechecks the actual pinned SDK source and transformed digest before writing this
+annotation and a separate checksummed build-policy record.

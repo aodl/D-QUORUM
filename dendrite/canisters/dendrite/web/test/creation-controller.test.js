@@ -43,7 +43,7 @@ function fixture(shared){
     const errors={BadFee:IDL.Record({expected_fee:IDL.Nat}),InsufficientFunds:IDL.Record({balance:IDL.Nat}),TooOld:IDL.Null,CreatedInFuture:IDL.Record({ledger_time:IDL.Nat64}),Duplicate:IDL.Record({duplicate_of:IDL.Nat}),AllowanceChanged:IDL.Record({current_allowance:IDL.Nat}),Expired:IDL.Record({ledger_time:IDL.Nat64}),GenericError:IDL.Record({error_code:IDL.Nat,message:IDL.Text}),TemporarilyUnavailable:IDL.Null};
     const reply=IDL.encode([IDL.Variant({Ok:IDL.Nat,Err:IDL.Variant(errors)})],[value]),certificate=bytesHex(recordingCertificate(undefined,state.certificates.size+1));state.certificates.set(certificate,reply);
     return {system:{moduleHash:hexBytes(state.wrongFinancialModule?'00'.repeat(32):CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'])},value,witness:{request,request_id:binding?.request_id??bytesHex(requestIdOf(witnessRequestContent(request))),certificate}};
-   },readSystem:async id=>(typeof id==='string'?id:id.toText())===state.bootstrapId?state.bootstrapSystem:{moduleHash:hexBytes(CREATION_PROTOCOL_PINS.modules[id])},readLedgerBlock:async id=>{if(!state.blocks.has(id))throw Error("recording block unavailable");return state.blocks.get(id);},
+   },readControllerIcpBalance:async()=>state.defaultIcpBalance??0n,readSystem:async id=>(typeof id==='string'?id:id.toText())===state.bootstrapId?state.bootstrapSystem:{moduleHash:hexBytes(CREATION_PROTOCOL_PINS.modules[id])},readLedgerBlock:async id=>{if(!state.blocks.has(id))throw Error("recording block unavailable");return state.blocks.get(id);},
    authFactory:(profile,bootstrapCanisterId)=>{let valid=true;return {signIn:async()=>({principal:state.principal,profile,bootstrapCanisterId,validate(){if(!valid)throw Error("revoked child");}}),signOut:async()=>{if(state.signOutFailure)throw Error("recording fault: SDK cleanup failed");valid=false;}};},actorsFactory:async()=>actors}});
  return {controller,state,actors,gov};
 }
@@ -170,8 +170,13 @@ test("creation cancellation and route departure discard signing handles even whe
 // Certificate decoding is deliberately scripted here, as in creation-protocol's
 // transport recordings. These are ordering/failure tests, not replica authority
 // or cryptographic proof. The real-artifact upgrade lane supplies that evidence.
-async function recoveryFixture(t,mode){
- const f=fixture();await f.controller.review(input);const p=f.controller.plan,c=Principal.fromUint8Array(Uint8Array.of(0,0,0,0,0,0,0,42,1,1));
+async function recoveryFixture(t,mode,reviewedInput=input){
+ const f=fixture();
+ if(reviewedInput.profile==='ProductionCandidate'){
+  f.gov.list_known_neurons=async()=>({known_neurons:reviewedInput.managers.map(id=>({id:[{id:BigInt(id)}],known_neuron_data:[{name:`Test ${id}`}]}))});
+  f.gov.list_neurons=async args=>({full_neurons:args.neuron_ids.map(id=>({id:[{id}],controller:[owner],hot_keys:[],visibility:[2],followees:[[4,{followees:[{id:18422777432977120264n}]}]]})),total_pages_available:[1n]});
+ }
+ await f.controller.review(reviewedInput);const p=f.controller.plan,c=Principal.fromUint8Array(Uint8Array.of(0,0,0,0,0,0,0,42,1,1));
  const args={from_subaccount:[fundingSubaccount(owner,p.creation_id)],created_at_time:[p.nonce],amount:p.provision_cycles,creation_args:[{settings:[{controllers:[[owner]],compute_allocation:[0n],memory_allocation:[0n],freezing_threshold:[2592000n]}],subnet_selection:[{Filter:{subnet_type:[]}}]}]};
  const argument=IDL.encode([creationArgumentTypes.create],[args]),request={request_type:'call',canister_id:'um5iw-rqaaa-aaaaq-qaaba-cai',method_name:'create_canister',arg:bytesHex(argument),sender:owner.toText(),ingress_expiry:String(p.nonce+300000000000n),nonce:null};
  f.controller.receipt.canister_id=c.toText();const intent=addCreationIntent(f.controller.receipt,{attemptVersion:1,kind:'CreateCanister',destination:request.canister_id,argument,createdAtTime:p.nonce});settleCreationIntent(f.controller.receipt,intent.id,'Confirmed',{block_id:'7',canister_id:c.toText()});
@@ -332,12 +337,13 @@ test('an original rejected dispatch reservation releases no money and an ambiguo
  });
 });
 
-async function recordedProposalFixture(t,outcome){
- const f=await recoveryFixture(t,'pending'),s=f.bootstrapState,p=f.controller.plan,govId=Principal.fromText('rrkah-fqaaa-aaaaa-aaaaq-cai');
- s.pending=[];s.neuron_id=[600n];s.public_visibility_confirmed=true;s.phase={RecoverableTestReady:null};f.controller.receipt.neuron_id='600';
- const manager={id:[{id:11n}],controller:[owner],hot_keys:[],visibility:[2],followees:[],cached_neuron_stake_e8s:10000000000n,neuron_fees_e8s:0n};
+const productionInput={...input,profile:'ProductionCandidate',defaultNeuronId:'18422777432977120264',managers:['11','12','13','14','15'],committedTopics:[4],delegates:{4:['11','12','13']},metadata:{name:'Recording provisional candidate',description:'P retains replaceable code and authority',links:[]}};
+async function recordedProposalFixture(t,outcome,production=false){
+ const f=await recoveryFixture(t,'pending',production?productionInput:input),s=f.bootstrapState,p=f.controller.plan,govId=Principal.fromText('rrkah-fqaaa-aaaaa-aaaaq-cai');
+ s.pending=[];s.neuron_id=[600n];s.public_visibility_confirmed=true;s.phase=production?{AwaitingRegistration:null}:{RecoverableTestReady:null};f.controller.receipt.neuron_id='600';
+ const manager={id:[{id:11n}],controller:[owner],hot_keys:[],visibility:[2],followees:[],cached_neuron_stake_e8s:10000000000n,neuron_fees_e8s:0n,dissolve_state:[{DissolveDelaySeconds:63115200n}],deciding_voting_power:[500n]};
  const neuron={...manager,id:[{id:600n}],controller:[f.c],account:stakingSubaccount(f.c,p.nonce),followees:p.following.map(row=>[row.topic,{followees:row.followees.map(id=>({id}))}])};
- f.gov.list_neurons=async args=>({full_neurons:[args.neuron_ids[0]===600n?neuron:manager],total_pages_available:[1n]});
+ f.gov.list_neurons=async args=>({full_neurons:args.neuron_ids.map(id=>id===600n?neuron:{...manager,id:[{id}],followees:[[4,{followees:[{id:18422777432977120264n}]}]]}),total_pages_available:[1n]});
  const createReply=IDL.encode([IDL.Variant({Ok:IDL.Record({block_id:IDL.Nat,canister_id:IDL.Principal})})],[{Ok:{block_id:7n,canister_id:f.c}}]);
  const nnsSignature=nnsFactory({IDL})._fields.find(([name])=>name==='manage_neuron')[1],statusSignature=bootstrapFactory({IDL})._fields.find(([name])=>name==='status')[1];
  let calls=0,lastTarget;const returned=outcome==='refused'||outcome==='ambiguous'?{command:[{Error:{error_type:outcome==='refused'?5:12,error_message:'recorded typed Governance outcome'}}]}:{command:[{MakeProposal:{message:[],proposal_id:outcome==='missing-id'?[]:[{id:9n}]}}]};
@@ -352,13 +358,14 @@ async function recordedProposalFixture(t,outcome){
  t.mock.method(Certificate,'create',async options=>{const tag=Cbor.decode(options.certificate).signature[0];return {lookup_path(path){const field=new TextDecoder().decode(path.at(-1));let value;
   if(field==='reply')value=tag===1?createReply:tag===2?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]);else if(field==='status')value=new TextEncoder().encode('replied');else if(field==='module_hash')value=tag===2?hexBytes(CREATION_PROTOCOL_PINS.modules[govId.toText()]):p.bootstrap_sha256;else if(field==='controllers')value=Cbor.encode([owner.toUint8Array()]);else{let n=BigInt(Date.now())*1000000n,a=[];do{const b=Number(n&127n);n>>=7n;a.push(b|(n?128:0));}while(n);value=Uint8Array.from(a);}return {status:LookupPathStatus.Found,value};}};});
  f.actors.bootstrap.advance=async({step})=>{
+  if(step.ReserveProposal&&outcome==='reserve-refused')return {Err:'recorded bootstrap reservation refused'};
   if(step.ReserveProposal)s.external_proposal=[{...step.ReserveProposal,created_at:BigInt(Math.floor(Date.now()/1000))}];
-  if(step.MarkProposalDispatched)s.external_proposal[0].dispatched=true;
+  if(step.MarkProposalDispatched){s.external_proposal[0].dispatched=true;if(outcome==='mark-lost')throw Error('recorded dispatch grant reply lost');}
   if(step.ResolveProposal){if(outcome==='resolve-lost'&&!f.state.repairResolution)throw Error('recorded bootstrap resolution reply lost');s.external_proposal[0].proposal_id=[step.ResolveProposal];}
   if(step.ResolveProposalRefusal){if(f.state.loseRefusal)throw Error('recorded refusal audit unavailable');assert.equal(outcome,'refused');const reservation=s.external_proposal[0];assert.deepEqual(reservation.request_id[0],hexBytes(f.controller.receipt.intents.at(-1).request_binding.request_id));s.proposal_refusals=[[{reservation,request_id:reservation.request_id[0],certificate_digest:new Uint8Array(32),reply_digest:new Uint8Array(32),error_type:5}]];s.external_proposal=[];}
   return {Ok:s};
  };
- return {...f,calls:()=>calls};
+ return {...f,manager,neuron,calls:()=>calls};
 }
 test('proposal adapter retains exact created, definitively refused and ambiguous reservation outcomes',async t=>{
  for(const outcome of ['created','refused','ambiguous','missing-id','resolve-lost'])await t.test(outcome,async t=>{
@@ -390,4 +397,57 @@ test('an original no-creation reply can be read again after its bootstrap audit 
  const f=await recordedProposalFixture(t,'refused');f.state.loseRefusal=true;await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/audit unavailable/);
  const intent=f.controller.receipt.intents.at(-1);assert.equal(intent.state,'Unknown');assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);f.state.loseRefusal=false;
  await f.controller.readOriginalProposalReply();assert.equal(intent.state,'Rejected');assert.equal(f.bootstrapState.external_proposal.length,0);assert.equal(f.calls(),1);
+});
+test('proposal review blocks unsupported actions, missing proposer authority and insufficient current stake before a reservation',async t=>{
+ for(const [label,change,kind,manager,expected]of [
+  ['unsupported action',()=>{},'ArbitraryCommand',11n,/Unsupported/],
+  ['registration from a test profile',()=>{},'Registration',11n,/production candidate/],
+  ['unselected rehearsal proposer',()=>{},'Rehearsal',12n,/select an existing target manager/],
+  ['no proposer authority',f=>f.manager.controller=[other],'Rehearsal',11n,/authority/],
+  ['insufficient minted stake',f=>f.manager.cached_neuron_stake_e8s=1n,'Rehearsal',11n,/current proposal fee/],
+  ['zero stake with zero proposal fee',f=>{f.manager.cached_neuron_stake_e8s=0n;const original=f.gov.get_network_economics_parameters;f.gov.get_network_economics_parameters=async()=>({...await original(),neuron_management_fee_per_proposal_e8s:0n});},'Rehearsal',11n,/current proposal fee/],
+  ['changed target controller',f=>f.neuron.controller=[other],'Rehearsal',11n,/controller|binding/],
+ ])await t.test(label,async t=>{const f=await recordedProposalFixture(t,'created');change(f);await assert.rejects(()=>f.controller.prepareNnsProposal(kind,manager),expected);assert.equal(f.calls(),0);assert.equal(f.bootstrapState.external_proposal.length,0);});
+});
+test('a rejected reservation and a lost granted reservation cannot be mistaken for a submitted Governance proposal',async t=>{
+ for(const outcome of ['reserve-refused','mark-lost'])await t.test(outcome,async t=>{
+  const f=await recordedProposalFixture(t,outcome);await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();
+  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/recorded/);const intent=f.controller.receipt.intents.at(-1);assert.equal(f.calls(),0);
+  if(outcome==='reserve-refused'){assert.equal(intent.state,'Rejected');assert.equal(f.bootstrapState.external_proposal.length,0);}
+  else{assert.equal(intent.state,'Unknown');assert.equal(f.bootstrapState.external_proposal[0].dispatched,true);assert.equal(f.bootstrapState.external_proposal[0].proposal_id.length,0);}
+ });
+});
+test('an expired but locally proven-unsent review remains cancellable and gets a new reviewed attempt without changing account nonce',async t=>{
+ const f=fixture();await prepare(f);const original=f.controller.prepared.intent,nonce=f.controller.plan.nonce;f.controller.export();
+ const before=Date.now();t.mock.method(Date,'now',()=>before+5*60000);
+ await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/proven-unsent review/);
+ assert.equal(original.state,'Prepared');assert.equal(f.state.transfers.length,0);assert.equal(f.state.approvalHashes.size,0);
+ f.controller.discardPrepared();assert.equal(original.state,'Rejected');await f.controller.prepareProvisioning();
+ assert.notEqual(f.controller.prepared.intent.id,original.id);assert.notEqual(f.controller.prepared.intent.created_at_time,original.created_at_time);assert.equal(f.controller.plan.nonce,nonce);assert.equal(f.state.approvalHashes.size,0);
+});
+test('production registration uses its separately reviewed global proposal fee and truthful provisional payload',async t=>{
+ const f=await recordedProposalFixture(t,'created',true);await f.controller.prepareNnsProposal('Registration',11n);
+ const reviewed=f.controller.prepared;assert.equal(reviewed.nnsReview.reviewedFeeE8s,100000000n);
+ const proposal=reviewed.args.command[0].MakeProposal;assert.ok(proposal.action[0].RegisterKnownNeuron);assert.match(proposal.summary,/retains replaceable bootstrap code/);assert.equal(proposal.action[0].RegisterKnownNeuron.id[0].id,600n);
+ f.controller.export();await f.controller.dispatch({saved:true,confirmed:true});assert.equal(f.controller.receipt.intents.at(-1).state,'Confirmed');assert.equal(f.calls(),1);
+});
+test('production proposer eligibility and changed fees remain independent of creator controller authority',async t=>{
+ for(const [label,change,expected]of [
+  ['short lock',f=>f.manager.dissolve_state=[{DissolveDelaySeconds:1n}],/voting eligibility/],
+  ['zero voting power',f=>f.manager.deciding_voting_power=[0n],/voting eligibility/],
+  ['absent lock',f=>f.manager.dissolve_state=[],/voting eligibility/],
+  ['dissolved timestamp',f=>f.manager.dissolve_state=[{WhenDissolvedTimestampSeconds:1n}],/voting eligibility/],
+ ])await t.test(label,async t=>{const f=await recordedProposalFixture(t,'created',true);change(f);await assert.rejects(()=>f.controller.prepareNnsProposal('Registration',11n),expected);assert.equal(f.calls(),0);});
+ const f=await recordedProposalFixture(t,'created',true);await f.controller.prepareNnsProposal('Registration',11n);f.controller.export();const economics=f.gov.get_network_economics_parameters;f.gov.get_network_economics_parameters=async()=>({...await economics(),reject_cost_e8s:200000000n});
+ await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/Proposal fee changed/);assert.equal(f.calls(),0);assert.equal(f.controller.prepared.intent.state,'Prepared');assert.equal(f.bootstrapState.external_proposal.length,0);
+});
+test('production default-account acknowledgement discloses observed and later ICP without sweeping or settling other obligations',async t=>{
+ const f=await recordedProposalFixture(t,'created',true);
+ await assert.rejects(()=>f.controller.acknowledgeDefaultIcp({confirmed:true}),/Explicitly acknowledge/);
+ f.state.defaultIcpBalance=100000000n;await f.controller.reviewDefaultIcp();assert.equal(f.controller.observed.controllerIcpBalance,100000000n);
+ await f.controller.acknowledgeDefaultIcp({confirmed:true});const count=f.controller.receipt.checkpoints.filter(row=>row.kind==='DefaultIcpAcknowledged').length;
+ f.state.defaultIcpBalance=100000001n;await f.controller.acknowledgeDefaultIcp({confirmed:true});assert.equal(f.controller.observed.controllerIcpBalance,100000001n);assert.equal(f.controller.receipt.checkpoints.filter(row=>row.kind==='DefaultIcpAcknowledged').length,count);
+ assert.equal(f.state.transfers.length,0);assert.equal(f.calls(),0);
+ await f.controller.prepareNnsProposal('Registration',11n);f.controller.receipt.intents.at(-1).state='Unknown';
+ await assert.rejects(()=>f.controller.acknowledgeDefaultIcp({confirmed:true}),/unresolved/);assert.equal(f.state.transfers.length,0);
 });

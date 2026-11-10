@@ -188,7 +188,12 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     return verifyExecutedCreationRehearsal(p,{proposalId,neuronId:BigInt(receipt.neuron_id),startedAt,managers:plan.managers});
   }
   return {
-    teamVote,
+    teamVote:{
+      get imported(){return teamVote.imported;},get prepared(){return teamVote.prepared;},
+      async import(json){return run(async check=>{teamVote.import(json);check();});},
+      async prepare(manager){return run(async check=>{const result=await teamVote.prepare(manager);check();return result;});},
+      async submit(options){return run(async check=>{const result=await teamVote.submit(options);check();return result;});},
+    },
     get plan(){return plan;},get receipt(){return receipt;},get observed(){return observed;},get prepared(){return prepared;},get busy(){return busy;},get manifest(){return manifest;},get recoveryOnly(){return recoveryOnly;},get canUpgradeBootstrap(){return !!plan&&bytesHex(plan.bootstrap_sha256)!==currentManifest.sha256&&!receipt.bootstrap_upgrade;},
     hasCapability(profile){try{return !!actorFor(profile);}catch{return false;}},
     async connect(profile){return run(async check=>{identity();const existing=capabilities.get(profile);if(existing)await existing.auth.signOut();
@@ -450,7 +455,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       const types=Actor.interfaceOf(actorFor("CallBootstrap").bootstrap)._fields.find(([name])=>name==="status")[1].retTypes;
       if(current.version<=prior.version||bytesHex(IDL.encode(types,[{Ok:before}]))!==bytesHex(IDL.encode(types,[{Ok:after}])))throw Error("Recovery upgrade checkpoint/readback differs. Preserve the original operation; no financial retry was made.");
       observed.running=true;observed.stopped=false;checkpointCreation(receipt,"Recovery",{quiesced:true,same_code_upgrade:true,version:String(current.version),sequence:String(after.sequence)});});},
-    async cancelCapabilities(){epoch++;if(prepared?.intent.state==="Prepared")settleCreationIntent(receipt,prepared.intent.id,"Rejected");prepared=undefined;await discardCapabilities();notify();},
+    async cancelCapabilities(){teamVote.clear();epoch++;if(prepared?.intent.state==="Prepared")settleCreationIntent(receipt,prepared.intent.id,"Rejected");prepared=undefined;await discardCapabilities();notify();},
     async deactivate(){teamVote.clear();active=false;epoch++;if(prepared?.intent.state==="Prepared")settleCreationIntent(receipt,prepared.intent.id,"Rejected");prepared=undefined;await discardCapabilities();},
     activate(){active=true;epoch++;},
     fundingAccount(){if(!plan)return;const sub=fundingSubaccount(plan.owner,plan.creation_id);return {owner:plan.owner.toText(),subaccount:bytesHex(sub),legacy:bytesHex(legacyAccount(plan.owner,sub))};},
