@@ -127,10 +127,11 @@ pub fn verify_gateway_freshness(pic: &pocket_ic::PocketIc, directory: &Path, ver
     fs::write(directory.join("clock-offset-ns"), "0\n").unwrap();
     pic.auto_progress();
     let body = String::from_utf8(rejected.stdout).unwrap();
+    let error: serde_json::Value = serde_json::from_str(body.rsplit_once('\n').unwrap().0).unwrap();
     assert!(
         rejected.status.success()
             && body.ends_with("\n503")
-            && body.contains("Response Verification Error"),
+            && error["error_type"] == "backend_response_verification",
         "misaligned certificate was not rejected by response verification: {body}"
     );
     let after = request();
