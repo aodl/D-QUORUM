@@ -721,6 +721,29 @@ fn production_creation(case: CreationCase) {
             "historical execution does not prove the current manager identities"
         );
         follow(&[11, 12, 13, 14, 15]);
+        let executed_before_change = propose_refresh(&pic, owner, 11, t);
+        for manager in [12, 13] {
+            vote_yes(
+                &pic,
+                manager_owner(manager),
+                manager,
+                executed_before_change,
+            );
+        }
+        let before_change: Option<ProposalOracle> = update(
+            &pic,
+            GOVERNANCE,
+            owner,
+            "get_proposal_info",
+            executed_before_change,
+        );
+        assert_eq!(before_change.unwrap().status, 4);
+        follow(&[11, 12, 13, 14, 16]);
+        assert!(
+            advance(&pic, c, owner, Step::Seal(executed_before_change)).is_err(),
+            "membership changed after execution invalidates present readiness despite the historical majority"
+        );
+        follow(&[11, 12, 13, 14, 15]);
         let wrong_action = follow(&[11, 12, 13, 14, 15]);
         assert!(
             advance(&pic, c, owner, Step::Seal(wrong_action)).is_err(),
@@ -1552,6 +1575,30 @@ fn recoverable_creation(external_disbursement_error: bool, historical: bool) {
     );
 }
 
+#[derive(CandidType, Clone)]
+struct Approve {
+    from_subaccount: Option<Vec<u8>>,
+    spender: l::Account,
+    amount: Nat,
+    expected_allowance: Option<Nat>,
+    expires_at: Option<u64>,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+}
+#[derive(CandidType, candid::Deserialize, Debug)]
+enum ApprovalError {
+    AllowanceChanged { current_allowance: Nat },
+    BadFee { expected_fee: Nat },
+    InsufficientFunds { balance: Nat },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: Nat },
+    TemporarilyUnavailable,
+    GenericError { error_code: Nat, message: String },
+    Expired { ledger_time: u64 },
+}
+
 #[test]
 #[ignore = "creation_protocol lane uses checksum-pinned real CMC/Cycles Ledger"]
 fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
@@ -1605,6 +1652,71 @@ fn real_cmc_conversion_and_cycles_ledger_creation_deduplicate() {
     let repeated: Result<MintSuccess, NotifyError> =
         update(&pic, cmc(), owner, "notify_mint_cycles", notify);
     assert_eq!(repeated.unwrap(), minted);
+    // The actual Cycles Ledger rejects management-principal spenders before
+    // charging a fee. The browser uses a fixed domain-derived opaque marker.
+    let cycle_fee: Nat = query_empty(&pic, cycles_ledger(), "icrc1_fee");
+    let before_approval = cycles_balance(&pic, owner, Some(funding_sub.clone()));
+    let mut approval = Approve {
+        from_subaccount: Some(funding_sub.clone()),
+        spender: l::Account {
+            owner: candid::Principal::management_canister(),
+            subaccount: Some(vec![1; 32]),
+        },
+        amount: 1u64.into(),
+        expected_allowance: Some(0u64.into()),
+        expires_at: None,
+        fee: Some(cycle_fee.clone()),
+        memo: Some(vec![42; 32]),
+        created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+    };
+    let denied: Result<Nat, ApprovalError> = update(
+        &pic,
+        cycles_ledger(),
+        owner,
+        "icrc2_approve",
+        approval.clone(),
+    );
+    assert!(
+        matches!(denied, Err(ApprovalError::GenericError { error_code, .. }) if error_code == Nat::from(100001u64))
+    );
+    assert_eq!(
+        before_approval,
+        cycles_balance(&pic, owner, Some(funding_sub.clone())),
+        "denied owner charges no fee"
+    );
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(b"dendrite/cycles-dispatch-marker/v1");
+    let mut marker = digest[..28].to_vec();
+    marker.push(1);
+    approval.spender.owner = candid::Principal::from_slice(&marker);
+    let granted: Result<Nat, ApprovalError> = update(
+        &pic,
+        cycles_ledger(),
+        owner,
+        "icrc2_approve",
+        approval.clone(),
+    );
+    let grant_block = granted.unwrap();
+    let duplicate: Result<Nat, ApprovalError> = update(
+        &pic,
+        cycles_ledger(),
+        owner,
+        "icrc2_approve",
+        approval.clone(),
+    );
+    assert!(
+        matches!(duplicate, Err(ApprovalError::Duplicate { duplicate_of }) if duplicate_of == grant_block)
+    );
+    approval.memo = Some(vec![43; 32]);
+    let competitor: Result<Nat, ApprovalError> =
+        update(&pic, cycles_ledger(), owner, "icrc2_approve", approval);
+    assert!(
+        matches!(competitor, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
+    );
+    assert_eq!(
+        &before_approval.0 - &cycles_balance(&pic, owner, Some(funding_sub.clone())).0,
+        cycle_fee.0,
+        "one grant fee; no duplicate or competitor fee"
+    );
     // A fresh first create attempt after conversion is independent of the
     // permanent account nonce and the original payment deduplication window.
     pic.advance_time(std::time::Duration::from_secs(48 * 3600));
@@ -1776,29 +1888,6 @@ fn creation_local_certificate_root_is_stable_across_worlds() {
 #[test]
 #[ignore = "creation_protocol: actual pinned ICP Ledger ICRC-2 compare-and-set feasibility"]
 fn real_creation_dispatch_reservation_compare_and_set() {
-    #[derive(CandidType, Clone)]
-    struct Approve {
-        from_subaccount: Option<Vec<u8>>,
-        spender: l::Account,
-        amount: Nat,
-        expected_allowance: Option<Nat>,
-        expires_at: Option<u64>,
-        fee: Option<Nat>,
-        memo: Option<Vec<u8>>,
-        created_at_time: Option<u64>,
-    }
-    #[derive(CandidType, candid::Deserialize, Debug)]
-    enum Error {
-        AllowanceChanged { current_allowance: Nat },
-        BadFee { expected_fee: Nat },
-        InsufficientFunds { balance: Nat },
-        TooOld,
-        CreatedInFuture { ledger_time: u64 },
-        Duplicate { duplicate_of: Nat },
-        TemporarilyUnavailable,
-        GenericError { error_code: Nat, message: String },
-        Expired { ledger_time: u64 },
-    }
     let pic = real_pic();
     let owner = user(41);
     install_real(
@@ -1827,15 +1916,20 @@ fn real_creation_dispatch_reservation_compare_and_set() {
         memo: Some(vec![42; 32]),
         created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
     };
-    let first: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
+    let first: Result<Nat, ApprovalError> =
+        update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
     let block = first.expect("management principal reservation has no generic spending endpoint");
-    let duplicate: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
-    assert!(matches!(duplicate, Err(Error::Duplicate { duplicate_of }) if duplicate_of == block));
+    let duplicate: Result<Nat, ApprovalError> =
+        update(&pic, LEDGER, owner, "icrc2_approve", args.clone());
+    assert!(
+        matches!(duplicate, Err(ApprovalError::Duplicate { duplicate_of }) if duplicate_of == block)
+    );
     let mut competitor = args;
     competitor.memo = Some(vec![43; 32]);
-    let second: Result<Nat, Error> = update(&pic, LEDGER, owner, "icrc2_approve", competitor);
+    let second: Result<Nat, ApprovalError> =
+        update(&pic, LEDGER, owner, "icrc2_approve", competitor);
     assert!(
-        matches!(second, Err(Error::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
+        matches!(second, Err(ApprovalError::AllowanceChanged { current_allowance }) if current_allowance == Nat::from(1u64))
     );
     let base = l::TransferArg {
         from_subaccount: None,

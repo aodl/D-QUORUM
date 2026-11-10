@@ -221,6 +221,7 @@ fn local_frontend(
     identity_provider: &str,
     tamper_http: bool,
     retain_ii_device: bool,
+    historical_bootstrap: bool,
 ) -> Vec<u8> {
     let source = directory.join("source");
     fs::create_dir_all(&source).unwrap();
@@ -274,6 +275,9 @@ fn local_frontend(
         let mut cmd = Command::new("node");
         cmd.arg(root().join("tests/browser/build-creation-fixture.mjs"))
             .arg(&source);
+        if historical_bootstrap {
+            cmd.arg("--reviewed-v1-bootstrap");
+        }
         cmd
     } else {
         let mut cmd = Command::new("npm");
@@ -486,14 +490,16 @@ fn browser_world(scenario: &str) {
         &provider,
         false,
         scenario.starts_with("creation-"),
+        scenario == "creation-recoverable",
     );
-    let upgraded_local = if scenario == "team-management" {
+    let upgraded_local = if scenario == "team-management" || scenario == "creation-recoverable" {
         Some(local_frontend(
             &directory.join("upgrade"),
             expected_verifier,
-            true,
+            scenario == "team-management",
             &provider,
             false,
+            scenario == "creation-recoverable",
             false,
         ))
     } else {
@@ -506,6 +512,7 @@ fn browser_world(scenario: &str) {
             false,
             &provider,
             true,
+            false,
             false,
         ))
     } else {
@@ -708,7 +715,14 @@ fn browser_world(scenario: &str) {
             return;
         }
         if scenario.starts_with("creation-") {
-            browser_creation::coordinate(&pic, verifier, &directory, scenario, &mut child);
+            browser_creation::coordinate(
+                &pic,
+                verifier,
+                &directory,
+                scenario,
+                &mut child,
+                upgraded_local.as_deref(),
+            );
             assert!(child.wait().unwrap().success());
             return;
         }

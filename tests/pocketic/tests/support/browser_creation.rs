@@ -54,7 +54,115 @@ struct RefusalAudit {
 struct RefusalState {
     version: u16,
     proposal_refusals: Option<Vec<RefusalAudit>>,
-    external_proposal: Option<candid::Reserved>,
+    external_proposal: Option<RefusalReservation>,
+}
+// Native, real-Governance fault injection only. Browser authority for the
+// creation, registration, rehearsal and finalisation remains independently tested.
+#[derive(CandidType)]
+struct FeeEconomics {
+    neuron_minimum_stake_e8s: u64,
+    max_proposals_to_keep_per_topic: u32,
+    neuron_management_fee_per_proposal_e8s: u64,
+    reject_cost_e8s: u64,
+    transaction_fee_e8s: u64,
+    neuron_spawn_dissolve_delay_seconds: u64,
+    minimum_icp_xdr_rate: u64,
+    maximum_node_provider_rewards_e8s: u64,
+}
+#[derive(CandidType)]
+enum FeeAction {
+    ManageNetworkEconomics(FeeEconomics),
+    RegisterKnownNeuron(CatalogEntry),
+}
+#[derive(CandidType)]
+struct CatalogEntry {
+    id: Option<g::NeuronId>,
+    known_neuron_data: Option<g::KnownNeuronData>,
+}
+#[derive(CandidType)]
+struct FeeProposal {
+    title: Option<String>,
+    summary: String,
+    url: String,
+    action: Option<FeeAction>,
+}
+#[derive(CandidType)]
+enum FeeCommand {
+    MakeProposal(FeeProposal),
+}
+#[derive(CandidType)]
+struct FeeRequest {
+    neuron_id_or_subaccount: Option<g::Id>,
+    command: Option<FeeCommand>,
+}
+#[derive(CandidType, Deserialize)]
+struct FeeResult {
+    status: i32,
+    executed_timestamp_seconds: u64,
+}
+fn management_fee_fault(pic: &pocket_ic::PocketIc, identities: &[Principal], fee: u64) {
+    fixture_global_action(
+        pic,
+        identities,
+        FeeAction::ManageNetworkEconomics(FeeEconomics {
+            neuron_minimum_stake_e8s: 100_000_000,
+            max_proposals_to_keep_per_topic: 100,
+            neuron_management_fee_per_proposal_e8s: fee,
+            reject_cost_e8s: 100_000_000,
+            transaction_fee_e8s: 10_000,
+            neuron_spawn_dissolve_delay_seconds: 86_400,
+            minimum_icp_xdr_rate: 100,
+            maximum_node_provider_rewards_e8s: 100_000_000,
+        }),
+    );
+}
+fn catalogue_name_fault(pic: &pocket_ic::PocketIc, identities: &[Principal], name: &str) {
+    let mut metadata = known(16);
+    metadata.name = name.into();
+    fixture_global_action(
+        pic,
+        identities,
+        FeeAction::RegisterKnownNeuron(CatalogEntry {
+            id: Some(g::NeuronId { id: 16 }),
+            known_neuron_data: Some(metadata),
+        }),
+    );
+}
+fn fixture_global_action(pic: &pocket_ic::PocketIc, identities: &[Principal], action: FeeAction) {
+    let response:g::ManageResponse=update(pic,GOVERNANCE,identities[0],"manage_neuron",FeeRequest{
+        neuron_id_or_subaccount:Some(g::Id::NeuronId(g::NeuronId{id:11})),
+        command:Some(FeeCommand::MakeProposal(FeeProposal{title:Some("Isolated creation precondition fault".into()),
+            summary:"Native real-protocol fault between the browser's exact review and original signed dispatch; not a browser authority claim".into(),url:String::new(),action:Some(action)}))});
+    let Some(g::ResponseCommand::MakeProposal(result)) = response.command else {
+        panic!("fee-change proposal refused: {:?}", response.command)
+    };
+    let id = result.proposal_id.unwrap().id;
+    for (index, owner) in identities.iter().enumerate().take(4).skip(1) {
+        let result: g::ManageResponse = update(
+            pic,
+            GOVERNANCE,
+            *owner,
+            "manage_neuron",
+            VoteRequest {
+                neuron_id_or_subaccount: Some(g::Id::NeuronId(g::NeuronId {
+                    id: 11 + index as u64,
+                })),
+                command: Some(VoteCommand::RegisterVote(Vote {
+                    vote: 1,
+                    proposal: Some(g::NeuronId { id }),
+                })),
+            },
+        );
+        assert!(matches!(
+            result.command,
+            Some(g::ResponseCommand::RegisterVote(_))
+        ));
+    }
+    let executed: Option<FeeResult> =
+        update(pic, GOVERNANCE, identities[0], "get_proposal_info", id);
+    let executed = executed.unwrap();
+    assert_eq!(executed.status, 4);
+    assert!(executed.executed_timestamp_seconds > 0);
 }
 fn receipt_id(receipt: &serde_json::Value, name: &str) -> u64 {
     receipt[name].as_str().unwrap().parse().unwrap()
@@ -106,6 +214,7 @@ pub fn coordinate(
     directory: &Path,
     scenario: &str,
     child: &mut Child,
+    upgraded_frontend: Option<&[u8]>,
 ) {
     let production = scenario == "creation-production";
     let principal = signal(directory, "creation-principal", child);
@@ -136,6 +245,12 @@ pub fn coordinate(
         manager.known_neuron_data = Some(known(*id));
         manager.followees = vec![fs(4, &[dendrite_types::OMEGA_REJECT_NEURON_ID])];
         neurons.push(manager);
+    }
+    if production {
+        let mut unrelated = seed(16, user(1), at);
+        unrelated.known_neuron_data = Some(known(16));
+        unrelated.dissolve_state = Some(g::DissolveState::DissolveDelaySeconds(1));
+        neurons.push(unrelated);
     }
     for id in [
         dendrite_types::ALPHA_VOTE_NEURON_ID,
@@ -182,11 +297,29 @@ pub fn coordinate(
         },
         500_000_000,
     );
+    if production {
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(48 * 3600));
+        pic.auto_progress();
+        creation::refresh_provisioning_quote(pic);
+    }
     publish(
         directory,
         "creation-funding-ready",
-        serde_json::json!({"block":funding_block}),
+        serde_json::json!({"block":funding_block,"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
     );
+    if production {
+        let converted = signal(directory, "creation-converted-before-first-create", child);
+        assert!(converted["canister_id"].is_null());
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(48 * 3600));
+        pic.auto_progress();
+        publish(
+            directory,
+            "creation-first-create-clock",
+            serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+        );
+    }
     let installed = signal(directory, "creation-controller-installed", child);
     let c = Principal::from_text(installed["canister_id"].as_str().unwrap()).unwrap();
     assert_eq!(pic.get_controllers(c), vec![p]);
@@ -208,6 +341,11 @@ pub fn coordinate(
     let nonce = receipt_id(&installed["plan"], "nonce");
     let subaccount = l::staking_subaccount(c, nonce);
     let stake = receipt_id(&installed["plan"], "stake_e8s");
+    if production {
+        pic.stop_progress();
+        pic.advance_time(Duration::from_secs(48 * 3600));
+        pic.auto_progress();
+    }
     let stake_block = transfer_external(
         pic,
         l::Account {
@@ -216,10 +354,32 @@ pub fn coordinate(
         },
         stake,
     );
+    if !production {
+        let next = upgraded_frontend
+            .expect("reviewed V1 browser creation requires an actual frontend rollover");
+        let controller = pic.get_controllers(verifier)[0];
+        pic.upgrade_canister(
+            verifier,
+            next.to_vec(),
+            encode_one(()).unwrap(),
+            Some(controller),
+        )
+        .unwrap();
+        assert_eq!(pic.get_controllers(c), vec![p]);
+        assert_eq!(
+            hex::encode(
+                pic.canister_status(c, Some(p))
+                    .unwrap()
+                    .module_hash
+                    .unwrap()
+            ),
+            "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265"
+        );
+    }
     publish(
         directory,
         "creation-stake-funded",
-        serde_json::json!({"block":stake_block}),
+        serde_json::json!({"block":stake_block,"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
     );
     let configured = signal(directory, "creation-configured", child);
     let t = receipt_id(&configured, "neuron_id");
@@ -257,6 +417,14 @@ pub fn coordinate(
         assert_eq!(pic.get_controllers(c), vec![p]);
     }
     if production {
+        let held = signal(directory, "creation-registration-reserved", child);
+        assert_eq!(held["canister"], c.to_text());
+        catalogue_name_fault(pic, &identities, "Local creation candidate");
+        publish(
+            directory,
+            "creation-registration-name-conflicted",
+            serde_json::json!({"classification":"real native Governance adoption after browser preflight; unrelated neuron 16, no target or manager authority change"}),
+        );
         let refused = signal(directory, "creation-registration-refused", child);
         let intent = refused["intents"].as_array().unwrap().last().unwrap();
         assert_eq!(intent["state"], "Rejected");
@@ -271,7 +439,7 @@ pub fn coordinate(
         assert!(state.external_proposal.is_none());
         let audit = state.proposal_refusals.unwrap();
         assert_eq!(audit.len(), 1);
-        assert_eq!(audit[0].error_type, 8);
+        assert_eq!(audit[0].error_type, 6);
         assert_eq!(
             audit[0].request_id,
             hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()
@@ -292,6 +460,16 @@ pub fn coordinate(
             0,
             "refused creation did not charge a proposal fee"
         );
+        let image = pic.get_stable_memory(c);
+        std::fs::write(directory.join("creation-refusal-v2-stable.bin"), &image).unwrap();
+        let proof =
+            std::fs::read(directory.join("creation-registration-refusal-step.bin")).unwrap();
+        std::fs::write(directory.join("creation-refusal-provenance.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "classification":"genuine browser-signed Governance refusal accepted by the actual approved bootstrap; public stable state and proof only; this checkpoint alone is not full browser qualification",
+            "controller":c.to_text(),"creator":p.to_text(),"neuron":t,"image_sha256":hex::encode(Sha256::digest(&image)),
+            "proof_sha256":hex::encode(Sha256::digest(&proof)),"bootstrap_sha256":hex::encode(pic.canister_status(c,Some(p)).unwrap().module_hash.unwrap()),
+            "now_ns":pic.get_time().as_nanos_since_unix_epoch(),"error_type":6
+        })).unwrap()).unwrap();
         // Explicitly labelled native upgrade fault, after browser-created C and
         // an actual signed Governance refusal. No provisioning/finalisation substitution.
         let module_path = std::env::var_os("DENDRITE_BOOTSTRAP_TEST_WASM")
@@ -312,10 +490,78 @@ pub fn coordinate(
         assert_eq!(after.proposal_refusals.unwrap(), audit);
         assert!(after.external_proposal.is_none());
         assert_eq!(pic.get_controllers(c), vec![p]);
+        catalogue_name_fault(pic, &identities, "Test 16");
         publish(
             directory,
             "creation-refusal-upgrade-verified",
             serde_json::json!({"audit_retained":true,"classification":"native same-module upgrade of browser-created C; real signed proposal refusal"}),
+        );
+    }
+    if production {
+        let held = signal(directory, "creation-rehearsal-fee-held", child);
+        assert_eq!(held["canister"], c.to_text());
+        management_fee_fault(pic, &identities, 10_100_000_000);
+        publish(
+            directory,
+            "creation-rehearsal-fee-raised",
+            serde_json::json!({"classification":"actual native Governance economics proposal, isolated precondition fault"}),
+        );
+        let refused = signal(directory, "creation-rehearsal-refused", child);
+        let intent = refused["intents"].as_array().unwrap().last().unwrap();
+        assert_eq!(intent["state"], "Rejected");
+        let revision = refused["plan"]["revision"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let state: Result<RefusalState, String> = update(pic, c, p, "status", revision);
+        let state = state.unwrap();
+        assert!(state.external_proposal.is_none());
+        let audits = state.proposal_refusals.unwrap();
+        assert_eq!(audits.len(), 2);
+        assert_eq!(audits[1].error_type, 5);
+        assert_eq!(
+            audits[1].request_id,
+            hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()
+        );
+        assert_eq!(
+            public_neuron(pic, 11).neuron_fees_e8s,
+            0,
+            "refusal did not charge a new proposal fee"
+        );
+        management_fee_fault(pic, &identities, 10_000);
+        publish(
+            directory,
+            "creation-rehearsal-fee-restored",
+            serde_json::json!({"fee":10_000,"original_request_retained":true}),
+        );
+    }
+    if production {
+        let unknown = signal(directory, "creation-rehearsal-unknown", child);
+        let intent = unknown["intents"].as_array().unwrap().last().unwrap();
+        assert_eq!(intent["state"], "Unknown");
+        let revision = unknown["plan"]["revision"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let state: Result<RefusalState, String> = update(pic, c, p, "status", revision);
+        let reservation = state.unwrap().external_proposal.unwrap();
+        assert!(reservation.dispatched);
+        assert!(reservation.proposal_id.is_none());
+        assert_eq!(
+            reservation.request_id.unwrap(),
+            hex::decode(intent["request_binding"]["request_id"].as_str().unwrap()).unwrap()
+        );
+        assert_eq!(
+            public_neuron(pic, 11).neuron_fees_e8s,
+            10_000,
+            "exactly one accepted management proposal fee before reconciliation"
+        );
+        publish(
+            directory,
+            "creation-rehearsal-unknown-verified",
+            serde_json::json!({"unknown_retained":true,"proposal_fee_e8s":10_000}),
         );
     }
     let rehearsal = signal(directory, "creation-rehearsal", child);
@@ -505,14 +751,44 @@ pub fn coordinate(
         let after = signal(directory, "creation-post-final-management", child);
         verify_proposal(pic, p, receipt_id(&after, "proposal"), managers.len(), 1);
     }
+    let mut authority_rows = Vec::new();
     for (index, id) in managers.iter().enumerate() {
-        let manager = public_neuron(pic, *id);
+        // Read as each actual owner so a public-field projection cannot hide a
+        // hotkey. This is a native independent state oracle, not browser signing proof.
+        let response: g::ListNeuronsResponse = update(
+            pic,
+            GOVERNANCE,
+            identities[index],
+            "list_neurons",
+            g::ListNeurons {
+                neuron_ids: vec![*id],
+                include_neurons_readable_by_caller: false,
+                include_empty_neurons_readable_by_caller: Some(false),
+                include_public_neurons_in_full_neurons: Some(false),
+                page_number: Some(0),
+                page_size: Some(1),
+                neuron_subaccounts: None,
+            },
+        );
+        g::validate_batch(&[*id], &response).unwrap();
+        let manager = &response.full_neurons[0];
         assert_eq!(manager.controller, Some(identities[index]));
         assert!(
             manager.hot_keys.is_empty(),
             "no extra creator hotkey may be added"
         );
+        authority_rows.push(serde_json::json!({"manager":id,"controller":identities[index].to_text(),"hotkeys":Vec::<String>::new(),"creator_authority":identities[index]==p}));
     }
+    assert_eq!(
+        authority_rows
+            .iter()
+            .filter(|r| r["creator_authority"] == true)
+            .count(),
+        1
+    );
+    std::fs::write(directory.join("creation-manager-authority-matrix.json"),serde_json::to_vec_pretty(&serde_json::json!({
+        "creator":p.to_text(),"rows":authority_rows,"oracle":"native owner-authorised readback; independent principals originate in real II browser sessions, not substituted signing proof"
+    })).unwrap()).unwrap();
     let remaining_cycles = pic.cycle_balance(c);
     assert!(
         remaining_cycles >= u128::from(receipt_id(&installed["plan"], "cycle_reserve")),

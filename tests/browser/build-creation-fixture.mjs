@@ -7,10 +7,20 @@ import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const source=resolve(process.argv[2]),{buildFrontend}=await import(pathToFileURL(`${source}/canisters/dendrite/web/build-frontend.mjs`));
-let transformed=0;
+const historical=process.argv[3]==='--reviewed-v1-bootstrap';
+if(process.argv.length>3&&!historical)throw Error('Only the reviewed V1 fixture selection is supported');
+let transformed=0,historicalTransforms=0;
 await buildFrontend({plugins:[{name:'creation-native-authenticator-window',setup(build){
+if(historical)build.onLoad({filter:/creation-controller\.js$/},async({path})=>{
+ const original=await readFile(path,'utf8'),{reviewedHistoricalBootstraps}=await import(pathToFileURL(`${source}/canisters/dendrite/web/src/creation-compatibility.js`));
+ const selected=reviewedHistoricalBootstraps[0],manifest={...selected,wasm_path:`/generated/bootstrap.${selected.sha256.slice(0,16)}.wasm`};
+ const needle='const currentManifest=typeof __DENDRITE_BOOTSTRAP_MANIFEST__!=="undefined"?__DENDRITE_BOOTSTRAP_MANIFEST__:globalThis.__DENDRITE_BOOTSTRAP_MANIFEST__;';
+ if(original.split(needle).length!==2)throw Error('Reviewed historical selection no longer binds exactly one controller manifest');
+ await writeFile(`${source}/../historical-bootstrap-policy.json`,JSON.stringify({classification:'local test current frontend with exact reviewed V1 bootstrap selection; not canonical frontend bytes',reviewed_source:'97343f8dbb714a0a12f90a474805518c83017184',manifest},null,2));
+ historicalTransforms++;return {contents:original.replace(needle,`const currentManifest=${JSON.stringify(manifest)};`),loader:'js'};
+});
 build.onLoad({filter:/@icp-sdk\/signer\/lib\/esm\/web\/postMessageChannel\.js$/},async({path})=>{
- const original=await readFile(path,'utf8');return {contents:original.replace('this.#options.signerWindow.close();','console.trace("creation-native-channel-close"); this.#options.signerWindow.close();'),loader:'js'};
+ const original=await readFile(path,'utf8');return {contents:original.replace('this.#options.signerWindow.close();','console.trace("creation-native-channel-close"); /* Keep native passkey hardware alive; channel close/listeners and all timeouts remain real. */'),loader:'js'};
 });
 build.onLoad({filter:/@icp-sdk\/auth\/dist\/esm\/client\/auth-client\.js$/},async({path})=>{
  const original=await readFile(path,'utf8'),needle='new Signer({';
@@ -32,7 +42,9 @@ build.onLoad({filter:/@icp-sdk\/auth\/dist\/esm\/client\/auth-client\.js$/},asyn
  // signer; AuthClient still requests a new genuine II delegation to each fresh
  // nonextractable key. No identity/delegation or capability is shared here.
  const contents=original.replace(needle,'globalThis.creationNativeSigner ??= new Signer({ autoCloseTransportChannel: false,').replace('new PostMessageTransport({',`new PostMessageTransport({ ${windowProvider}`);
- await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{window:'real named II window without repeat navigation; native device stays resident'},original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(contents).digest('hex')},null,2));
+ await writeFile(`${source}/../sdk-window-policy.json`,JSON.stringify({classification:'local test native-device lifetime only; genuine II, same reviewed production heartbeat policy, unchanged expiry and replica verification',sdk:'@icp-sdk/auth@7.1.0',signer_option:{autoCloseTransportChannel:false,transport_lifetime:'one real SDK Signer channel per application document; independent fresh AuthClient keys and II requests'},transport_option:{window:'real named II window without repeat navigation; native device stays resident after real channel closure; close listeners still reject failed requests'},original_sha256:createHash('sha256').update(original).digest('hex'),fixture_sha256:createHash('sha256').update(contents).digest('hex')},null,2));
  transformed++;return {contents:`globalThis.creationNativeAuthenticatorWindow = true;\n${contents}`,loader:'js'};
  });}}]});
 if(transformed!==1)throw Error('Native-authenticator fixture option was not applied exactly once');
+
+if(historical&&historicalTransforms!==1)throw Error('Reviewed V1 selection was not applied exactly once');

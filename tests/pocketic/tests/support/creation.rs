@@ -177,6 +177,9 @@ pub fn install_provisioning(pic: &PocketIc) {
             subnets: pic.topology().get_app_subnets(),
         },
     );
+    refresh_provisioning_quote(pic);
+}
+pub fn refresh_provisioning_quote(pic: &PocketIc) {
     let rate: Result<(), String> = update(
         pic,
         cmc(),

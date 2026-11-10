@@ -8,7 +8,7 @@ const directory=process.env.SYSTEM_BROWSER_COORDINATION;
 const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
 const launchOptions={executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
-const browser=await puppeteer.launch(launchOptions),participantBrowsers=[browser],participantBrowserByIndex=new Map([[0,browser]]);
+const browser=await puppeteer.launch(launchOptions);
 const deadline=setTimeout(()=>{console.error('signed browser test exceeded 20 minutes');process.exit(1);},1200000);
 const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
 await containBrowserNetwork(browser,denied,{beforeResume:installCreationClockBeforeResume});
@@ -17,7 +17,7 @@ if(!['scoped-signing','team-management','cancellation','wrong-provider','creatio
 const scopeProbeMode=scenario==='scoped-signing';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function writeEvidence(path,bytes){await writeFile(path+'.tmp',bytes);await rename(path+'.tmp',path);}
-async function click(page,label){const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label){await b.click();return true;}}return false;}
+async function click(page,label){await page.bringToFront();const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label){await b.click();return true;}}return false;}
 async function waitSignal(name){for(let n=0;n<1200;n++){try{return JSON.parse(await readFile(`${directory}/${name}.json`,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}await pause(500);}throw Error(`coordinator timeout: ${name}`);}
 async function guard(page){page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
 async function routeToTarget(page){await page.evaluate(()=>{location.hash='';});await page.evaluate(()=>{location.hash='#/neuron/100';});await page.waitForSelector('.control-panel',{timeout:90000});}
@@ -108,38 +108,42 @@ async function wrongProvider(){
  await writeEvidence(`${directory}/wrong-provider.json`,JSON.stringify({failedClosed:true,configurationFault:'actual local non-II provider origin; no fabricated signer or session',governanceRequests:events.length}));
  await context.close();
 }
-// Only setup-channel failures can restart, once, in an empty browser context.
+// Only setup-channel failures can restart once before manager authority exists.
+// Creation retains its native hardware window while the real SDK rejects and
+// replaces a closed channel; a failed signer or identity is never substituted.
 // All identities are provisioned before manager authority or mutations exist.
 async function authenticate(index){
+ let retained;
  for(let attempt=0;attempt<2;attempt++){
   const pageIndex=applicationPages.length;
-  try{return await authenticateAttempt(index);}
+  try{return await authenticateAttempt(index,retained);}
   catch(error){
    if(!error.iiChannelFailure||attempt===1)throw error;
-   await applicationPages[pageIndex].browserContext().close();
-   const retry={index,failedAttempt:attempt+1,heading:error.iiChannelFailure,freshContext:true};
+   if(scenario.startsWith('creation-')&&error.retainedNative&&!error.retainedNative.popup.isClosed())retained=error.retainedNative;else{await applicationPages[pageIndex].browserContext().close();retained=undefined;}
+   const retry={index,failedAttempt:attempt+1,heading:error.iiChannelFailure,freshContext:!retained,nativeWindowRetained:!!retained};
    authenticationRetries.push(retry);
    console.error(JSON.stringify({phase:'II setup retry',...retry}));
    await writeEvidence(`${directory}/authentication-retries.json`,JSON.stringify(authenticationRetries));
   }
  }
 }
-async function authenticateAttempt(index){
- const actions=[];let selectedRemembered=false;
- let participantBrowser=browser;
- if(scenario.startsWith('creation-')){
-  participantBrowser=participantBrowserByIndex.get(index);
-  if(!participantBrowser){participantBrowser=await puppeteer.launch(launchOptions);participantBrowsers.push(participantBrowser);participantBrowserByIndex.set(index,participantBrowser);await containBrowserNetwork(participantBrowser,denied,{beforeResume:installCreationClockBeforeResume});}
- }
- const context=await participantBrowser.createBrowserContext();const page=await context.newPage();applicationPages.push(page);await guard(page);
- await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
+async function authenticateAttempt(index,retained){
+ const actions=[];console.error(JSON.stringify({phase:'II participant setup',index,retainedNative:!!retained}));
+ const context=retained?.context??await browser.createBrowserContext();const page=retained?.page??await context.newPage();if(!retained){applicationPages.push(page);await guard(page);}
+ if(!retained)await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
  if(scenario==='team-management')await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');});await page.waitForSelector('button');
- const popupPromise=new Promise(resolve=>page.once('popup',resolve));
- if(!await click(page,'Sign in with Internet Identity'))throw Error('actual application sign-in missing');
- const popup=await popupPromise;await guard(popup);
- if(scenario.startsWith('creation-')){popup.on('requestfailed',r=>console.error(JSON.stringify({phase:'II failed request',index,path:new URL(r.url()).pathname,error:r.failure()?.errorText})));popup.on('pageerror',e=>console.error(JSON.stringify({phase:'II frontend exception',index,type:e.name})));}
- if(scenario.startsWith('creation-'))await popup.waitForFunction(()=>location.hostname==='id.ai.localhost',{timeout:45000});
- const cdp=await popup.createCDPSession();await cdp.send('WebAuthn.enable');const {authenticatorId}=await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+ let popup,cdp,authenticatorId;
+ if(retained){({popup,cdp,authenticatorId}=retained);if(popup.isClosed())throw Error('Retained native device window unexpectedly closed');if(!await click(page,'Sign in with Internet Identity')&&!await click(page,'Try again'))throw Error('actual application sign-in retry missing');}
+ else {
+  const opened=new Promise(resolve=>page.once('popup',resolve));
+  console.error(JSON.stringify({phase:'II actual application sign-in',index}));
+  if(!await click(page,'Sign in with Internet Identity'))throw Error('actual application sign-in missing');
+  popup=await opened;await guard(popup);
+  if(scenario.startsWith('creation-'))await popup.waitForFunction(()=>location.hostname==='id.ai.localhost',{timeout:45000});
+  cdp=await popup.createCDPSession();await cdp.send('WebAuthn.enable');({authenticatorId}=await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}}));
+  if(scenario.startsWith('creation-')){popup.on('requestfailed',r=>console.error(JSON.stringify({phase:'II failed request',index,path:new URL(r.url()).pathname,error:r.failure()?.errorText})));popup.on('pageerror',e=>console.error(JSON.stringify({phase:'II frontend exception',index,type:e.name})));}
+ }
+
  await popup.bringToFront();
  if(scenario.startsWith('creation-')){page.on('console',m=>{if(m.text()==='creation-native-channel-close')console.error(JSON.stringify({phase:'native window closed by SDK',index,frames:m.stackTrace()}));});popup.on('close',()=>console.error(JSON.stringify({phase:'native authenticator window closed',index})));}
  for(let i=0;i<120;i++){
@@ -151,11 +155,12 @@ async function authenticateAttempt(index){
   // These are public control labels, never credential, delegation or recovery material.
   if(i%10===0)console.error(JSON.stringify({phase:'II',index,labels,headings,buttons:await popup.$$eval('button',buttons=>buttons.map(b=>({label:b.textContent.trim(),disabled:b.disabled,expanded:b.getAttribute('aria-expanded')})))}));
   const failureHeading=headings.find(heading=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(heading));
-  if(failureHeading){
+  if(failureHeading&&(!retained||i>=3)){
+   await popup.screenshot({path:`${directory}/ii-failure-${index}.png`});
    const failure={phase:'II authentication',index,heading:failureHeading,uiActions:actions};
    await writeEvidence(`${directory}/ii-failure.json`,JSON.stringify(failure));
    const error=Error(`Internet Identity authentication failed: ${failureHeading}`);
-   if(['Unable to connect','Connection closed'].includes(failureHeading))error.iiChannelFailure=failureHeading;
+   if(['Unable to connect','Connection closed'].includes(failureHeading)){error.iiChannelFailure=failureHeading;error.retainedNative={context,page,popup,cdp,authenticatorId};}
    throw error;
   }
   if(labels.includes('Authenticating...')){await popup.bringToFront();await cdp.send('WebAuthn.setUserVerified',{authenticatorId,isUserVerified:true});await cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId,enabled:true});}
@@ -165,7 +170,6 @@ async function authenticateAttempt(index){
   else if(labels.includes('Continue'))await click(popup,'Continue');
   else if(labels.includes('Authorize'))await click(popup,'Authorize');
   else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
-  else if(!selectedRemembered&&i>10&&labels.includes(`Synthetic manager ${index}`)){selectedRemembered=true;actions.push('Select own remembered identity');await click(popup,`Synthetic manager ${index}`);}
   await pause(500);
   }catch(error){if(/Target closed|Execution context was destroyed/.test(String(error.message))){await pause(200);if(popup.isClosed())break;continue;}throw error;}
  }
@@ -187,7 +191,7 @@ async function authenticateAttempt(index){
  }
  try { await page.waitForFunction(()=>document.body.innerText.includes('Dendrite principal:')||document.body.innerText.includes('Channel was closed before a response was received'),{timeout:45000}); }
  catch(error){throw error;}
- if(await page.$eval('body',el=>el.innerText.includes('Channel was closed before a response was received'))){const error=Error('II setup channel closed before authentication');error.iiChannelFailure='Connection closed';throw error;}
+ if(await page.$eval('body',el=>el.innerText.includes('Channel was closed before a response was received'))){const error=Error('II setup channel closed before authentication');error.iiChannelFailure='Connection closed';error.retainedNative={context,page,popup,cdp,authenticatorId};throw error;}
  const principal=await page.$eval('body',el=>/Dendrite principal: ([a-z0-9-]+)/.exec(el.innerText)?.[1]);
  if(!principal)throw Error('real application principal absent');
  // Presence metadata only; never read stored credentials or database contents.
@@ -259,4 +263,4 @@ try{
   }}catch{console.error(JSON.stringify({phase:'failure diagnostics unavailable',index}));}
  }
  throw error;
-}finally{clearTimeout(deadline);await Promise.all(participantBrowsers.map(instance=>instance.close()));}
+}finally{clearTimeout(deadline);await browser.close();}
