@@ -23,6 +23,25 @@ test('terminal II authentication failure reaches bounded setup recovery without 
  }
 });
 
+test('native II window handoff closes both document channels before navigation and closes a primary channel once',async()=>{
+ const source=await readFile(new URL('./creation-journey.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function reloadIdentityDocument(participant){'),end=source.indexOf('\n async function reauthenticate(',start);
+ assert.ok(start>=0&&end>start);
+ for(const secondary of [false,true]){
+  const events=[];
+  const document=name=>({evaluate:async fn=>{
+   if(String(fn).includes('closeChannel'))await vm.runInNewContext(`(${fn})()`,{
+    creationNativeSigner:{closeChannel:async()=>{await Promise.resolve();events.push(`closed ${name}`);}},
+   });
+  },waitForFunction:async()=>{}});
+  const owner=document('owner'),page=secondary?document('secondary'):owner;
+  const identity={evaluate:async()=>{},waitForFunction:async()=>{},bringToFront:async()=>{},url:()=> 'http://id.ai.localhost:4944/authorize',goto:async()=>events.push('navigate II')};
+  const reload=vm.runInNewContext(`(${source.slice(start,end)})`,{page,origin:'http://example.localhost:4944',URL});
+  await reload({page:owner,nativeDevice:{popup:identity}});
+  assert.deepEqual(events,secondary?['closed owner','closed secondary','navigate II']:['closed owner','navigate II']);
+ }
+});
+
 test('coordinated local time changes Date construction and now while preserving explicit timestamps and future popup clocks',async()=>{
  const realm=vm.createContext({}),scripts=[];
  const page={evaluateOnNewDocument:async(fn,offset)=>scripts.push(`(${fn})(${offset})`),evaluate:async(fn,offset)=>vm.runInContext(`(${fn})(${offset})`,realm)};

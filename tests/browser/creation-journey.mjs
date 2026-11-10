@@ -29,7 +29,9 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  async function signPrepared({holdController=false,holdProposal=false,holdRegistration=false,loseProposal=false,losePayment=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController||holdProposal||holdRegistration||loseProposal||losePayment)await page.evaluate(async mode=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm(mode);},losePayment?'losePayment':holdController?'holdController':loseProposal?'lose':'hold');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdRegistration){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-registration-reserved.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-registration-name-conflicted');await page.evaluate(()=>fixtureMutationFault.release());}if(holdProposal){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-rehearsal-fee-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-rehearsal-fee-raised');await page.evaluate(()=>fixtureMutationFault.release());}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
  const authenticationRestarts=[];
  async function reloadIdentityDocument(participant){
-  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
+  // A secondary document borrows the same native hardware window. Dispose the
+  // owner's channel too before moving its opener and navigating the II target.
+  for(const document of new Set([participant.page,page]))await document.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
   const identity=participant.nativeDevice.popup,providerOrigin=new URL(identity.url()).origin;
   // Recover the public hardware-window reference in a fresh application heap.
   await identity.evaluate(origin=>{if(window.opener&&!window.opener.closed)window.opener.postMessage('dendrite-native-window-reference-v1',origin);},origin);
@@ -136,11 +138,15 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   const clock=await waitSignal('creation-financial-90-day-clock');await renewParticipants(clock,saved);
   // A second genuine session can import the receipt, but cannot prepare new
   // spending while the original payment remains uncertain.
+  // The native-device fixture retains one II WindowProxy. Release its old SDK
+  // channel before handing that physical-device target to another document.
+  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
   const ownerPage=page,nextPage=new Promise(resolve=>ownerPage.once('popup',resolve));
   await ownerPage.evaluate(()=>window.open('about:blank','dendrite-creation-second-recovery'));page=await nextPage;await installCreationPageClock(page);await page.goto(origin,{waitUntil:'domcontentloaded'});await page.waitForSelector('button');await reauthenticate('Sign in with Internet Identity');
   await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
   if(await page.$$eval('button',els=>els.some(el=>/Review optional payment|Review next provisioning request|Sign exact creation request/.test(el.textContent))))throw Error('A second tab gained replacement payment authority');
   const second=(await save()).value.intents.at(-1);if(second.id!==original.id||second.request_binding.request_id!==original.request_binding.request_id||second.state!=='Unknown')throw Error('Second tab replaced the original payment identity');
+  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
   await page.close();page=ownerPage;await page.bringToFront();
   await press('Search next bounded page for the original payment');await idle();saved=await save();const confirmed=saved.value.intents.at(-1);
   if(confirmed.id!==original.id||confirmed.created_at_time!==original.created_at_time||confirmed.request_binding.request_id!==original.request_binding.request_id||confirmed.state!=='Confirmed')throw Error('Permanent-block recovery replaced or repeated the original payment');
