@@ -80,6 +80,34 @@ test('terminal II authentication failure reaches bounded setup recovery without 
  }
 });
 
+test('actual II authentication attempt re-observes a detached control and classifies the current failure without creating a new context',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function authenticateAttempt(index,retained){'),end=source.indexOf('\ntry{',start);
+ assert.ok(start>=0&&end>start);
+ for(const clickError of ['Node is detached from document','unclassified click failure']){
+  let snapshots=0,contexts=0,popupClicks=0;
+  const evidence=[],pauses=[],applicationPages=[];
+  const popup={waitForFunction:async()=>{},createCDPSession:async()=>({send:async()=>({authenticatorId:'opaque-test-device'})}),bringToFront:async()=>{},on(){},isClosed:()=>false,screenshot:async()=>{},$$eval:async()=>[],evaluate:async()=>{snapshots++;return snapshots===1?{labels:['Continue'],headings:[]}:{labels:[],headings:['Connection closed']};}};
+  const page={goto:async()=>{},waitForSelector:async()=>{},once:(_,receive)=>receive(popup),on(){},$eval:async()=>false,$$eval:async()=>true};
+  const attempt=vm.runInNewContext(`(${source.slice(start,end)})`,{
+   browser:{createBrowserContext:async()=>{contexts++;return {newPage:async()=>page};}},applicationPages,
+   guard:async()=>{},scopeProbeMode:false,origin:'http://app.localhost:4944',scenario:'creation-production',directory:'public-evidence',
+   console:{error(){}},pause:async milliseconds=>pauses.push(milliseconds),writeEvidence:async(_,bytes)=>evidence.push(JSON.parse(bytes)),
+   click:async target=>{if(target===popup){popupClicks++;throw Error(clickError);}return true;},
+  });
+  await assert.rejects(()=>attempt(2),error=>{
+   assert.equal(contexts,1,'DOM re-observation never replaces an identity or context');assert.equal(popupClicks,1);
+   if(clickError==='Node is detached from document'){
+    assert.equal(snapshots,2);assert.deepEqual(pauses,[200]);assert.equal(error.iiChannelFailure,'Connection closed');
+    assert.equal(evidence.length,1);assert.equal(evidence[0].heading,'Connection closed');
+   }else{
+    assert.equal(snapshots,1);assert.deepEqual(pauses,[]);assert.equal(error.message,clickError);assert.equal(error.iiChannelFailure,undefined);assert.equal(evidence.length,0);
+   }
+   return true;
+  });
+ }
+});
+
 test('native II window handoff links the new document before releasing its scripts and closes each document channel once',async()=>{
  const source=await readFile(new URL('./creation-journey.mjs',import.meta.url),'utf8');
  const start=source.indexOf('async function reloadIdentityDocument(participant){'),end=source.indexOf('\n async function reauthenticate(',start);

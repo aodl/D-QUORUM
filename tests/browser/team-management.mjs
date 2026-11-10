@@ -181,7 +181,7 @@ async function authenticateAttempt(index,retained){
   else if(labels.includes('Authorize'))await click(popup,'Authorize');
   else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
   await pause(500);
-  }catch(error){if(/Target closed|Execution context was destroyed/.test(String(error.message))){await pause(200);if(popup.isClosed())break;continue;}throw error;}
+  }catch(error){if(/Target closed|Execution context was destroyed|^Node is detached from document$/.test(String(error.message))){await pause(200);if(popup.isClosed())break;continue;}throw error;}
  }
  if(scopeProbeMode){
   await page.waitForFunction(()=>globalThis.scopeProvisioningPhase||document.body.innerText.includes('Scope probe failed:'),{timeout:90000});
