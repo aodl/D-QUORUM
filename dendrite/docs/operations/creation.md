@@ -85,13 +85,20 @@ absence from history does not.
 
 To prevent two imported receipts or tabs from both dispatching an attempt, a
 bounded ICRC-2 compare-and-set reservation uses a purpose-specific spender
-subaccount owned by the management principal. The amount is 1–16 ledger units,
+subaccount. ICP reservations use the management principal. The pinned Cycles
+Ledger denies that spender, so its reservations use the fixed 29-byte opaque
+principal derived from `dendrite/cycles-dispatch-marker/v1`. No key or canister
+is created for this marker; pinned ordinary canister allocation uses 10-byte
+principals. The amount is 1–16 ledger units,
 strictly below the current transfer fee; it grants no application or third party
 a spending credential. Only a new successful approval grants this tab dispatch
 authority. Duplicate approval, lost reply or conflicting allowance does not. The
 review includes this additional ledger fee and all proved prior reservation fees.
 The approval memo commits the exact subsequent ingress request ID. Renewing after
 refusal requires certified original approval and original financial replies.
+An original development Cycles approval to the management principal is retained
+verbatim on import. Only its certified typed error code 100001 establishes the
+pinned pre-mutation denied-owner refusal; other generic errors remain uncertain.
 Converted cycles retain their own fee/balance checks; a later first canister
 creation does not require a new ICP conversion or change the staking nonce.
 

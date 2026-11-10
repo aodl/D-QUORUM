@@ -1,4 +1,4 @@
-import {dispatchSpender,dispatchReservation,validateDispatchReservation,financialAttemptKinds,financialRefusal} from "./creation-financial-attempt.js";
+import {dispatchSpender,dispatchReservation,validateDispatchReservation,financialAttemptKinds,financialRefusal,reservationRefusal} from "./creation-financial-attempt.js";
 import {createCreationTeamVote} from "./creation-team-vote.js";
 import {creationArtifact} from "./creation-compatibility.js";
 import {acknowledgedDefaultIcp,defaultIcpAcknowledgement} from "./creation-default-icp.js";
@@ -124,7 +124,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     const approval=validateDispatchReservation(intent.dispatch_reservation,intent,plan),reserved=await financialWithWitness(ledger,"icrc2_approve",approval,intent.reservation_binding);
     intent.dispatch_reservation.reply_witness=reserved.witness;
     if(bytesHex(reserved.system?.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[intent.destination])throw Error("Certified reservation reply is not from the pinned executable; retain the original outcome.");
-    if(reserved.value.Ok===undefined){const e=Error("Dispatch reservation was not newly granted. Duplicate, lost or competing reservations never authorise another financial request; retain the original identity.");if(["BadFee","InsufficientFunds","AllowanceChanged","Expired","TooOld","CreatedInFuture"].includes(Object.keys(reserved.value.Err??{})[0]))e.knownRejected=true;throw e;}
+    if(reserved.value.Ok===undefined){const refused=reservationRefusal(reserved.value,kind,approval),code=Object.keys(reserved.value.Err??{})[0]??"malformed";const e=Error(`Dispatch reservation was not newly granted (${refused??code}). Duplicate, lost or competing reservations never authorise another financial request; retain the original identity.`);if(refused)e.knownRejected=true;throw e;}
     intent.dispatch_reservation.block_id=String(reserved.value.Ok);check();
     const proof=await financialWithWitness(ledger,method,args,intent.request_binding);
     intent.reply_witness=proof.witness;
@@ -378,7 +378,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(!intent?.request_binding||!intent.reservation_binding)throw Error("Original ingress bindings are unavailable; preserve legacy timestamps and reconcile their exact permanent Ledger/Cycles Ledger references.");
       const actors=actorFor("FundProvisioning"),ledger=intent.kind==="CreateCanister"?actors.cycles:actors.ledger;
       const reserved=await readCreationRequestWitness(ledger,intent.reservation_binding);if(bytesHex(reserved.system.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[intent.destination])throw Error("Original reservation reply has an unreviewed module.");check();intent.dispatch_reservation.reply_witness=reserved.witness;
-      if(reserved.value.Ok===undefined){const code=Object.keys(reserved.value.Err??{})[0];if(!["BadFee","InsufficientFunds","AllowanceChanged","Expired","TooOld","CreatedInFuture"].includes(code))throw Error("Original reservation outcome is ambiguous; no fresh dispatch is authorised.");settleCreationIntent(receipt,intent.id,"Rejected");return;}
+      if(reserved.value.Ok===undefined){if(!reservationRefusal(reserved.value,intent.kind,validateDispatchReservation(intent.dispatch_reservation,intent,plan)))throw Error("Original reservation outcome is ambiguous; no fresh dispatch is authorised.");settleCreationIntent(receipt,intent.id,"Rejected");return;}
       intent.dispatch_reservation.block_id=String(reserved.value.Ok);
       const proof=await readCreationRequestWitness(ledger,intent.request_binding);if(bytesHex(proof.system.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[intent.destination])throw Error("Original financial reply has an unreviewed module.");check();intent.reply_witness=proof.witness;
       if(financialRefusal(proof.value,intent.kind)){settleCreationIntent(receipt,intent.id,"Rejected");return;}

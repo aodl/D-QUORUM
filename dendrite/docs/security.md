@@ -201,7 +201,12 @@ Financial attempts retain their independently prepared timestamps and ingress ID
 the permanent staking nonce is never renewed. A bounded purpose-specific ICRC-2
 compare-and-set reservation prevents competing tabs from both gaining dispatch
 authority. Its additional fees and prior consumed reservation fees are reviewed;
-its management-principal spender is not an application signing credential.
+ICP uses a management-principal spender; Cycles uses a fixed domain-derived
+29-byte opaque marker because the pinned ledger denies management-principal
+approvals before charging. No signing key or canister is created for that marker.
+Its amount is additionally below the current fee. Original development approval
+arguments remain immutable; only the exact pinned denied-owner error 100001 for
+the management spender proves that legacy Cycles reservation did not execute.
 
 The pinned signer 5.4.0 heartbeat source receives a digest-bound build patch in
 `canisters/dendrite/web/sdk-heartbeat-policy.mjs`. It retains recent pending IDs,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Principal} from '@icp-sdk/core/principal';
 import {IDL} from '@icp-sdk/core/candid';
 import {creationArgumentTypes,creationRequestBinding,validateCreationRequestBinding} from '../src/creation-protocol.js';
-import {dispatchReservation,validateDispatchReservation,dispatchSpender,financialRefusal} from '../src/creation-financial-attempt.js';
+import {dispatchReservation,validateDispatchReservation,dispatchSpender,financialRefusal,reservationRefusal,cyclesDispatchMarker} from '../src/creation-financial-attempt.js';
 import {bytesHex,hexBytes,sha256Hex} from '../src/creation-accounts.js';
 const owner=Principal.selfAuthenticating(Uint8Array.of(1)),destination='ryjl3-tyaaa-aaaaa-aaaba-cai',plan={owner,creation_id:new Uint8Array(32).fill(2)};
 function request(){const argument=IDL.encode([creationArgumentTypes.transfer],[{from_subaccount:[],to:{owner,subaccount:[]},fee:[10000n],amount:100n,memo:[],created_at_time:[1n]}]);const binding=creationRequestBinding({owner,destination,methodName:'icrc1_transfer',argument,nonce:new Uint8Array(32).fill(3),ingressExpiry:1790000000000000000n});return {argument,binding};}
@@ -41,4 +41,30 @@ test('untrusted saved ingress rejects malformed shape, timestamp range and nonce
   b=>b.request.nonce=null,b=>b.request.nonce='00',b=>b.request.nonce='zz'.repeat(32),
  ]){const altered=structuredClone(binding);change(altered);assert.throws(()=>validateCreationRequestBinding(altered,expected));}
  assert.equal(validateCreationRequestBinding(binding,expected),binding,'rejection checks never mutate the original identity');
+});
+
+test('cycles approval uses a fixed non-management marker and audits only the exact denied legacy owner',()=>{
+ const marker=cyclesDispatchMarker.toUint8Array();assert.equal(marker.length,29);assert.equal(marker[28],1);
+ assert.equal(dispatchSpender(plan,'CreateCanister').owner.toText(),cyclesDispatchMarker.toText());
+ assert.equal(dispatchSpender(plan,'PayConversion').owner.toText(),'aaaaa-aa');
+ const denied={Err:{GenericError:{error_code:100001n,message:'not used as proof'}}};
+ const legacy={spender:{owner:Principal.managementCanister()}};
+ assert.equal(reservationRefusal(denied,'CreateCanister',legacy),'CyclesDeniedManagementOwner');
+ assert.equal(reservationRefusal(denied,'PayStake',legacy),undefined);
+ assert.equal(reservationRefusal(denied,'CreateCanister',{spender:{owner:cyclesDispatchMarker}}),undefined);
+ assert.equal(reservationRefusal({Err:{GenericError:{error_code:100000n}}},'CreateCanister',legacy),undefined);
+});
+
+test('legacy Cycles management-spender reservation retains its original ingress and bytes',()=>{
+ const argument=IDL.encode([creationArgumentTypes.create],[{from_subaccount:[],created_at_time:[1n],amount:2000000000000n,creation_args:[]}]);
+ const destination='um5iw-rqaaa-aaaaq-qaaba-cai';
+ const binding=creationRequestBinding({owner,destination,methodName:'create_canister',argument,nonce:new Uint8Array(32).fill(3),ingressExpiry:1790000000000000000n});
+ const intent={kind:'CreateCanister',destination,argument:bytesHex(argument),created_at_time:'1',request_binding:binding};
+ const original=dispatchReservation(plan,intent.kind,argument,100000000n,1n,1n,binding.request_id,{legacyCycleManagement:true});
+ const snapshot=structuredClone(original);
+ assert.equal(validateDispatchReservation(original,intent,plan).spender.owner.toText(),'aaaaa-aa');
+ assert.deepEqual(original,snapshot);
+ const current=dispatchReservation(plan,intent.kind,argument,100000000n,1n,1n,binding.request_id);
+ assert.notEqual(current.argument,original.argument);
+ assert.equal(validateDispatchReservation(current,intent,plan).spender.owner.toText(),cyclesDispatchMarker.toText());
 });
