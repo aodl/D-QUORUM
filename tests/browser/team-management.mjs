@@ -9,7 +9,10 @@ const origin=process.env.SYSTEM_BROWSER_ORIGIN;
 if(!directory||!new URL(origin).hostname.endsWith('.localhost'))throw Error('local browser coordination required');
 const launchOptions={executablePath:'/home/pptruser/.cache/puppeteer/chrome/linux-156.0.8078.47/chrome-linux64/chrome',headless:true,env:{...process.env,XDG_CONFIG_HOME:'/tmp/dendrite-browser-config',XDG_CACHE_HOME:'/tmp/dendrite-browser-cache'},args:['--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--host-resolver-rules=MAP *.localhost 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
 const browser=await puppeteer.launch(launchOptions);
-const deadline=setTimeout(()=>{console.error('signed browser test exceeded 20 minutes');process.exit(1);},1200000);
+// Harness wall budget only: five separate people reauthenticate at each virtual
+// time checkpoint. SDK channel, certificate and delegation limits stay intact.
+const wallBudget=process.env.SYSTEM_BROWSER_SCENARIO==='creation-production'?2400000:1200000;
+const deadline=setTimeout(()=>{console.error(`signed browser test exceeded ${wallBudget/60000} minutes`);process.exit(1);},wallBudget);
 const denied=[];const events=[];const applicationPages=[];const authenticationRetries=[];const preflightHolds=new WeakMap();
 await containBrowserNetwork(browser,denied,{beforeResume:installCreationClockBeforeResume});
 const scenario=process.env.SYSTEM_BROWSER_SCENARIO;

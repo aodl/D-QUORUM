@@ -352,7 +352,14 @@ fn publish(directory: &Path, name: &str, value: serde_json::Value) {
     fs::rename(temporary, directory.join(format!("{name}.json"))).unwrap();
 }
 fn signal(directory: &Path, name: &str, child: &mut Child) -> serde_json::Value {
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // Five independent II setups are serial and each retains the SDK's own
+    // channel timeout. This orchestration budget is not delegation freshness.
+    let seconds = if name == "creation-principal" {
+        600
+    } else {
+        240
+    };
+    let deadline = Instant::now() + Duration::from_secs(seconds);
     loop {
         let path = directory.join(format!("{name}.json"));
         if path.exists() {
