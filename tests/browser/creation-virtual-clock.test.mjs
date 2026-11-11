@@ -4,6 +4,17 @@ import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {advanceCreationBrowserClocks,installCreationClockBeforeResume,installCreationPageClock} from './creation-virtual-clock.mjs';
 
+test('actual browser click opens the creation disclosure before activating its consent control',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function click('),end=source.indexOf('\nasync function waitSignal',start);assert.ok(start>=0&&end>start);
+ let clicked=0;
+ const parent={tagName:'DETAILS',open:false,querySelector:()=>({click:()=>parent.open=true})};
+ const element={textContent:'Consent to funding capability',parentElement:parent};
+ const button={evaluate:async fn=>fn(element),click:async()=>{assert.equal(parent.open,true);clicked++;}};
+ const click=vm.runInNewContext(`(${source.slice(start,end)})`);
+ assert.equal(await click({bringToFront:async()=>{},$$:async()=>[button]},element.textContent),true);assert.equal(clicked,1);
+});
+
 test('actual capability driver observes normal popup closure without repeating authentication and propagates unknown failures',async()=>{
  const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
  const start=source.indexOf('async function reauthenticatePage('),end=source.indexOf('\ntry{',start);assert.ok(start>=0&&end>start);
