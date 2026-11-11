@@ -30,6 +30,17 @@ test('actual capability driver observes normal popup closure without repeating a
  }
 });
 
+test('actual capability driver reads validated status after the creation UI rerenders its disclosure closed',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function reauthenticatePage('),end=source.indexOf('\ntry{',start);let completed=0;
+ const root={textContent:'ManageBootstrap: active, short-lived, memory only.',getAttribute:()=> 'false',querySelector:()=>null};
+ const document={body:{innerText:'Dendrite principal: public-p'},querySelector:()=>root};
+ const popup={isClosed:()=>true};
+ const page={on(_,fn){this.opened=fn;},off(){},waitForFunction:async()=>{},bringToFront:async()=>{},evaluate:async(fn,arg)=>vm.runInNewContext(`(${fn})(${JSON.stringify(arg)})`,{document})};
+ const authenticate=vm.runInNewContext(`(${source.slice(start,end)})`,{passkeys:{begin:async()=>({generation:1}),finish:async(_,v)=>{assert.equal(v.principal,'public-p');completed++;},isActive:()=>completed===0,abort:async()=>{}},click:async()=>{page.opened(popup);return true;},pause:async()=>assert.fail('validated active status should complete immediately'),console:{error(){}}});
+ await authenticate(page,{label:'participant0',principal:'public-p'},'Consent to controller management capability',{profile:'ManageBootstrap'});assert.equal(completed,1);
+});
+
 test('actual II authentication attempt re-observes a detached control and classifies the current failure without creating a new context',async()=>{
  const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
  const start=source.indexOf('async function authenticateAttempt(index){'),end=source.indexOf('\n// Each authentication',start);

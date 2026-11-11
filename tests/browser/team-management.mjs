@@ -217,7 +217,7 @@ async function reauthenticatePage(page,participant,label,{profile,probe=false,ex
    const state=await page.evaluate(({profile,probe})=>{
     if(probe){const r=globalThis.authLifecycleResult;return {principal:r?.principal,ready:r&&!r.busy&&!r.error,error:r?.error};}
     const root=document.querySelector('.creation-workflow'),text=document.body.innerText;
-    return {principal:/Dendrite principal: ([a-z0-9-]+)/.exec(text)?.[1],ready:profile?text.includes(`${profile}: active`)&&root?.getAttribute('aria-busy')==='false':text.includes('Dendrite principal:'),error:root?.querySelector('[role=alert]')?.textContent};
+    return {principal:/Dendrite principal: ([a-z0-9-]+)/.exec(text)?.[1],ready:profile?(root?.textContent??'').includes(`${profile}: active`)&&root?.getAttribute('aria-busy')==='false':text.includes('Dendrite principal:'),error:root?.querySelector('[role=alert]')?.textContent};
    },{profile,probe});
    if(state.error)throw Error('Application authentication rejected: '+String(state.error).slice(0,500));
    if(state.ready&&popup?.isClosed()){
