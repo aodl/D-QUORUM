@@ -40,7 +40,7 @@ export class SyntheticPasskeys {
   if(!old&&t.person.credentials.size)throw Error('Unexpected additional synthetic passkey');
   if(!old&&!credential.privateKey)return; // A following getCredentials supplies it.
   const next=structuredClone({...old,...credential,privateKey:credential.privateKey||old?.privateKey});
-  if(typeof next.credentialId!=='string'||!next.credentialId||next.rpId!==this.#provider.hostname||next.isResidentCredential!==true||typeof next.privateKey!=='string'||!next.privateKey||!Number.isSafeInteger(next.signCount)||next.signCount<0)throw Error('Invalid local resident synthetic credential');
+  if(typeof next.credentialId!=='string'||!next.credentialId||next.rpId!==this.#provider.hostname||typeof next.isResidentCredential!=='boolean'||typeof next.privateKey!=='string'||!next.privateKey||!Number.isSafeInteger(next.signCount)||next.signCount<0)throw Error('Invalid local synthetic credential');
   if(old&&(next.signCount<old.signCount||next.privateKey!==old.privateKey||next.userHandle!==old.userHandle||next.rpId!==old.rpId))throw Error('Synthetic passkey binding or signature counter changed unexpectedly');
   t.person.credentials.set(next.credentialId,Object.freeze(next));
  }
@@ -76,6 +76,8 @@ export class SyntheticPasskeys {
   this.#trace('target.attached',{restored_credentials:t.person.credentials.size});
  }
  #ticket(handle) {if(this.#current?.handle!==handle)throw Error('Stale synthetic authentication generation');return this.#current;}
+ registered(label) {return this.#people.get(label)?.credentials.size===1;}
+ isActive(handle) {return this.#current?.handle===handle;}
  async checkpoint(handle) {const t=this.#ticket(handle);await t.device?.pending;await this.#capture(t);if(t.device?.failure)throw t.device.failure;}
  async finish(handle,{principal,expectedPrincipal,requireAssertion=false}={}) {
   const t=this.#ticket(handle);

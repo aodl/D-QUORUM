@@ -77,7 +77,8 @@
       "status": "implemented",
       "mandatory": true,
       "tests": [
-        "real_ii_scoped_child_is_enforced_by_replica"
+        "real_ii_scoped_child_is_enforced_by_replica",
+        "real_ii_creation_authentication_lifecycle"
       ],
       "validators": []
     },

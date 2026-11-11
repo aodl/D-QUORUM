@@ -1,6 +1,7 @@
 // Local acceptance only: advance the browser and replica clocks together.
 // No certificate, delegation, deduplication or production lock check is replaced.
 let clockOffsetMs=0;
+export const creationClockOffsetMs=()=>clockOffsetMs;
 function setClock(offset){
  const native=globalThis.__creationFixtureNativeDate??Date;
  Object.defineProperty(globalThis,'__creationFixtureNativeDate',{value:native,configurable:true});

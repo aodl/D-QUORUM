@@ -1,21 +1,16 @@
 import {advanceCreationBrowserClocks,installCreationPageClock} from './creation-virtual-clock.mjs';
 // Real compiled UI only. Public receipts/IDs cross the coordinator boundary;
-// II credentials, passkeys and delegation material never leave Chrome.
+// Only synthetic native passkeys live in private fixture memory; application
+// signing keys, delegations and authentication responses remain in Chrome.
 import {mkdir,readdir,readFile,stat} from 'node:fs/promises';
 import {IDL} from '../../dendrite/node_modules/@icp-sdk/core/lib/esm/candid/index.js';
 import {creationArgumentTypes} from '../../dendrite/canisters/dendrite/web/src/creation-protocol.js';
 import {hexBytes} from '../../dendrite/canisters/dendrite/web/src/creation-accounts.js';
 import {exportCreationReceipt} from '../../dendrite/canisters/dendrite/web/src/creation-receipt.js';
 
-export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied,holdIdentityScripts}){
+export async function creationJourney({scenario,browser,authenticate,click,pause,writeEvidence,waitSignal,directory,origin,denied,reauthenticatePage}){
  const production=scenario==='creation-production',user=await authenticate(0),participants=[user];
- if(production)for(let index=1;index<5;index++){
-  // Chrome exposes native virtual authenticators across simultaneous II
-  // windows. Only the participant currently using a passkey may respond.
-  for(const p of participants){await p.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:p.nativeDevice.authenticatorId,enabled:false});await p.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:p.nativeDevice.authenticatorId,isUserVerified:false});}
-  participants.push(await authenticate(index));
- }
- if(production)for(const p of participants.slice(1)){await p.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:p.nativeDevice.authenticatorId,enabled:false});await p.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:p.nativeDevice.authenticatorId,isUserVerified:false});}
+ if(production)for(let index=1;index<5;index++)participants.push(await authenticate(index));
  let page=user.page;
  page.on('response',response=>{if(response.status()>=400)console.error(JSON.stringify({phase:'creation HTTP failure',url:response.url(),status:response.status()}));});
  await writeEvidence(`${directory}/creation-principal.json`,JSON.stringify({principal:user.principal,participants:participants.map(p=>p.principal)}));
@@ -27,97 +22,14 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
  async function save(){const previous=new Map(await Promise.all((await readdir(receipts)).filter(n=>n.endsWith('.json')).map(async n=>[n,(await stat(`${receipts}/${n}`)).mtimeMs])));await press('Save creation receipt');
   for(let i=0;i<200;i++){for(const n of(await readdir(receipts)).filter(n=>n.endsWith('.json'))){const file=`${receipts}/${n}`;if((await stat(file)).mtimeMs!==previous.get(n)){try{const json=await readFile(file,'utf8'),value=JSON.parse(json);return {file,json,value};}catch{}}}await pause(50);}throw Error('Actual receipt download did not complete');}
  async function signPrepared({holdController=false,holdProposal=false,holdRegistration=false,loseProposal=false,losePayment=false}={}){const saved=await save();await page.click('[name=creation-intent-saved]');if(holdController||holdProposal||holdRegistration||loseProposal||losePayment)await page.evaluate(async mode=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');fixtureMutationFault.arm(mode);},losePayment?'losePayment':holdController?'holdController':loseProposal?'lose':'hold');if(await page.$('[name=creation-request-confirmed]')){await page.click('[name=creation-request-confirmed]');await press('Sign exact creation request');}else{await page.click('[name=confirmation]');await press('Submit exact reviewed request');}if(holdRegistration){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-registration-reserved.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-registration-name-conflicted');await page.evaluate(()=>fixtureMutationFault.release());}if(holdProposal){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-rehearsal-fee-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-rehearsal-fee-raised');await page.evaluate(()=>fixtureMutationFault.release());}if(holdController){await page.waitForFunction(()=>fixtureMutationFault.state().held,{timeout:90000});await writeEvidence(`${directory}/creation-controller-removal-held.json`,JSON.stringify({canister:saved.value.canister_id,neuron:saved.value.neuron_id}));await waitSignal('creation-final-dust-injected');await page.evaluate(()=>fixtureMutationFault.release());}await idle();return saved;}
- const authenticationRestarts=[];
- async function reloadIdentityDocument(participant){
-  // A secondary document borrows the same native hardware window. Dispose the
-  // owner's channel too before moving its opener and navigating the II target.
-  for(const document of new Set([participant.page,page]))await document.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
-  const identity=participant.nativeDevice.popup,providerOrigin=new URL(identity.url()).origin;
-  // Recover the public hardware-window reference in a fresh application heap.
-  await identity.evaluate(origin=>{if(window.opener&&!window.opener.closed)window.opener.postMessage('dendrite-native-window-reference-v1',origin);},origin);
-  await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
-  // Mirror normal named-popup opening for the active application document.
-  // Link after navigation resets the opener, but before II scripts capture it.
-  // Only WindowProxy references cross this test-only handshake, never RPC data.
-  const linkCurrentDocument=async()=>{
-   await identity.evaluate(name=>window.name=name,`${providerOrigin}-signer-window`);
-   await identity.evaluate(origin=>{globalThis.creationNativeOpenerLinked=false;const receive=event=>{if(event.origin===origin&&event.data==='dendrite-native-opener-v1'&&event.source){window.removeEventListener('message',receive);window.opener=event.source;globalThis.creationNativeOpenerLinked=true;}};window.addEventListener('message',receive);},origin);
-   await page.evaluate(providerOrigin=>{const target=globalThis.creationNativeSignerWindow??window.opener?.creationNativeSignerWindow;target.postMessage('dendrite-native-opener-v1',providerOrigin);},providerOrigin);
-   await identity.waitForFunction(()=>globalThis.creationNativeOpenerLinked,{timeout:5000});
-  };
-  await identity.bringToFront();
-  // Chrome's virtual hardware stays in this II target. Hold only its script
-  // loading for owner and secondary handoffs alike: II must not initialize
-  // before the opener link is acknowledged. Never alter script bytes or RPCs.
-  await identity.setCacheEnabled(false);
-  let hold=true,scriptSeen,deadline;const scripts=[],ready=new Promise(resolve=>scriptSeen=resolve);
-  const request=req=>{if(hold&&req.resourceType()==='script'){scripts.push(req);scriptSeen();}else void req.continue();};
-  const removeScriptHold=holdIdentityScripts(identity,request);
-  const navigation=identity.goto(new URL('/authorize',identity.url()).href,{waitUntil:'domcontentloaded'});navigation.catch(()=>{});
-  const release=async()=>{hold=false;for(const req of scripts)if(!req.isInterceptResolutionHandled())await req.continue();};
-  try{
-   await Promise.race([ready,new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('Native II opener handoff did not observe script loading')),5000);})]);
-   clearTimeout(deadline);await linkCurrentDocument();await release();await navigation;
-  }finally{
-   clearTimeout(deadline);await release();removeScriptHold();
-   await identity.setCacheEnabled(true);
-  }
-  const policyFile=`${directory}/sdk-window-policy.json`,policy=JSON.parse(await readFile(policyFile,'utf8'));
-  policy[page===participant.page?'owner_document_handoff':'secondary_document_handoff']={classification:'local native-device fixture only; no II authority claim',sequence:'close document channels; navigate II; link public opener before II scripts initialize; resume unchanged scripts',held_script_requests:scripts.length,script_observation_timeout_ms:5000,network_guard_preserved:true,script_bytes_modified:false,signing_or_certificate_freshness_changed:false,credentials_exported:false};
-  await writeEvidence(policyFile,JSON.stringify(policy,null,2));
- }
-
  async function reauthenticate(label,participant=user){
-  const requestedLabel=label;
-  for(let attempt=0;attempt<2;attempt++){
-   try{return await reauthenticateOnce(label,participant,requestedLabel);}catch(error){
-    if(attempt||!error.iiSessionFailure||participant.nativeDevice.popup.isClosed())throw error;
-    await page.waitForFunction(label=>Array.from(document.querySelectorAll('button')).some(b=>!b.disabled&&[label,'Try again'].includes(b.textContent.trim())),{timeout:45000},label);
-    await reloadIdentityDocument(participant);
-    authenticationRestarts.push({principal:participant.principal,label,reason:error.iiSessionFailure,attempt:attempt+1,original_hardware_retained:true});
-    await writeEvidence(`${directory}/creation-reauthentication-retries.json`,JSON.stringify(authenticationRestarts));
-    const present=await page.$$eval('button',(buttons,label)=>buttons.some(b=>!b.disabled&&b.textContent.trim()===label),label);if(!present)label='Try again';
-   }
-  }
+  const profile={'Consent to funding capability':'FundProvisioning','Consent to controller management capability':'ManageBootstrap','Consent to exact bootstrap capability':'CallBootstrap'}[label];
+  await reauthenticatePage(page,participant,label,{profile});
  }
- async function reauthenticateOnce(label,participant=user,requestedLabel=label){
-  await reloadIdentityDocument(participant);
-  let popup=(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
-  if(participant.nativeDevice.popup.isClosed())throw Error('Native passkey window was closed; the hardware surrogate is unavailable.');
-  // As during initial setup, only this person's physical-device surrogate
-  // may answer a discoverable passkey request in Chrome's shared process.
-  for(const other of participants)if(other!==participant&&!other.nativeDevice.popup.isClosed()){await other.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:other.nativeDevice.authenticatorId,enabled:false});await other.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:other.nativeDevice.authenticatorId,isUserVerified:false});}
-  await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});
-  await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});
-  const link=await participant.nativeDevice.popup.evaluate(({origin})=>{const current={path:location.pathname,name:window.name,opener_alive:!!window.opener&&!window.opener.closed};if(current.opener_alive)window.opener.postMessage('dendrite-native-window-reference-v1',origin);return current;},{origin});
-  console.error(JSON.stringify({phase:'creation native window link',...link}));
-  if(link.opener_alive)await page.waitForFunction(()=>globalThis.creationNativeSignerWindow||(()=>{try{return window.opener?.creationNativeSignerWindow;}catch{return false;}})(),{timeout:5000});
-  const opened=p=>popup=p;page.once('popup',opened);await press(label);
-  // The actual II frontend may reuse its own fresh session. Never export a
-  // virtual authenticator credential/private key to manufacture the same P.
-  for(let i=0;i<180;i++){const state=await page.$eval('body',el=>({text:el.textContent,busy:el.querySelector('.creation-workflow')?.getAttribute('aria-busy'),error:el.querySelector('.creation-workflow [role=alert]')?.textContent,retryAvailable:Array.from(el.querySelectorAll('button')).some(b=>!b.disabled&&b.textContent.trim()==='Try again')}));
-   const profile={'Consent to funding capability':'FundProvisioning','Consent to controller management capability':'ManageBootstrap','Consent to exact bootstrap capability':'CallBootstrap'}[requestedLabel];
-   if(!state.error&&(profile?state.text.includes(`${profile}: active`)&&state.busy==='false':state.text.includes(`Dendrite principal: ${participant.principal}`))){page.off('popup',opened);await page.bringToFront();return;}
-   // AuthClient may reuse the still-open II window. Its native virtual
-   // authenticator stays in that window; no credential is extracted or copied.
-   popup=popup&&!popup.isClosed()?popup:(await participant.context.pages()).find(p=>p!==page&&new URL(p.url()).hostname==='id.ai.localhost');
-   if(!popup){await pause(100);continue;}
-   try{const {labels,headings}=await popup.evaluate(()=>({labels:Array.from(document.querySelectorAll('button'),el=>el.textContent.trim()),headings:Array.from(document.querySelectorAll('h1,h2'),el=>el.textContent.trim())}));
-    const failure=headings.find(h=>['Unable to connect','Connection closed','Authentication failed'].includes(h));if(failure&&(state.error||state.retryAvailable)){page.off('popup',opened);const error=Error(`Real II authentication failed: ${failure}`);error.iiSessionFailure=failure;throw error;}
-    if(state.error){page.off('popup',opened);const error=Error(`Creation authentication failed: ${state.error}`);error.iiSessionFailure="Application rejected capability authentication";throw error;}
-    if(i%10===0)console.error(JSON.stringify({phase:'creation II reauthentication',label,labels,headings:await popup.$$eval('h1,h2,[role=alert]',els=>els.map(el=>el.textContent.trim().slice(0,300)))}));
-    if(labels.includes('Authenticating...')){await popup.bringToFront();await participant.nativeDevice.cdp.send('WebAuthn.setUserVerified',{authenticatorId:participant.nativeDevice.authenticatorId,isUserVerified:true});await participant.nativeDevice.cdp.send('WebAuthn.setAutomaticPresenceSimulation',{authenticatorId:participant.nativeDevice.authenticatorId,enabled:true});if(i%10===0)console.error(JSON.stringify({phase:'creation passkey presence',original_hardware_window:popup===participant.nativeDevice.popup,principal:participant.principal}));}
-    else if(labels.includes('Continue'))await click(popup,'Continue');else if(labels.includes('Authorize'))await click(popup,'Authorize');else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
-    else {const remembered=labels.find(v=>v.includes(`Synthetic manager ${participants.indexOf(participant)}`));if(remembered)await click(popup,remembered);}
-   }catch(e){if(!popup.isClosed()&&!/Execution context/.test(e.message))throw e;}await pause(500);}
-  page.off('popup',opened);throw Error('Real II reauthentication prerequisite unavailable: the original P was not re-established; no key export or substituted identity was used.');}
  async function renewParticipants(clock,saved,{all=false}={}){
   const observation=await advanceCreationBrowserClocks(participants,clock.now_ms);
   const renewed=all?participants:[user];
   for(const participant of renewed){page=participant.page;await page.reload({waitUntil:'domcontentloaded'});
-   // Discard II's old document/session heap as a restarted browser would. The
-   // native authenticator remains in the same target; no passkey is exported.
-   await reloadIdentityDocument(participant);
    await reauthenticate('Sign in with Internet Identity',participant);}
   page=user.page;await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
   return {...observation,credentials_renewed:true,renewed_principals:renewed.map(p=>p.principal),principals:participants.map(p=>p.principal)};
@@ -165,10 +77,7 @@ export async function creationJourney({scenario,browser,authenticate,click,pause
   await page.evaluate(()=>location.hash='#/resume');await page.waitForSelector('[name=creation-receipt]');await(await page.$('[name=creation-receipt]')).uploadFile(saved.file);await idle();await capabilities();await refresh();
   if(await page.$$eval('button',els=>els.some(el=>/Review optional payment|Review next provisioning request|Sign exact creation request/.test(el.textContent))))throw Error('A second tab gained replacement payment authority');
   const second=(await save()).value.intents.at(-1);if(second.id!==original.id||second.request_binding.request_id!==original.request_binding.request_id||second.state!=='Unknown')throw Error('Second tab replaced the original payment identity');
-  await page.evaluate(async()=>{await globalThis.creationNativeSigner?.closeChannel();});
-  // Return the retained hardware window while both documents still exist;
-  // otherwise a later owner reload cannot recover its public WindowProxy.
-  const secondaryPage=page;page=ownerPage;await reloadIdentityDocument(user);
+  const secondaryPage=page;page=ownerPage;
   await secondaryPage.close();await page.bringToFront();
   await press('Search next bounded page for the original payment');await idle();saved=await save();const confirmed=saved.value.intents.at(-1);
   if(confirmed.id!==original.id||confirmed.created_at_time!==original.created_at_time||confirmed.request_binding.request_id!==original.request_binding.request_id||confirmed.state!=='Confirmed')throw Error('Permanent-block recovery replaced or repeated the original payment');

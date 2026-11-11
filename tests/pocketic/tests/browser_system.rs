@@ -1,3 +1,6 @@
+#[allow(dead_code)]
+#[path = "../../../dendrite/canisters/bootstrap/src/model.rs"]
+mod bootstrap_model;
 #[path = "support/browser_clock.rs"]
 mod browser_clock;
 #[path = "support/browser_creation.rs"]
@@ -222,7 +225,7 @@ fn local_frontend(
     alternate_assets: bool,
     identity_provider: &str,
     tamper_http: bool,
-    retain_ii_device: bool,
+    creation_instrumentation: bool,
     historical_bootstrap: bool,
 ) -> Vec<u8> {
     const HISTORICAL_FRONTEND_SOURCE: &str = "97343f8dbb714a0a12f90a474805518c83017184";
@@ -311,7 +314,7 @@ fn local_frontend(
     }
     let origin = format!("http://{id}.localhost:{}", browser_port());
     let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":format!("http://127.0.0.1:{}",browser_port()),"DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
-    let mut build = if retain_ii_device {
+    let mut build = if creation_instrumentation {
         let mut cmd = Command::new("node");
         cmd.arg(root().join("tests/browser/build-creation-fixture.mjs"))
             .arg(&source);
@@ -363,7 +366,7 @@ fn local_frontend(
         .unwrap();
         assert_eq!(manifest["sha256"], HISTORICAL_BOOTSTRAP);
         fs::write(directory.join("historical-bootstrap-policy.json"), serde_json::to_vec_pretty(&serde_json::json!({
-            "classification":"actual reviewed historical frontend source, with current recorded native-window infrastructure only; no canonical production-byte claim",
+            "classification":"actual reviewed historical frontend source, with current synthetic authenticator hardware and bounded negative authority probes; production authentication transport unchanged; no canonical production-byte claim",
             "historical_frontend_source":HISTORICAL_FRONTEND_SOURCE,
             "source_files":source_files,
             "npm_dependency_lock_identical":true,
@@ -466,6 +469,12 @@ fn real_ii_compiled_frontend_known_managers_and_signed_governance() {
 #[ignore = "xtask system_browser uses real II with dummy authentication disabled"]
 fn real_ii_scoped_child_is_enforced_by_replica() {
     browser_world("scoped-signing");
+}
+
+#[test]
+#[ignore = "small real-II production authentication lifecycle diagnostic"]
+fn real_ii_creation_authentication_lifecycle() {
+    browser_world("creation-auth");
 }
 
 #[test]
@@ -700,7 +709,7 @@ fn browser_world(scenario: &str) {
             .spawn()
             .unwrap()
     } else {
-        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:{}",browser_port()),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
+        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e","DEBUG=","-e","NODE_DEBUG=","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:{}",browser_port()),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
     };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if scenario == "anonymous" {
@@ -804,6 +813,110 @@ fn browser_world(scenario: &str) {
                 ),
                 vec![principal]
             );
+            assert!(child.wait().unwrap().success());
+            return;
+        }
+        if scenario == "creation-auth" {
+            use bootstrap_model::{Following, Network, Plan, Profile};
+            let people = signal(&directory, "auth-participants", &mut child);
+            let people: Vec<Principal> = people
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| Principal::from_text(p.as_str().unwrap()).unwrap())
+                .collect();
+            assert_eq!(people.len(), 5);
+            assert_eq!(
+                people
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                5
+            );
+            let at = now(&pic);
+            let mut neurons = vec![seed(100, user(100), at)];
+            for (index, person) in people.iter().enumerate() {
+                let mut manager = seed(11 + index as u64, *person, at);
+                manager.known_neuron_data = Some(known(11 + index as u64));
+                neurons.push(manager);
+            }
+            install_real(
+                &pic,
+                neurons,
+                vec![],
+                artifact("governance-canister"),
+                artifact("ledger-canister"),
+            );
+            creation::install_provisioning(&pic);
+            let owner = people[0];
+            let c = pic.create_canister();
+            pic.add_cycles(c, 20_000_000_000_000);
+            pic.set_controllers(c, None, vec![owner]).unwrap();
+            let bytes = fs::read(
+                root()
+                    .join("dendrite/target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm"),
+            )
+            .unwrap();
+            let plan = Plan {
+                version: 1,
+                profile: Profile::RecoverableTest,
+                owner,
+                network: Network::Local,
+                dendrite_service: verifier,
+                origin: format!("http://{verifier}.localhost:{}", browser_port()),
+                api_host: format!("http://127.0.0.1:{}", browser_port()),
+                funding_budget_e8s: 200_010_000,
+                icp_fee_e8s: 10_000,
+                provision_cycles: 2_000_000_000_000,
+                policy_version: dendrite_types::STANDARD_VERSION.into(),
+                creation_id: vec![41; 32],
+                nonce: 9041,
+                revision: 1,
+                policy_revision: dendrite_types::SOURCE_REVISION.into(),
+                bootstrap_sha256: Sha256::digest(&bytes).to_vec(),
+                managers: vec![11],
+                committed_topics: vec![],
+                following: vec![Following {
+                    topic: 1,
+                    followees: vec![11],
+                }],
+                stake_e8s: 200_000_000,
+                lock_seconds: bootstrap_model::INITIAL_CLAIM_LOCK_SECONDS,
+                cycle_reserve: bootstrap_model::MIN_RESERVE,
+                return_account: l::account_id(owner, None),
+                metadata: None,
+            };
+            pic.install_canister(c, bytes, encode_one(plan).unwrap(), Some(owner));
+            assert_eq!(pic.get_controllers(c), vec![owner]);
+            publish(
+                &directory,
+                "auth-fixtures",
+                serde_json::json!({"canister":c.to_text(),"managers":[11]}),
+            );
+            for (day, delta) in [(31, 31), (90, 59)] {
+                signal(&directory, &format!("auth-clock-{day}-ready"), &mut child);
+                browser_clock::advance(&pic, &directory, Duration::from_secs(delta * 86400));
+                publish(
+                    &directory,
+                    &format!("auth-clock-{day}"),
+                    serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+                );
+            }
+            let proof = signal(&directory, "auth-capability-result", &mut child);
+            for name in [
+                "normalPopupClosure",
+                "signoutReauthentication",
+                "reloadDraftReceiptImport",
+                "secondTabSamePrincipal",
+                "wrongParticipantRejected",
+                "cancelledGenerationCleared",
+                "expiryRejected",
+            ] {
+                assert_eq!(proof[name], true, "missing authentication proof: {name}");
+            }
+            assert_eq!(proof["observations"].as_array().unwrap().len(), 16);
+            assert_eq!(pic.get_controllers(c), vec![owner]);
+            publish(&directory, "browser-complete", serde_json::json!({}));
             assert!(child.wait().unwrap().success());
             return;
         }
@@ -1549,8 +1662,14 @@ fn browser_world(scenario: &str) {
         "submitted.json",
         "voted.json",
         "scope-probe.json",
-        "sdk-window-policy.json",
-        "sdk-channel-lifetime-policy.json",
+        "creation-build-delta.json",
+        "scope-build-delta.json",
+        "synthetic-passkey-lifecycle.json",
+        "authentication-error.json",
+        "auth-capability-result.json",
+        "auth-capability-observations.json",
+        "auth-participants.json",
+        "ii-capability-failure.png",
         "browser-scheduling-policy.json",
         "creation-principal.json",
         "creation-plan.json",
@@ -1641,8 +1760,8 @@ fn browser_world(scenario: &str) {
         for filename in [
             "local-build.json",
             "dendrite-local.wasm",
-            "sdk-window-policy.json",
-            "sdk-channel-lifetime-policy.json",
+            "creation-build-delta.json",
+            "scope-build-delta.json",
             "historical-bootstrap-policy.json",
         ] {
             let path = directory.join(variant).join(filename);

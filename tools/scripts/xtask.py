@@ -138,7 +138,7 @@ def prepare_bootstrap():
     PREPARED_ARTIFACTS['dendrite_bootstrap']=manifest
 
 def creation_pure():
-    run(['node','--test','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs','tests/browser/mutation-fault-probe.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
+    run(['node','--test','tests/browser/synthetic-passkeys.test.mjs','tests/browser/auth-lifecycle-audit.test.mjs','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs','tests/browser/mutation-fault-probe.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
     run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
     completed_suites.add('creation_pure')
 
@@ -526,6 +526,8 @@ def system_browser():
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_scoped_child_is_enforced_by_replica','--nocapture'],kind='behaviour',name='actual II child delegation replica scope enforcement')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_closed_popup_does_not_publish_session','--nocapture'],kind='behaviour',name='actual II popup cancellation and bootstrap cleanup')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_browser_wrong_provider_never_publishes_a_transaction_session','--nocapture'],kind='behaviour',name='actual local provider misconfiguration fails closed')
+    for repeat in range(1,4):
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_creation_authentication_lifecycle','--nocapture'],kind='behaviour',name=f'fresh real-II production authentication lifecycle {repeat}/3; no scenario retries')
     completed_suites.add('system_browser_safety')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_compiled_frontend_known_managers_and_signed_governance','--nocapture'],kind='behaviour',name='actual II and signed real Governance team management')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_local_anonymous_browser_preserves_responsive_and_certificate_checks','--nocapture'],kind='behaviour',name='preserved responsive anonymous browser against local real protocol')
