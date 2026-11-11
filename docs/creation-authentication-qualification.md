@@ -115,3 +115,19 @@ Dendrite policy, creation custody/recovery, D-QUORUM economics/stable state/API,
 production identities and authority boundaries are unchanged. No push, merge,
 deployment or production/mainnet operation is authorized or performed. Hosted CI
 requires actual execution against the exact source; local results are distinct.
+
+The first final campaign on `b733bdfdf1b771c7f36abe82c45c6fd51b1197df`
+passed 16 lanes, including three fresh capability worlds, both complete browser
+journeys, both canonical build pairs and 20/80/240 capacity. It then failed the
+mandatory Dendrite security gate: `rustix@1.1.4` was affected by
+[RUSTSEC-2026-0486](https://raw.githubusercontent.com/RustSec/advisory-db/main/crates/rustix/RUSTSEC-2026-0486.md).
+Five remaining lanes and readiness were unrun. This campaign is unqualified and
+its complete evidence is retained.
+
+The narrow remediation updates only that locked package to `1.1.6` and its
+required Windows dependency selection. It is reached through `tempfile` and the
+PocketIC development dependency; the production Wasm dependency trees contain no
+`rustix`. The root workspace already locks `1.1.6`. No security exception was
+added. A fresh Dendrite security scan passed after the update. Regenerated assets
+record the changed lockfile fingerprint. Every mandatory lane must execute again
+on the subsequent frozen source; none of the 16 previous passes carries forward.

@@ -4,7 +4,7 @@
   "sha256": "a1a523448ed551ce89fb40fc070618bde97ac43ac324d215d93d2138c299abe9",
   "bytes": 1462294,
   "candid_sha256": "a85d32960d314a5945c427ee0e6780b6d9057ec526fe5affe55931ed65726bd8",
-  "source_fingerprint": "1892763397b5239ec346938eed096f7a8f4ea7cb569c40a3a0c653dc2c74f4b2",
+  "source_fingerprint": "884c1a1f97f3d93bbe23d579eb70964b6f7d688da94672e9c99943d242f18feb",
   "policy": {
     "version": 1,
     "standard_version": "nns-dendrite/1.1-draft",
