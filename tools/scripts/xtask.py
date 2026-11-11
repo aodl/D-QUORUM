@@ -527,7 +527,16 @@ def system_browser():
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_closed_popup_does_not_publish_session','--nocapture'],kind='behaviour',name='actual II popup cancellation and bootstrap cleanup')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_browser_wrong_provider_never_publishes_a_transaction_session','--nocapture'],kind='behaviour',name='actual local provider misconfiguration fails closed')
     for repeat in range(1,4):
-        run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_creation_authentication_lifecycle','--nocapture'],kind='behaviour',name=f'fresh real-II production authentication lifecycle {repeat}/3; no scenario retries')
+        try:
+            run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_creation_authentication_lifecycle','--nocapture'],kind='behaviour',name=f'fresh real-II production authentication lifecycle {repeat}/3; no scenario retries')
+        finally:
+            # Each fresh world replaces the current pointer. Retain its public
+            # evidence before the next world starts, including failed attempts.
+            destination=ATTEMPT/f'authentication-repeat-{repeat}'
+            destination.mkdir(exist_ok=False)
+            for path in (OUT/'browser-system/creation-auth').glob('*'):
+                if path.is_file() and path.suffix in ('.json','.log','.png'):
+                    shutil.copyfile(path,destination/path.name)
     completed_suites.add('system_browser_safety')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_compiled_frontend_known_managers_and_signed_governance','--nocapture'],kind='behaviour',name='actual II and signed real Governance team management')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_local_anonymous_browser_preserves_responsive_and_certificate_checks','--nocapture'],kind='behaviour',name='preserved responsive anonymous browser against local real protocol')

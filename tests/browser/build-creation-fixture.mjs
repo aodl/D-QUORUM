@@ -4,13 +4,14 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {signerHeartbeatPolicy} from '../../dendrite/canisters/dendrite/web/sdk-heartbeat-policy.mjs';
 import {authenticationLifecycleAudit} from './auth-lifecycle-audit.mjs';
 const source=resolve(process.argv[2]),{buildFrontend}=await import(pathToFileURL(`${source}/canisters/dendrite/web/build-frontend.mjs`));
 const historical=process.argv[3]==='--reviewed-v1-bootstrap';
 if(process.argv.length>3&&!historical)throw Error('Only the reviewed V1 fixture selection is supported');
 if(process.env.DENDRITE_BUILD_MODE!=='local'||!new URL(process.env.DENDRITE_IDENTITY_PROVIDER).hostname.endsWith('.localhost'))throw Error('Creation probes are local-test infrastructure only');
 let historicalTransforms=0,authorityTransforms=0;const deltas=[],audit=authenticationLifecycleAudit(source);
-await buildFrontend({plugins:[audit.plugin,{name:'creation-negative-authority-probes',setup(build){
+await buildFrontend({plugins:[signerHeartbeatPolicy(),audit.plugin,{name:'creation-negative-authority-probes',setup(build){
 build.onLoad({filter:/creation-protocol\.js$/},async({path})=>{
  const original=await readFile(path,'utf8');
  const management='if (session.profile === "ManageBootstrap") return Object.freeze({ management: actor(managementFactory, Principal.managementCanister(), { effectiveCanisterId: Principal.fromText(session.bootstrapCanisterId) }) });';

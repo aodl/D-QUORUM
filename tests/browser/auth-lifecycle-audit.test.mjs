@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {authenticationLifecycleAudit,pinnedAuthenticationModules} from './auth-lifecycle-audit.mjs';
+import {build} from '../../dendrite/node_modules/esbuild/lib/main.js';
+import {signerHeartbeatPolicy} from '../../dendrite/canisters/dendrite/web/sdk-heartbeat-policy.mjs';
+
+test('historical compatibility loader and current production loader apply the same heartbeat policy exactly once',async()=>{
+ const path=new URL('../../dendrite/node_modules/@icp-sdk/signer/lib/esm/web/heartbeat/client.js',import.meta.url).pathname;
+ const options={entryPoints:[path],bundle:true,write:false,format:'esm',minify:true};
+ const baseline=await build({...options,plugins:[signerHeartbeatPolicy()]});
+ const currentFixture=await build({...options,plugins:[signerHeartbeatPolicy(),signerHeartbeatPolicy()]});
+ assert.equal(currentFixture.outputFiles[0].text,baseline.outputFiles[0].text);
+});
 
 test('fixture loader returns pinned production authentication bytes without transformations',async()=>{
  const audit=authenticationLifecycleAudit(new URL('../../dendrite',import.meta.url).pathname);let load;
