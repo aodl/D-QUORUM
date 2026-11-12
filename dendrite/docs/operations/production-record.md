@@ -65,13 +65,13 @@ mobile and narrow scenarios were not reached. This is a retained limitation of t
 requested existing artifact, not a passing browser qualification. Final-origin II,
 controlled transactions, and blackholing operator gates remain UNRUN.
 
-Bounded local evidence is under
-[`dist/deployment-20261108`](../../dist/deployment-20261108/):
-[command results](../../dist/deployment-20261108/check-results.txt),
-[canonical build comparison](../../dist/deployment-20261108/canonical.log),
-[live verification](../../dist/deployment-20261108/live-verification.json), and
-[browser failure](../../dist/deployment-20261108/browser-smoke-final.log).
-These generated files are ignored by Git; this entry retains the durable result.
+Bounded local evidence locations, relative to the Dendrite root, are
+`dist/deployment-20261108/`: command results in `check-results.txt`,
+canonical build comparison in `canonical.log`, live verification in
+`live-verification.json`, and browser failure in `browser-smoke-final.log`.
+These generated files are ignored by Git and retained outside the tracked checkout
+as local operator evidence. No persistent published artifact URL is recorded;
+this entry retains the durable result.
 
 ## Evidence-specific rule diagnostics upgrade — 2026-07-29
 

@@ -76,7 +76,7 @@ def fixture_server():
     raise RuntimeError('managed PocketIC startup timeout')
 
 def run(args,kind='validator',name=None,show=True):
-    if kind=='behaviour' and '--test' in args:fixture_server()
+    if kind=='behaviour' and args[:6]==['cargo','test','--locked','-p','quorum-pocketic','--test']:fixture_server()
     print('+ '+' '.join(map(str,args)),flush=True)
     process=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     lines=[]

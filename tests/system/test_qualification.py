@@ -125,6 +125,64 @@ process.stdout.write(JSON.stringify({calls,closed,retries:authenticationRetries.
         self.assertTrue(result['result']['setupSucceeded'])
 
 class FixtureServerOwnership(unittest.TestCase):
+    def setUp(self):
+        directory=tempfile.TemporaryDirectory(dir=xtask.ROOT/'.cache/tmp')
+        self.addCleanup(directory.cleanup)
+        root=Path(directory.name);out=root/'evidence';attempt=out/'attempt'
+        attempt.mkdir(parents=True);(root/'.cache/tmp').mkdir(parents=True)
+        for name,value in [('ROOT',root),('OUT',out),('ATTEMPT',attempt),('results',[]),('FIXTURE_SERVER',None),('FIXTURE_LOG',None),('FIXTURE_PORT',None),('FIXTURE_GENERATION',0)]:
+            patch=mock.patch.object(xtask,name,value);patch.start();self.addCleanup(patch.stop)
+        patch=mock.patch.object(xtask,'save');patch.start();self.addCleanup(patch.stop)
+        patch=mock.patch.dict(os.environ);patch.start();self.addCleanup(patch.stop)
+        self.addCleanup(xtask.stop_fixture_server)
+    def test_node_test_runs_without_pocketic_and_counts_executed_tests(self):
+        test=xtask.ROOT/'pure.test.mjs'
+        test.write_text("import test from 'node:test'; test('pure without PocketIC', () => {});\n")
+        xtask.run(['node','--test',str(test)],kind='behaviour',show=False)
+        self.assertFalse((xtask.ROOT/'.cache/tools/pocket-ic').exists())
+        self.assertIsNone(xtask.FIXTURE_SERVER)
+        self.assertEqual(xtask.FIXTURE_GENERATION,0)
+        self.assertEqual(xtask.results[0]['passed'],1)
+        self.assertEqual(xtask.results[0]['executed_tests'],['pure without PocketIC'])
+    def test_rust_pocketic_commands_share_exactly_one_owned_server(self):
+        # A public process fixture exercises the runner lifecycle without a replica.
+        binary=xtask.ROOT/'.cache/tools/pocket-ic';binary.parent.mkdir()
+        binary.write_text('#!'+sys.executable+'\nimport pathlib,sys,time\npathlib.Path(sys.argv[sys.argv.index("--port-file")+1]).write_text("1234\\n")\nwhile True:time.sleep(1)\n')
+        binary.chmod(0o755)
+        command=['cargo','test','--locked','-p','quorum-pocketic','--test','protocol','--','--ignored','--exact','owned_fixture']
+        original=xtask.subprocess.Popen
+        def spawn(args,**kwargs):
+            if args==command:
+                self.assertEqual(os.environ['D_QUORUM_POCKET_IC_URL'],'http://127.0.0.1:1234/')
+                args=[sys.executable,'-c',"print('test owned_fixture ... ok\\ntest result: ok. 1 passed; 0 failed; 0 ignored;')"]
+            return original(args,**kwargs)
+        with mock.patch.object(xtask.subprocess,'Popen',side_effect=spawn) as start:
+            xtask.run(command,kind='behaviour',show=False)
+            server,port,log=xtask.FIXTURE_SERVER,xtask.FIXTURE_PORT,xtask.FIXTURE_LOG
+            xtask.run(command,kind='behaviour',show=False)
+            starts=[call for call in start.call_args_list if call.args[0][0]==str(binary)]
+            self.assertEqual(len(starts),1);self.assertTrue(starts[0].kwargs['start_new_session'])
+            self.assertIs(xtask.FIXTURE_SERVER,server);self.assertEqual(xtask.FIXTURE_GENERATION,1)
+            self.assertEqual([result['passed'] for result in xtask.results],[1,1])
+            self.assertEqual([result['executed_tests'] for result in xtask.results],[['owned_fixture'],['owned_fixture']])
+            xtask.stop_fixture_server();xtask.stop_fixture_server()
+            self.assertIsNotNone(server.poll());self.assertFalse(port.exists());self.assertTrue(log.closed)
+            self.assertNotIn('D_QUORUM_POCKET_IC_URL',os.environ)
+    def test_missing_pocketic_fails_before_running_or_counting_rust_tests(self):
+        with self.assertRaises(FileNotFoundError):
+            xtask.run(['cargo','test','--locked','-p','quorum-pocketic','--test','protocol'],kind='behaviour',show=False)
+        log,port=xtask.FIXTURE_LOG,xtask.FIXTURE_PORT
+        self.assertEqual(xtask.results,[]);self.assertIsNone(xtask.FIXTURE_SERVER)
+        xtask.stop_fixture_server()
+        self.assertTrue(log.closed);self.assertFalse(port.exists())
+    def test_validators_and_other_rust_packages_do_not_start_a_server(self):
+        with mock.patch.object(xtask,'fixture_server') as start,mock.patch.object(xtask.subprocess,'Popen') as command:
+            command.return_value.returncode=1
+            for args,kind in [(['cargo','test','--locked','-p','quorum-pocketic','--test','protocol','--','--list'],'validator'),(['cargo','test','--locked','-p','other','--test','unit'],'behaviour')]:
+                command.return_value.stdout=io.StringIO('')
+                with self.subTest(args=args),self.assertRaisesRegex(RuntimeError,'required gate failed'):
+                    xtask.run(args,kind=kind,show=False)
+            start.assert_not_called()
     def test_dead_server_is_not_restarted_within_a_lane(self):
         server=mock.Mock();server.poll.return_value=-9
         with mock.patch.object(xtask,'FIXTURE_SERVER',server),mock.patch.object(xtask.subprocess,'Popen') as start:
@@ -141,6 +199,12 @@ class FixtureServerOwnership(unittest.TestCase):
                 self.assertIsNone(xtask.FIXTURE_SERVER);self.assertIsNone(xtask.FIXTURE_LOG);self.assertIsNone(xtask.FIXTURE_PORT)
                 self.assertTrue(log.closed);self.assertFalse(port.exists());self.assertTrue(other.exists())
                 self.assertNotIn('D_QUORUM_POCKET_IC_URL',os.environ)
+    def test_lane_cleanup_kills_an_unresponsive_owned_server(self):
+        server=mock.Mock();server.poll.return_value=None;server.wait.side_effect=[subprocess.TimeoutExpired('fixture',10),0]
+        with mock.patch.object(xtask,'FIXTURE_SERVER',server),mock.patch('builtins.print'):
+            xtask.stop_fixture_server()
+            server.terminate.assert_called_once();server.kill.assert_called_once()
+            self.assertEqual(server.wait.call_args_list,[mock.call(timeout=10),mock.call()])
 
 class ExecutionAccounting(unittest.TestCase):
     def exercise(self,output):
