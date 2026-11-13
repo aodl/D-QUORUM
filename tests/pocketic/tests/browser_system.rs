@@ -431,9 +431,11 @@ fn publish(directory: &Path, name: &str, value: serde_json::Value) {
     fs::rename(temporary, directory.join(format!("{name}.json"))).unwrap();
 }
 fn signal(directory: &Path, name: &str, child: &mut Child) -> serde_json::Value {
-    // Five independent II setups are serial and each retains the SDK's own
-    // channel timeout. This orchestration budget is not delegation freshness.
-    let seconds = if name == "creation-principal" {
+    // Creation milestones include five serial II renewals after clock advances,
+    // or claim plus the complete configuration/following sequence. Use the same
+    // bounded orchestration budget as initial II setup. Individual SDK channel,
+    // certificate/delegation freshness and transaction limits remain unchanged.
+    let seconds = if name.starts_with("creation-") {
         600
     } else {
         240
