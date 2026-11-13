@@ -145,8 +145,8 @@ async function warmCreationIdentityAssets(context,index){
  const page=await context.newPage();
  try{
   await guard(page);
-  await page.goto(`http://id.ai.localhost:${new URL(origin).port}/`,{waitUntil:'networkidle0',timeout:120000});
-  await page.waitForFunction(()=>document.body.innerText.includes('Internet Identity')&&document.querySelector('button'),{timeout:90000});
+  await page.goto(`http://id.ai.localhost:${new URL(origin).port}/`,{waitUntil:'domcontentloaded',timeout:120000});
+  await page.waitForFunction(()=>!!document.querySelector('button'),{timeout:90000});
   console.error(JSON.stringify({phase:'II public assets ready before SDK channel',index}));
  }finally{await page.close();}
 }

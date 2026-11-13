@@ -98,7 +98,7 @@ test('creation fixture warms public II assets before a channel exists and closes
  const start=source.indexOf('async function warmCreationIdentityAssets('),end=source.indexOf('\nasync function authenticateAttempt(',start);
  for(const fail of [false,true]){
   const calls=[];
-  const page={goto:async(url,options)=>{calls.push('public GET');assert.equal(url,'http://id.ai.localhost:4944/');assert.equal(options.waitUntil,'networkidle0');if(fail)throw Error('public asset load failed');},waitForFunction:async()=>calls.push('public UI ready'),close:async()=>calls.push('closed')};
+  const page={goto:async(url,options)=>{calls.push('public GET');assert.equal(url,'http://id.ai.localhost:4944/');assert.equal(options.waitUntil,'domcontentloaded');if(fail)throw Error('public asset load failed');},waitForFunction:async predicate=>{assert.equal(vm.runInNewContext(`(${predicate})()`,{document:{querySelector:()=>({})}}),true);calls.push('public UI ready');},close:async()=>calls.push('closed')};
   const warm=vm.runInNewContext(`(${source.slice(start,end)})`,{scenario:'creation-production',URL,origin:'http://app.localhost:4944',guard:async()=>calls.push('guarded'),console:{error(){}}});
   const context={newPage:async()=>page};
   if(fail)await assert.rejects(()=>warm(context,0),error=>error.message==='public asset load failed');else await warm(context,0);
