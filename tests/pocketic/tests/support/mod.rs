@@ -28,8 +28,18 @@ pub fn dendrite_wasm() -> Vec<u8> {
         });
     fs::read(path).expect("prepare the independent Dendrite artifact before creating a fixture")
 }
-pub fn artifact(name: &str) -> Vec<u8> {
-    if std::env::var("DENDRITE_PROTOCOL_PROFILE").as_deref() == Ok("reviewed-mainnet") {
+pub fn artifact_pin(name: &str) -> serde_json::Value {
+    let profile = std::env::var("DENDRITE_PROTOCOL_PROFILE");
+    if profile.as_deref() == Ok("reviewed-mainnet") {
+        if name == "ledger-archive-node-canister" {
+            return serde_json::from_str(
+                &fs::read_to_string(
+                    root().join("tests/pocketic/fixtures/mainnet-ledger-archive.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
         let reviewed: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(
                 root().join("dendrite/src/declarations/bootstrap/protocol-mainnet.json"),
@@ -43,38 +53,40 @@ pub fn artifact(name: &str) -> Vec<u8> {
             .values()
             .find(|entry| entry["artifact"] == name)
         {
-            let bytes = fs::read(root().join(format!(".cache/protocol-mainnet/{name}.wasm.gz")))
-                .expect("download and verify the reviewed mainnet executable first");
-            assert_eq!(
-                hex::encode(Sha256::digest(&bytes)),
-                entry["installed_gzip_sha256"].as_str().unwrap()
-            );
-            let mut raw = vec![];
-            flate2::read::GzDecoder::new(bytes.as_slice())
-                .read_to_end(&mut raw)
-                .unwrap();
-            assert_eq!(
-                hex::encode(Sha256::digest(&raw)),
-                entry["wasm_sha256"].as_str().unwrap()
-            );
-            return bytes;
+            return serde_json::json!({"name":format!("{name}.wasm.gz"),
+                "sha256":entry["installed_gzip_sha256"],"wasm_sha256":entry["wasm_sha256"]});
         }
     } else {
-        assert!(
-            std::env::var("DENDRITE_PROTOCOL_PROFILE").is_err(),
-            "unknown protocol profile"
-        );
+        assert!(profile.is_err(), "unknown protocol profile");
     }
     let pins: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("protocol-pins.json")).unwrap())
             .unwrap();
-    let entry = pins["artifacts"]
+    pins["artifacts"]
         .as_array()
         .unwrap()
         .iter()
         .find(|p| p["name"] == format!("{name}.wasm.gz"))
-        .unwrap();
-    let bytes = fs::read(root().join(format!(".cache/protocol/{name}.wasm.gz")))
+        .unwrap()
+        .clone()
+}
+pub fn artifact(name: &str) -> Vec<u8> {
+    let entry = artifact_pin(name);
+    let reviewed = std::env::var("DENDRITE_PROTOCOL_PROFILE").as_deref() == Ok("reviewed-mainnet")
+        && [
+            "cycles-minting-canister",
+            "governance-canister",
+            "ledger-canister",
+            "cycles-ledger",
+            "ledger-archive-node-canister",
+        ]
+        .contains(&name);
+    let directory = if reviewed {
+        ".cache/protocol-mainnet"
+    } else {
+        ".cache/protocol"
+    };
+    let bytes = fs::read(root().join(format!("{directory}/{name}.wasm.gz")))
         .expect("pinned protocol artifact required");
     assert_eq!(
         hex::encode(Sha256::digest(&bytes)),
@@ -88,7 +100,7 @@ pub fn artifact(name: &str) -> Vec<u8> {
         hex::encode(Sha256::digest(&raw)),
         entry["wasm_sha256"].as_str().unwrap()
     );
-    raw
+    if reviewed { bytes } else { raw }
 }
 pub fn builder() -> PocketIcBuilder {
     let bin = root().join(".cache/tools/pocket-ic");

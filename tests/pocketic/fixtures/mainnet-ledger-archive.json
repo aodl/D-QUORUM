@@ -1,0 +1,7 @@
+{
+  "name": "ledger-archive-node-canister.wasm.gz",
+  "url": "https://download.dfinity.systems/ic/69b755062f5ef0a7d6efc9a127172b46121420c8/canisters/ledger-archive-node-canister.wasm.gz",
+  "source_revision": "69b755062f5ef0a7d6efc9a127172b46121420c8",
+  "sha256": "994fdc2b9ef5ef448b237e171321256c1cf3e5cf9de2f61a1663252a35202ac2",
+  "wasm_sha256": "1fb9688c6ec6c21bb960efb83fa361ab9338262f37b0fa34dd4c0e822e7a621a"
+}

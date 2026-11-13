@@ -164,6 +164,12 @@ def creation_mainnet_protocol():
         data=target.read_bytes()
         if hashlib.sha256(data).hexdigest()!=entry['installed_gzip_sha256'] or hashlib.sha256(gzip.decompress(data)).hexdigest()!=entry['wasm_sha256']:
             raise RuntimeError('reviewed mainnet executable checksum mismatch: '+entry['artifact'])
+    archive=json.loads((ROOT/'tests/pocketic/fixtures/mainnet-ledger-archive.json').read_text())
+    archive_path=cache/archive['name']
+    if not archive_path.exists():archive_path.write_bytes(urllib.request.urlopen(archive['url'],timeout=60).read())
+    archive_data=archive_path.read_bytes()
+    if hashlib.sha256(archive_data).hexdigest()!=archive['sha256'] or hashlib.sha256(gzip.decompress(archive_data)).hexdigest()!=archive['wasm_sha256']:
+        raise RuntimeError('reviewed mainnet companion archive checksum mismatch')
     prepare_bootstrap()
     previous=os.environ.get('DENDRITE_PROTOCOL_PROFILE')
     os.environ['DENDRITE_PROTOCOL_PROFILE']='reviewed-mainnet'

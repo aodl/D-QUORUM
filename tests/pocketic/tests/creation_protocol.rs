@@ -1468,19 +1468,23 @@ fn recoverable_creation(external_disbursement_error: bool, historical: bool) {
         "the original return must actually leave the main Ledger in this gate"
     );
     let archive = archived.archived_blocks[0].callback.0.principal;
-    let pins: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root().join("protocol-pins.json")).unwrap()).unwrap();
-    let archive_pin = pins["artifacts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["name"] == "ledger-archive-node-canister.wasm.gz")
-        .unwrap();
+    let archive_pin = artifact_pin("ledger-archive-node-canister");
     // Ledger uploads its gzip archive. module_hash hashes the install_code
     // input bytes, while wasm_sha256 binds the decompressed executable. The
     // same pinned release already records both distinct identities.
+    let archive_bytes = artifact("ledger-archive-node-canister");
+    let raw = if archive_bytes.starts_with(&[0x1f, 0x8b]) {
+        use std::io::Read;
+        let mut raw = vec![];
+        flate2::read::GzDecoder::new(archive_bytes.as_slice())
+            .read_to_end(&mut raw)
+            .unwrap();
+        raw
+    } else {
+        archive_bytes
+    };
     assert_eq!(
-        hex::encode(Sha256::digest(artifact("ledger-archive-node-canister"))),
+        hex::encode(Sha256::digest(raw)),
         archive_pin["wasm_sha256"].as_str().unwrap()
     );
     assert_eq!(
