@@ -51,7 +51,7 @@ test('actual II authentication attempt re-observes a detached control and classi
   const popup={waitForFunction:async()=>{},createCDPSession:async()=>({send:async()=>({authenticatorId:'opaque-test-device'})}),bringToFront:async()=>{},on(){},isClosed:()=>false,screenshot:async()=>{},$$eval:async()=>[],evaluate:async()=>{snapshots++;return snapshots===1?{labels:['Continue'],headings:[]}:{labels:[],headings:['Connection closed']};}};
   const page={goto:async()=>{},waitForSelector:async()=>{},once:(_,receive)=>receive(popup),on(){},$eval:async()=>false,$$eval:async()=>true};
   const attempt=vm.runInNewContext(`(${source.slice(start,end)})`,{
-   browser:{createBrowserContext:async()=>{contexts++;return {newPage:async()=>page};}},applicationPages,warmCreationIdentityAssets:async()=>{},
+   browser:{createBrowserContext:async()=>{contexts++;return {newPage:async()=>page};}},applicationPages,
    guard:async()=>{},scopeProbeMode:false,origin:'http://app.localhost:4944',scenario:'creation-production',directory:'public-evidence',
    passkeys:{registered:()=>false,begin:async()=>({}),isActive:()=>true,abort:async()=>{}},console:{error(){}},pause:async milliseconds=>pauses.push(milliseconds),writeEvidence:async(_,bytes)=>evidence.push(JSON.parse(bytes)),
    click:async target=>{if(target===popup){popupClicks++;throw Error(clickError);}return true;},
@@ -71,7 +71,7 @@ test('actual II authentication attempt re-observes a detached control and classi
 
 test('initial creation setup retries one closed channel in a discarded unbound context and propagates other failures',async()=>{
  const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
- const start=source.indexOf('async function authenticate(index){'),end=source.indexOf('\n// Load only the public II',start);
+ const start=source.indexOf('async function authenticate(index){'),end=source.indexOf('\nasync function authenticateAttempt(',start);
  assert.ok(start>=0&&end>start);
  for(const mode of ['closed-once','closed-twice','unknown']){
   const applicationPages=[],authenticationRetries=[],evidence=[];let attempts=0,closed=0;
@@ -91,21 +91,6 @@ test('initial creation setup retries one closed channel in a discarded unbound c
   assert.equal(evidence.length,mode==='unknown'?0:1);
   if(evidence.length){assert.equal(evidence[0][0].freshContext,true);assert.equal(evidence[0][0].failedAttempt,1);}
  }
-});
-
-test('creation fixture warms public II assets before a channel exists and closes the page even on failure',async()=>{
- const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
- const start=source.indexOf('async function warmCreationIdentityAssets('),end=source.indexOf('\nasync function authenticateAttempt(',start);
- for(const fail of [false,true]){
-  const calls=[];
-  const page={goto:async(url,options)=>{calls.push('public GET');assert.equal(url,'http://id.ai.localhost:4944/');assert.equal(options.waitUntil,'domcontentloaded');if(fail)throw Error('public asset load failed');},waitForFunction:async predicate=>{assert.equal(vm.runInNewContext(`(${predicate})()`,{document:{querySelector:()=>({})}}),true);calls.push('public UI ready');},close:async()=>calls.push('closed')};
-  const warm=vm.runInNewContext(`(${source.slice(start,end)})`,{scenario:'creation-production',URL,origin:'http://app.localhost:4944',guard:async()=>calls.push('guarded'),console:{error(){}}});
-  const context={newPage:async()=>page};
-  if(fail)await assert.rejects(()=>warm(context,0),error=>error.message==='public asset load failed');else await warm(context,0);
-  assert.deepEqual(calls,fail?['guarded','public GET','closed']:['guarded','public GET','public UI ready','closed']);
- }
- const ordinary=vm.runInNewContext(`(${source.slice(start,end)})`,{scenario:'team-management'});
- await ordinary({newPage:async()=>assert.fail('ordinary scenarios retain their existing setup')},0);
 });
 
 test('coordinated local time changes Date construction and now while preserving explicit timestamps and future popup clocks',async()=>{
@@ -144,4 +129,17 @@ test('actual browser network guard continues ordinary local II scripts once and 
  const script=request('http://id.ai.localhost:4944/entry.js','script');listeners.get('request')(script);assert.equal(script.continued,1);
  const fetch=request('http://id.ai.localhost:4944/api/status','fetch');listeners.get('request')(fetch);assert.equal(fetch.continued,1);
  const remote=request('https://outside.invalid/entry.js','script');listeners.get('request')(remote);assert.equal(remote.aborted,1);assert.equal(remote.continued,0);assert.deepEqual(denied,['https://outside.invalid']);
+});
+
+
+test('II failure diagnostics expose only public HTTP status and path, never response bodies or URL queries',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function guard(page){'),end=source.indexOf('\nasync function routeToTarget(',start);
+ const listeners=new Map(),logs=[];
+ const guard=vm.runInNewContext(`(${source.slice(start,end)})`,{URL,console:{error:value=>logs.push(JSON.parse(value))}});
+ await guard({on:(name,fn)=>listeners.set(name,fn),setRequestInterception:async()=>{}});
+ listeners.get('response')({status:()=>503,url:()=> 'http://id.ai.localhost:4944/authorize?private-test-value',text:()=>assert.fail('response body must stay unread')});
+ assert.equal(logs.length,1);assert.equal(logs[0].status,503);assert.equal(logs[0].path,'/authorize');assert.equal(logs[0].origin,'http://id.ai.localhost:4944');assert.ok(!JSON.stringify(logs).includes('private-test-value'));
+ listeners.get('response')({status:()=>200,url:()=>assert.fail('healthy responses need no diagnostics')});
+ assert.equal(logs.length,1);
 });

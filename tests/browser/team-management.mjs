@@ -26,7 +26,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function writeEvidence(path,bytes){passkeys.assertEvidence(bytes);await writeFile(path+'.tmp',bytes);await rename(path+'.tmp',path);}
 async function click(page,label){await page.bringToFront();const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label){await b.evaluate(el=>{for(let parent=el.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'&&!parent.open)parent.querySelector('summary')?.click();});await b.click();return true;}}return false;}
 async function waitSignal(name){for(let n=0;n<1200;n++){try{return JSON.parse(await readFile(`${directory}/${name}.json`,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}await pause(500);}throw Error(`coordinator timeout: ${name}`);}
-async function guard(page){page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
+async function guard(page){page.on('response',response=>{if(response.status()<400)return;const url=new URL(response.url());if(url.hostname==='id.ai.localhost')console.error(JSON.stringify({phase:'II public HTTP failure',status:response.status(),origin:url.origin,path:url.pathname}));});page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
 async function routeToTarget(page){await page.evaluate(()=>{location.hash='';});await page.evaluate(()=>{location.hash='#/neuron/100';});await page.waitForSelector('.control-panel',{timeout:90000});}
 async function reviewManagers(page,manager){
  await page.select('.control-panel select',String(manager));await page.select('select[name=topic]','1');
@@ -137,23 +137,9 @@ async function authenticate(index){
   }
  }
 }
-// Load only the public II landing page before the SDK channel exists. Cold
-// headless asset compilation must not consume the unchanged heartbeat window.
-// No passkey device, authorization request, signer or manager authority exists.
-async function warmCreationIdentityAssets(context,index){
- if(!scenario.startsWith('creation-'))return;
- const page=await context.newPage();
- try{
-  await guard(page);
-  await page.goto(`http://id.ai.localhost:${new URL(origin).port}/`,{waitUntil:'domcontentloaded',timeout:120000});
-  await page.waitForFunction(()=>!!document.querySelector('button'),{timeout:90000});
-  console.error(JSON.stringify({phase:'II public assets ready before SDK channel',index}));
- }finally{await page.close();}
-}
 async function authenticateAttempt(index){
  const actions=[],label=`participant${index}`;console.error(JSON.stringify({phase:'II participant setup',index}));
  const context=await browser.createBrowserContext(),page=await context.newPage();applicationPages.push(page);await guard(page);
- await warmCreationIdentityAssets(context,index);
  await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
  if(scenario==='team-management')await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');});await page.waitForSelector('button');
  const registered=passkeys.registered(label),ticket=await passkeys.begin(page,label,'Governance');let finished=false;
