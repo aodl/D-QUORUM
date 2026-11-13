@@ -9,10 +9,14 @@ os.environ['POCKET_IC_MUTE_SERVER']='1'
 os.environ['DFX_IDENTITY']='codex_local'
 os.environ['CARGO_INCREMENTAL']='0'
 OUT=ROOT/'dist/evidence';OUT.mkdir(parents=True,exist_ok=True)
+RUN_LABEL=re.sub(r'[^a-zA-Z0-9_.-]+','_',sys.argv[1] if len(sys.argv)>1 else 'help')
+ATTEMPT=OUT/'attempts'/f'{RUN_LABEL}-{time.time_ns()}-{os.getpid()}'
+ATTEMPT.mkdir(parents=True,exist_ok=False)
 results=[]
 completed_suites=set()
 RUN_STATUS="running"
 SOURCE_COMMIT=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+DQ_CANONICAL=ROOT/'dist/d-quorum-canonical'/SOURCE_COMMIT
 SOURCE_DIRTY=bool(subprocess.check_output(['git','status','--porcelain']).strip())
 FILES=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z']).decode().split('\0')
 SOURCE_FILES={f:hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest() for f in FILES if f and pathlib.Path(f).is_file()}
@@ -72,19 +76,20 @@ def fixture_server():
     raise RuntimeError('managed PocketIC startup timeout')
 
 def run(args,kind='validator',name=None,show=True):
-    if kind=='behaviour' and '--test' in args:fixture_server()
+    if kind=='behaviour' and args[:6]==['cargo','test','--locked','-p','quorum-pocketic','--test']:fixture_server()
     print('+ '+' '.join(map(str,args)),flush=True)
     process=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     lines=[]
-    for line in process.stdout:
-        lines.append(line)
-        if show:print(line,end='',flush=True)
+    with process.stdout:
+        for line in process.stdout:
+            lines.append(line)
+            if show:print(line,end='',flush=True)
     process.wait()
     class Result:pass
     p=Result();p.returncode=process.returncode;p.stdout=''.join(lines)
     if not show and p.returncode:print(p.stdout,flush=True)
     record={'name':name or ' '.join(map(str,args)),'kind':kind,'exit_code':p.returncode,'command_exit_code':p.returncode}
-    log_name=f"{sys.argv[1]}-{len(results)+1:03}-"+re.sub(r'[^a-zA-Z0-9_.-]+','-',record['name'])[:100]+'.log'
+    log_name=str(ATTEMPT.relative_to(OUT)/f"{len(results)+1:03}-")+re.sub(r'[^a-zA-Z0-9_.-]+','-',record['name'])[:100]+'.log'
     (OUT/log_name).write_text(p.stdout)
     record['log']=log_name
     record['log_sha256']=hashlib.sha256(p.stdout.encode()).hexdigest()
@@ -96,7 +101,7 @@ def run(args,kind='validator',name=None,show=True):
         node_skipped=re.findall(r'(?m)^[ℹ#] skipped (\d+)\s*$',p.stdout)
         counts['passed']+=sum(map(int,node_passed));counts['failed']+=sum(map(int,node_failed));counts['ignored']+=sum(map(int,node_skipped))
         record.update(counts)
-        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)+re.findall(r'(?m)^✔ (.+?) \([0-9.]+m?s\)$',p.stdout)
+        record['executed_tests']=re.findall(r'(?m)^test (.+?) \.\.\.',p.stdout)+re.findall(r'(?m)^[ \t]*✔ (.+?) \([0-9.]+m?s\)$',p.stdout)
         python_tests=re.findall(r'(?m)^(test_\w+) \([^\n]+\) \.\.\. ok$',p.stdout)
         if python_tests:
             counts['passed']+=len(python_tests);record.update(counts);record['executed_tests']+=python_tests
@@ -107,7 +112,9 @@ def run(args,kind='validator',name=None,show=True):
     return p.stdout
 
 def save():
-    (OUT/(sys.argv[1]+'-run.json')).write_text(json.dumps({'status':RUN_STATUS,'completed_suites':sorted(completed_suites),'utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'source_tree_sha256':SOURCE_TREE_HASH,'source_files':SOURCE_FILES,'prepared_artifacts':PREPARED_ARTIFACTS,'gates':results},indent=2)+'\n')
+    content=json.dumps({'status':RUN_STATUS,'completed_suites':sorted(completed_suites),'utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'source':SOURCE_COMMIT,'source_dirty':SOURCE_DIRTY,'source_tree_sha256':SOURCE_TREE_HASH,'source_files':SOURCE_FILES,'prepared_artifacts':PREPARED_ARTIFACTS,'gates':results},indent=2)+'\n'
+    (OUT/(RUN_LABEL+'-run.json')).write_text(content)
+    (ATTEMPT/'run.json').write_text(content)
 
 def prepare():
     run(['cargo','run','--locked','-p','d-quorum','--example','export'],name='Candid generation check',show=False)
@@ -123,6 +130,61 @@ def prepare():
         PREPARED_ARTIFACTS[name]=hashlib.sha256(path.read_bytes()).hexdigest()
     run(['cargo','build','--locked','--release','--target','wasm32-unknown-unknown','--manifest-path','dendrite/Cargo.toml','-p','dendrite'],name='prepare independent Dendrite Wasm')
     provision()
+
+def prepare_bootstrap():
+    run(['sh','-c','cd dendrite && node canisters/dendrite/web/build-bootstrap.mjs'],name='build bootstrap before certified frontend assets')
+    release=pathlib.Path(os.environ.get('DENDRITE_BOOTSTRAP_RELEASE_DIR',str(ROOT/'dendrite/target/bootstrap-release')))
+    manifest=json.loads((release/'manifest.json').read_text())
+    PREPARED_ARTIFACTS['dendrite_bootstrap']=manifest
+
+def creation_pure():
+    run(['node','--test','tests/browser/synthetic-passkeys.test.mjs','tests/browser/auth-lifecycle-audit.test.mjs','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs','tests/browser/mutation-fault-probe.test.mjs','tests/browser/build-scope-probe.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
+    completed_suites.add('creation_pure')
+
+def creation_recording():
+    run(['cargo','test','--locked','--manifest-path','dendrite/Cargo.toml','-p','dendrite-bootstrap','--lib'],kind='behaviour',name='bootstrap recording faults checkpoints and operation generations')
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-controller.test.js canisters/dendrite/web/test/creation-protocol.test.js canisters/dendrite/web/test/creation-team-vote.test.js'],kind='behaviour',name='browser financial recording faults and cancellation ownership')
+    completed_suites.add('creation_recording')
+
+def creation_protocol():
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-historical-proof.test.js'],kind='behaviour',name='genuine archived certificate verification: historical provenance, not live permissions')
+    prepare_bootstrap();suite('creation_protocol')
+    run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','browser_creation::real_creation_proposal_fee_refusal_contract','--nocapture'],kind='behaviour',name='native pinned Governance economics repair and typed fee refusal; not II authority')
+
+def creation_browser():
+    prepare_bootstrap();prepare()
+    for case in ['real_ii_recoverable_creation_and_ledger_recovery','real_ii_production_creation_finalisation_and_subsequent_management']:
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact',case,'--nocapture'],kind='behaviour',name='creation signed browser:'+case)
+    completed_suites.add('creation_browser')
+
+def creation_canonical():
+    if not source_is_stable():raise RuntimeError('commit unchanged source before canonical creation qualification')
+    directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT/'canonical-a'
+    release=directory/'bootstrap'
+    manifest=json.loads((release/'manifest.json').read_text())
+    wasm=release/'bootstrap.wasm'
+    if hashlib.sha256(wasm.read_bytes()).hexdigest()!=manifest['sha256']:raise RuntimeError('canonical bootstrap digest mismatch')
+    frontend=json.loads((directory/'asset-manifest.json').read_text())
+    embedded=directory/'frontend'/frontend['bootstrap.wasm'].removeprefix('/')
+    if embedded.read_bytes()!=wasm.read_bytes():raise RuntimeError('canonical certified bootstrap bytes differ')
+    run(['python3','tools/scripts/verify_artifact.py',str(wasm),'bootstrap'],name='canonical bootstrap exact production exports')
+    candid=run(['candid-extractor',str(wasm)],name='canonical bootstrap runtime Candid extraction')
+    runtime=OUT/'canonical-bootstrap.did';runtime.write_text(candid)
+    run([ROOT/'.cache/tools/didc','check','--strict',runtime,ROOT/'dendrite/canisters/bootstrap/bootstrap.did'],name='canonical bootstrap exact Candid compatibility')
+    previous={key:os.environ.get(key) for key in ('DENDRITE_BOOTSTRAP_RELEASE_DIR','DENDRITE_BOOTSTRAP_TEST_WASM','DENDRITE_TEST_WASM')}
+    try:
+        os.environ.update(DENDRITE_BOOTSTRAP_RELEASE_DIR=str(release),DENDRITE_BOOTSTRAP_TEST_WASM=str(wasm),DENDRITE_TEST_WASM=str(directory/'dendrite.wasm'))
+        prepare_bootstrap();provision()
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test','creation_protocol','--','--ignored','--exact','real_production_creation_registration_rehearsal_teardown_and_post_final_management','--nocapture'],kind='behaviour',name='canonical bootstrap real production creation')
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_production_creation_finalisation_and_subsequent_management','--nocapture'],kind='behaviour',name='canonical bootstrap full signed creation and interrupted finalisation')
+    finally:
+        for key,value in previous.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+    if not source_is_stable():raise RuntimeError('source changed during canonical creation')
+    (OUT/'tested-creation-manifest.json').write_text(json.dumps({'source':SOURCE_COMMIT,'source_tree_sha256':SOURCE_TREE_HASH,'bootstrap':manifest,'canonical_service_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'browser_classification':'compiled local-origin UI with recorded test-only SDK transport/window lifetime for native Chrome passkeys; independent fresh genuine II delegations; exact canonical bootstrap bytes and replica checks','gates':[g for g in results if g['name'].startswith('canonical bootstrap')]},sort_keys=True,indent=2)+'\n')
+    completed_suites.add('creation_canonical')
 
 def provision():
     pins=json.loads((ROOT/'protocol-pins.json').read_text())
@@ -169,7 +231,7 @@ def public_compatibility():
             'old_response_decoders_require_update':True,'subtyping_diagnostic':p.stdout+p.stderr,
             'historical_interface_sha256':hashlib.sha256(old.read_bytes()).hexdigest()}
     (OUT/'interface-compatibility.json').write_text(json.dumps(report,indent=2)+'\n')
-    log_name=sys.argv[1]+'-interface-compatibility.log'
+    log_name=str(ATTEMPT.relative_to(OUT)/'interface-compatibility.log')
     log=json.dumps(report,indent=2)+'\n';(OUT/log_name).write_text(log)
     results.append({'name':'public request compatibility and explicit response extension boundary','kind':'validator','exit_code':0,'evidence':'interface-compatibility.json','log':log_name,'log_sha256':hashlib.sha256(log.encode()).hexdigest()})
     save()
@@ -195,7 +257,7 @@ def unit():
 
 def suite(target):
     prepare()
-    if target in ('protocol','capacity'):
+    if target in ('protocol','capacity','creation_protocol'):
         listing=run(['cargo','test','--locked','-p','quorum-pocketic','--test',target,'--','--ignored','--list'],name='ignored '+target+' discovery')
         names=re.findall(r'(?m)^([A-Za-z0-9_]+): test$',listing)
         if not names:raise RuntimeError('required ignored protocol suite absent')
@@ -217,9 +279,9 @@ def production():
 
 def canonical_artifact():
     prepare()
-    artifact=ROOT/'dist/release/d_quorum.wasm'
+    artifact=DQ_CANONICAL/'release/d_quorum.wasm'
     if not artifact.exists():raise RuntimeError('canonical candidate missing; run reproducible first')
-    manifest=json.loads((ROOT/'dist/release/manifest.json').read_text())
+    manifest=json.loads((DQ_CANONICAL/'release/manifest.json').read_text())
     if hashlib.sha256(artifact.read_bytes()).hexdigest()!=manifest['artifacts']['d_quorum.wasm']:raise RuntimeError('canonical artifact checksum mismatch')
     for path,digest in manifest['source_files'].items():
         if path.startswith(('canisters/','crates/','vendor/','candid/')) or path in ('Cargo.toml','Cargo.lock','rust-toolchain.toml','Dockerfile.repro'):
@@ -303,6 +365,7 @@ def integration_negative_controls():
     directory=OUT/'negative-controls';directory.mkdir(exist_ok=True)
     historical='52b546f93734f51d5719a7527b7e4aa4da5e1024'
     cases=[('manager-metadata','transaction.js','const listKnownCandidates =','export function preparePrimaryFollow','export function preparePrimaryFollow','manager-metadata.test.js','replicated manager preparation uses scalar registration'),('ii-parent-scope','auth.js','export function validateGovernanceDelegation','export function createBrowserAuthSession','export async function deriveGovernanceSession','auth.test.js','genuine SDK child preserves root principal signatures scope and parent expiry')]
+    cases.append(('creation-unscoped-signer','auth.js','export function validateProvisioningDelegation','export async function deriveProvisioningSession','export async function deriveProvisioningSession','auth.test.js','named provisioning children retain P and exact limited destinations without changing management login'))
     receipts=[]
     for name,module,start,old_end,new_end,test,pattern in cases:
         with tempfile.TemporaryDirectory(dir=ROOT/'.cache/tmp') as temporary:
@@ -318,16 +381,20 @@ def integration_negative_controls():
             positive_name=name+'-positive.log';(directory/positive_name).write_text(positive_log)
             if positive.returncode!=0 or not re.search(r'(?m)^[ℹ#] pass 1$',positive_log) or pattern not in positive_log:
                 raise RuntimeError('historical control positive test did not execute successfully; install locked frontend dependencies: '+name)
-            current=target.read_text();old=subprocess.check_output(['git','show',historical+':dendrite/canisters/dendrite/web/src/'+module],text=True)
-            replacement=old[old.index(start):old.index(old_end,old.index(start))]
+            current=target.read_text()
+            if name=='creation-unscoped-signer':
+                replacement='export function validateProvisioningDelegation(identity, profile, bootstrapCanisterId) { return Object.freeze({ principal: identity.getPrincipal(), signingIdentity: identity, profile, bootstrapCanisterId, validate() { return true; } }); }\n\n'
+            else:
+                old=subprocess.check_output(['git','show',historical+':dendrite/canisters/dendrite/web/src/'+module],text=True)
+                replacement=old[old.index(start):old.index(old_end,old.index(start))]
             target.write_text(current[:current.index(start)]+replacement+current[current.index(new_end,current.index(start)):])
             process=subprocess.run(command,capture_output=True,text=True)
             log=process.stdout+process.stderr;(directory/(name+'.log')).write_text(log)
             named_failure=re.search(r'(?m)^(?:✖ |not ok \d+ - )'+re.escape(pattern),log)
             if process.returncode!=1 or not re.search(r'(?m)^[ℹ#] fail 1$',log) or not named_failure:raise RuntimeError('historical mutation did not fail its named regression: '+name)
-            receipts.append({'name':name,'classification':'isolated historical helper; positive prerequisite then one expected named failing test; validator, excluded from behavioural execution counts','historical_source':historical,'historical_helper_sha256':hashlib.sha256(replacement.encode()).hexdigest(),'current_test_sha256':hashlib.sha256((ROOT/'dendrite/canisters/dendrite/web/test'/test).read_bytes()).hexdigest(),'expected_failed_test':pattern,'positive_log':positive_name,'positive_log_sha256':hashlib.sha256(positive_log.encode()).hexdigest(),'log':name+'.log','log_sha256':hashlib.sha256(log.encode()).hexdigest(),'expected_failure_observed':True})
+            receipts.append({'name':name,'classification':'isolated helper mutation; positive prerequisite then one expected named failing test; validator, excluded from behavioural execution counts','historical_source':None if name=='creation-unscoped-signer' else historical,'historical_helper_sha256':hashlib.sha256(replacement.encode()).hexdigest(),'current_test_sha256':hashlib.sha256((ROOT/'dendrite/canisters/dendrite/web/test'/test).read_bytes()).hexdigest(),'expected_failed_test':pattern,'positive_log':positive_name,'positive_log_sha256':hashlib.sha256(positive_log.encode()).hexdigest(),'log':name+'.log','log_sha256':hashlib.sha256(log.encode()).hexdigest(),'expected_failure_observed':True})
     (directory/'receipts.json').write_text(json.dumps({'source':SOURCE_COMMIT,'controls':receipts},indent=2)+'\n')
-    print('Both isolated historical authentication and metadata helpers fail their positive regressions as required.')
+    print('Historical authentication/metadata helpers and the isolated unscoped provisioning mutation fail their positive regressions as required.')
     completed_suites.add('integration_negative_controls')
 
 def component_dendrite():
@@ -360,9 +427,27 @@ def component_dendrite_canonical():
     if not source_is_stable():raise RuntimeError('source changed during Dendrite canonical builds')
     component_manifest={'source_commit':SOURCE_COMMIT,'component':'dendrite','import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','source_files':{path.removeprefix('dendrite/'):digest for path,digest in SOURCE_FILES.items() if path.startswith('dendrite/')},'platform':'linux/amd64','configuration':(directory/'canonical-a/build-configuration.txt').read_text(),'artifacts':{str(path.relative_to(directory/'canonical-a')):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((directory/'canonical-a').rglob('*')) if path.is_file()},'candid_sha256':hashlib.sha256((directory/'dendrite.did').read_bytes()).hexdigest(),'two_clean_builds_identical':True,'scope':'component source/configuration/artifact identity; qualification and deployment binding are separately required'}
     (directory/'manifest.json').write_text(json.dumps(component_manifest,sort_keys=True,indent=2)+'\n')
-    release=ROOT/'dendrite/dist/release'
-    shutil.copytree(directory/'canonical-a',release,dirs_exist_ok=True)
-    run(['sh','-c','cd dendrite && tools/scripts/verify-release-artifacts.sh'],name='current candidate deployment binding verified locally without network writes')
+    # Preserve the existing production recipe and operator release directory.
+    # This task produces an explicitly separate, undeployed candidate binding.
+    release_relative='dist/candidates/'+SOURCE_COMMIT
+    release=ROOT/'dendrite'/release_relative
+    shutil.copytree(directory/'canonical-a',release)
+    recipe=directory.parent/'candidate.icp.yaml'
+    content=(ROOT/'dendrite/icp.yaml').read_text()
+    content=re.sub(r'(?m)^(\s*path:\s*).+$',lambda m:m[1]+release_relative+'/dendrite.wasm',content,count=1)
+    candidate_hash=hashlib.sha256((release/'dendrite.wasm').read_bytes()).hexdigest()
+    content=re.sub(r'(?m)^(\s*sha256:\s*).+$',lambda m:m[1]+candidate_hash,content,count=1)
+    recipe.write_text(content)
+    previous={key:os.environ.get(key) for key in ('DENDRITE_RELEASE_DIRECTORY','DENDRITE_RECIPE_FILE')}
+    try:
+        os.environ.update(DENDRITE_RELEASE_DIRECTORY=release_relative,DENDRITE_RECIPE_FILE=str(recipe))
+        run(['sh','-c','cd dendrite && tools/scripts/verify-release-artifacts.sh'],name='current candidate deployment binding verified locally without network writes')
+    finally:
+        for key,value in previous.items():
+            if value is None:os.environ.pop(key,None)
+            else:os.environ[key]=value
+    component_manifest.update(candidate_directory=str(release.relative_to(ROOT)),candidate_recipe_sha256=hashlib.sha256(recipe.read_bytes()).hexdigest(),deployed=False)
+    (directory/'manifest.json').write_text(json.dumps(component_manifest,sort_keys=True,indent=2)+'\n')
     completed_suites.add('component_dendrite_canonical')
 
 def system_protocol():
@@ -373,9 +458,9 @@ def system_protocol():
 
 def system_protocol_canonical():
     if SOURCE_DIRTY:raise RuntimeError('commit source before canonical pair qualification')
-    manifest=json.loads((ROOT/'dist/release/manifest.json').read_text())
+    manifest=json.loads((DQ_CANONICAL/'release/manifest.json').read_text())
     if manifest['source_commit']!=SOURCE_COMMIT:raise RuntimeError('canonical D-QUORUM source mismatch')
-    dq=ROOT/'dist/release/d_quorum.wasm'
+    dq=DQ_CANONICAL/'release/d_quorum.wasm'
     if hashlib.sha256(dq.read_bytes()).hexdigest()!=manifest['artifacts']['d_quorum.wasm']:raise RuntimeError('canonical D-QUORUM hash mismatch')
     directory=ROOT/'dist/dendrite-canonical'/SOURCE_COMMIT/'canonical-a'
     for line in (directory/'SHA256SUMS').read_text().splitlines():
@@ -391,7 +476,7 @@ def system_protocol_canonical():
         for key,value in previous.items():
             if value is None:os.environ.pop(key,None)
             else:os.environ[key]=value
-    pair={'root_source':SOURCE_COMMIT,'dendrite_import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','dquorum_manifest':'dist/release/manifest.json','dendrite_release':'dist/dendrite-canonical/'+SOURCE_COMMIT+'/canonical-a','dquorum_wasm_sha256':hashlib.sha256(dq.read_bytes()).hexdigest(),'dendrite_wasm_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'dquorum_candid_sha256':hashlib.sha256((ROOT/'candid/d_quorum.did').read_bytes()).hexdigest(),'dendrite_candid_sha256':hashlib.sha256((directory.parent/'dendrite.did').read_bytes()).hexdigest(),'protocol_pins_sha256':hashlib.sha256((ROOT/'protocol-pins.json').read_bytes()).hexdigest(),'evaluator':'nns-dendrite/1.1-draft; unchanged vendored source','tested_pair':'two canonical shared real-protocol cases; signed-browser evidence is a separate mandatory lane on this same source','qualification_scope':'canonical backend pair; complete qualification requires integrated-acceptance.json','browser_configuration':'dist/evidence/browser-system/team-management/local-build.json'}
+    pair={'root_source':SOURCE_COMMIT,'dendrite_import_source':'b9bacd5e97eded6b5bcb0ad37d0a30b8a4ecb291','dquorum_manifest':str((DQ_CANONICAL/'release/manifest.json').relative_to(ROOT)),'dendrite_release':'dist/dendrite-canonical/'+SOURCE_COMMIT+'/canonical-a','dquorum_wasm_sha256':hashlib.sha256(dq.read_bytes()).hexdigest(),'dendrite_wasm_sha256':hashlib.sha256((directory/'dendrite.wasm').read_bytes()).hexdigest(),'dquorum_candid_sha256':hashlib.sha256((ROOT/'candid/d_quorum.did').read_bytes()).hexdigest(),'dendrite_candid_sha256':hashlib.sha256((directory.parent/'dendrite.did').read_bytes()).hexdigest(),'protocol_pins_sha256':hashlib.sha256((ROOT/'protocol-pins.json').read_bytes()).hexdigest(),'evaluator':'nns-dendrite/1.1-draft; unchanged vendored source','tested_pair':'two canonical shared real-protocol cases; signed-browser evidence is a separate mandatory lane on this same source','qualification_scope':'canonical backend pair; complete qualification requires integrated-acceptance.json','browser_configuration':'dist/evidence/browser-system/team-management/local-build.json'}
     browser_directory=OUT/'browser-system/team-management'
     local=json.loads((browser_directory/'local-build.json').read_text())
     if local['root_source']!=SOURCE_COMMIT or local['source_dirty']:raise RuntimeError('local-browser artifact source differs from canonical pair')
@@ -436,11 +521,22 @@ def integration_inventory():
     completed_suites.add('integration_inventory')
 
 def system_browser():
-    prepare()
+    prepare_bootstrap();prepare()
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_capability','--','--ignored','--exact','actual_ii_page_and_virtual_webauthn_capability','--nocapture'],kind='behaviour',name='actual II browser capability')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_scoped_child_is_enforced_by_replica','--nocapture'],kind='behaviour',name='actual II child delegation replica scope enforcement')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_closed_popup_does_not_publish_session','--nocapture'],kind='behaviour',name='actual II popup cancellation and bootstrap cleanup')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_browser_wrong_provider_never_publishes_a_transaction_session','--nocapture'],kind='behaviour',name='actual local provider misconfiguration fails closed')
+    for repeat in range(1,4):
+        try:
+            run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_creation_authentication_lifecycle','--nocapture'],kind='behaviour',name=f'fresh real-II production authentication lifecycle {repeat}/3; no scenario retries')
+        finally:
+            # Each fresh world replaces the current pointer. Retain its public
+            # evidence before the next world starts, including failed attempts.
+            destination=ATTEMPT/f'authentication-repeat-{repeat}'
+            destination.mkdir(exist_ok=False)
+            for path in (OUT/'browser-system/creation-auth').glob('*'):
+                if path.is_file() and path.suffix in ('.json','.log','.png'):
+                    shutil.copyfile(path,destination/path.name)
     completed_suites.add('system_browser_safety')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_ii_compiled_frontend_known_managers_and_signed_governance','--nocapture'],kind='behaviour',name='actual II and signed real Governance team management')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','real_local_anonymous_browser_preserves_responsive_and_certificate_checks','--nocapture'],kind='behaviour',name='preserved responsive anonymous browser against local real protocol')
@@ -481,7 +577,7 @@ def integrated_acceptance():
     report={'qualified':False,'source':SOURCE_COMMIT,'source_tree_sha256':SOURCE_TREE_HASH,'source_dirty':SOURCE_DIRTY,'status':'running','failures':[]}
     report_path=OUT/'integrated-acceptance.json'
     report_path.write_text(json.dumps(report,indent=2)+'\n')
-    for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical)]:
+    for name,gate in [('integration_inventory',integration_inventory),('acceptance',full),('component_dendrite',component_dendrite),('system_protocol',system_protocol),('system_browser',system_browser),('creation_pure',creation_pure),('creation_recording',creation_recording),('creation_protocol',creation_protocol),('creation_browser',creation_browser),('component_dendrite_canonical',component_dendrite_canonical),('system_protocol_canonical',system_protocol_canonical),('creation_canonical',creation_canonical)]:
         print('Integrated lane: '+name,flush=True)
         try:
             if not source_is_stable():raise RuntimeError('source changed before '+name)
@@ -501,8 +597,9 @@ def integrated_acceptance():
 
 def integrated_readiness():
     # Aggregate existing lane receipts. Never rerun or substitute a weaker suite.
-    directory=ROOT/'dist/ci-evidence'
+    directory=pathlib.Path(os.environ.get('D_QUORUM_CI_EVIDENCE_DIR',str(ROOT/'dist/ci-evidence'))).resolve()
     required=['unit','mock','hardening','protocol','production','scale','capacity','coverage','security','integration_inventory','component_dendrite','system_protocol','system_browser','component_dendrite_canonical','reproducible','canonical_artifact','system_protocol_canonical']
+    required+=['creation_pure','creation_recording','creation_protocol','creation_browser','creation_canonical']
     gates=[];completed=set();failures=[]
     for lane in required:
         matches=list(directory.rglob(lane+'-run.json'))
@@ -527,7 +624,7 @@ def integrated_readiness():
     (OUT/'integrated-readiness.json').write_text(json.dumps(verdict,indent=2)+'\n')
     if not verdict['qualified']:raise RuntimeError('Required hosted evidence is incomplete; inspect integrated-readiness.json')
 
-COMMANDS={'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
+COMMANDS={'creation_canonical':creation_canonical,'creation_browser':creation_browser,'creation_pure':creation_pure,'creation_recording':creation_recording,'creation_protocol':creation_protocol,'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
 def main():
     global RUN_STATUS
     try:

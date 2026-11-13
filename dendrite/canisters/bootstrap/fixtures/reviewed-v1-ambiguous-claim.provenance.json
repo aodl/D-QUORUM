@@ -1,0 +1,12 @@
+{
+  "classification": "actual reviewed V1 executable's persisted pre-await image; real Governance claim retained while its callback checkpoint was restored; 31/90 day native protocol observations, not browser II evidence",
+  "controller": "dllsh-pd777-77776-qaaaa-cai",
+  "days_waited": 90,
+  "image_sha256": "25e96694cd2984f061f3781cb0bc7f3d128a36d20acf67c7851faa99b16b94a5",
+  "input_qualified_source": "97343f8dbb714a0a12f90a474805518c83017184",
+  "neuron": 6867473971460867342,
+  "nonce": 9041,
+  "owner": "cl6up-txkjc-krykn-njfvr-rrwrv-grm55-un3op-te4ct-tzy6q-epqbq-jqe",
+  "stable_version": 1,
+  "wasm_sha256": "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265"
+}

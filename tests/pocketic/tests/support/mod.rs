@@ -535,12 +535,28 @@ struct IiFrontendConfig {
     dummy_auth: Option<Option<IiDummyAuth>>,
     dev_csp: Option<bool>,
 }
+// Both browser fixtures must use the same bounded loopback port selection.
+pub fn browser_port() -> u16 {
+    let port = std::env::var("DENDRITE_TEST_HTTP_PORT")
+        .unwrap_or_else(|_| "4943".into())
+        .parse()
+        .expect("local browser port");
+    assert!(
+        [4943, 4944].contains(&port),
+        "unsupported local browser port"
+    );
+    port
+}
 pub fn configure_real_ii(pic: &PocketIc) {
+    configure_real_ii_at_port(pic, browser_port());
+}
+pub fn configure_real_ii_at_port(pic: &PocketIc, port: u16) {
+    assert!([4943, 4944].contains(&port));
     let backend = Principal::from_text("rdmx6-jaaaa-aaaaa-aaadq-cai").unwrap();
     let frontend = ii_frontend_id();
     let origins = vec![
-        "http://id.ai.localhost:4943".into(),
-        format!("http://{frontend}.localhost:4943"),
+        format!("http://id.ai.localhost:{port}"),
+        format!("http://{frontend}.localhost:{port}"),
     ];
     let mut modules = serde_json::Map::new();
     for (id, artifact_name) in [
@@ -578,7 +594,7 @@ pub fn configure_real_ii(pic: &PocketIc) {
                 bytes,
                 encode_one(IiFrontendConfig {
                     backend_canister_id: backend,
-                    backend_origin: format!("http://{backend}.localhost:4943"),
+                    backend_origin: format!("http://{backend}.localhost:{port}"),
                     related_origins: Some(origins.clone()),
                     fetch_root_key: Some(true),
                     dummy_auth: Some(None),

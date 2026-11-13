@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "component": "dendrite-bootstrap",
+  "sha256": "a1a523448ed551ce89fb40fc070618bde97ac43ac324d215d93d2138c299abe9",
+  "bytes": 1462294,
+  "candid_sha256": "a85d32960d314a5945c427ee0e6780b6d9057ec526fe5affe55931ed65726bd8",
+  "source_fingerprint": "884c1a1f97f3d93bbe23d579eb70964b6f7d688da94672e9c99943d242f18feb",
+  "policy": {
+    "version": 1,
+    "standard_version": "nns-dendrite/1.1-draft",
+    "source_revision": "d55a0f4d4edfabe49d8fd543aff473084cb741f2",
+    "initial_claim_lock_seconds": "604800",
+    "production_lock_seconds": "63115200",
+    "minimum_cycle_reserve": "100000000000",
+    "recognised_topics": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "default_neuron_ids": [
+      "2947465672511369",
+      "18363645821499695760",
+      "18422777432977120264"
+    ]
+  },
+  "wasm_path": "/generated/bootstrap.a1a523448ed551ce.wasm"
+}

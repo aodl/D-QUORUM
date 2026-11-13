@@ -314,7 +314,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -998,7 +998,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -1616,7 +1616,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -2227,7 +2227,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -2847,7 +2847,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is enabled because not_for_profit is true. The manager group could vote to start dissolving the neuron.",
+          "message": "The not_for_profit setting is true; the Standard requires false. This flag is not a universal dissolution or economic-operation lock.",
           "observed": "not_for_profit = true",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -3465,7 +3465,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -4083,7 +4083,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -4701,7 +4701,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -5319,7 +5319,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -5922,7 +5922,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -6649,7 +6649,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -7295,7 +7295,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -7924,7 +7924,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -8536,7 +8536,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -9147,7 +9147,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -9767,7 +9767,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -10314,7 +10314,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -10924,7 +10924,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -11562,7 +11562,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -12179,7 +12179,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -12794,7 +12794,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -13416,7 +13416,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -14066,7 +14066,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -14680,7 +14680,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -15300,7 +15300,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -15920,7 +15920,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -16538,7 +16538,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -17156,7 +17156,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -17789,7 +17789,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -18440,7 +18440,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -19058,7 +19058,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -19676,7 +19676,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -20294,7 +20294,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -20922,7 +20922,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -21549,7 +21549,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,
@@ -22162,7 +22162,7 @@
         },
         {
           "expected": "not_for_profit = false",
-          "message": "Proposal-based dissolution is disabled because not_for_profit is false.",
+          "message": "The required not_for_profit setting is false. Governance permissions still depend on the command.",
           "observed": "not_for_profit = false",
           "related_neuron_ids": [],
           "relevant_topic": null,

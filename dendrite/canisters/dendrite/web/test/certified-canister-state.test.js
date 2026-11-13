@@ -121,3 +121,15 @@ test("production root-key policy cannot be weakened", () => {
     fetchRootKey: true,
   }), /must not fetch a root key/);
 });
+
+test("certified readiness data and malformed time cannot become partial teardown proof",async()=>{
+ const base=certificate(),wrap=(field,value,status=LookupPathStatus.Found)=>({lookup_path(path){return label(path.at(-1))===field?{status,value}:base.lookup_path(path);}});
+ const marker=new Uint8Array(32).fill(7);assert.deepEqual(normalizeCertifiedCanisterState(wrap('certified_data',marker),controller).certifiedData,marker);
+ assert.throws(()=>normalizeCertifiedCanisterState(wrap('certified_data',new Uint8Array(33)),controller),/Certified data/);
+ for(const value of [new Uint8Array(),new Uint8Array(11),Uint8Array.of(0x80),Uint8Array.of(0x81,0),Uint8Array.of(0,1)])assert.throws(()=>normalizeCertifiedCanisterState(wrap('time',value),controller),/time/);
+ assert.throws(()=>normalizeCertifiedCanisterState(wrap('time',undefined,LookupPathStatus.Unknown),controller),/Certificate time is absent/);
+ assert.throws(()=>decodeCertifiedControllers(Cbor.encode('not an array')),/malformed/);
+ // An indefinite array encodes the same values, but is not canonical CBOR.
+ assert.throws(()=>decodeCertifiedControllers(Uint8Array.of(0x9f,0xff)),/canonically/);
+ const reader=createCertifiedCanisterStateReader({host:'http://127.0.0.1:4944',fetchRootKey:true,createAgent:async()=>({rootKey:undefined})});await assert.rejects(()=>reader.read(controller),/root key/);assert.equal(reader.cache.size,0);reader.clear();
+});

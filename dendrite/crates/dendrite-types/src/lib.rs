@@ -403,11 +403,11 @@ pub fn evaluate(
         now,
         "DENDRITE-CONTROL-005",
         target.not_for_profit == Some(false),
-        "Proposal-based dissolution is disabled because not_for_profit is false.",
+        "The required not_for_profit setting is false. Governance permissions still depend on the command.",
         if target.not_for_profit == Some(true) {
-            "Proposal-based dissolution is enabled because not_for_profit is true. The manager group could vote to start dissolving the neuron.".into()
+            "The not_for_profit setting is true; the Standard requires false. This flag is not a universal dissolution or economic-operation lock.".into()
         } else {
-            "The not_for_profit setting was unavailable, so proposal-based dissolution could not be assessed.".into()
+            "The required not_for_profit setting was unavailable.".into()
         },
         target
             .not_for_profit
@@ -636,7 +636,7 @@ pub fn evaluate(
         if unavailable {
             result.status = RuleStatus::Indeterminate;
             result.message = if result.rule_id == "DENDRITE-CONTROL-005" {
-                "The not_for_profit setting was unavailable, so proposal-based dissolution could not be assessed.".into()
+                "The required not_for_profit setting was unavailable.".into()
             } else {
                 format!("{}; mandatory evidence was unavailable", result.message)
             };

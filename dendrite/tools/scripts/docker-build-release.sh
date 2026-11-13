@@ -51,6 +51,15 @@ output_dir=${DENDRITE_RELEASE_OUTPUT_DIR:-dist/release}
 export_dir=$(mktemp -d)
 trap 'find "$export_dir" -type f -delete; find "$export_dir" -depth -type d -empty -delete' EXIT HUP INT TERM
 
+# Export only committed source. Ignored operator files never enter Docker's
+# build context, regardless of a future ignore-pattern omission.
+[ -z "$(git status --porcelain)" ] || { echo "canonical build requires a clean source revision" >&2; exit 1; }
+source_prefix=$(git rev-parse --show-prefix)
+repository_root=$(git rev-parse --show-toplevel)
+source_tree=HEAD
+if [ -n "$source_prefix" ]; then source_tree="HEAD:${source_prefix%/}"; fi
+git -C "$repository_root" archive --format=tar --output "$export_dir/source.tar" "$source_tree"
+
 docker --context "$docker_context" buildx build \
   --builder "$buildx_builder" \
   --platform linux/amd64 \
@@ -63,7 +72,7 @@ docker --context "$docker_context" buildx build \
   --build-arg "DENDRITE_ALTERNATIVE_ORIGINS_JSON=$DENDRITE_ALTERNATIVE_ORIGINS_JSON" \
   --build-arg "DENDRITE_API_HOST=$DENDRITE_API_HOST" \
   --build-arg "DENDRITE_IDENTITY_PROVIDER=$DENDRITE_IDENTITY_PROVIDER" \
-  .
+  - < "$export_dir/source.tar"
 
 [ -f "$export_dir/dendrite.wasm" ]
 [ -d "$export_dir/frontend" ]
@@ -77,6 +86,7 @@ fi
 mkdir -p "$output_dir"
 cp "$export_dir/dendrite.wasm" "$export_dir/asset-manifest.json" "$export_dir/build-configuration.txt" "$output_dir/"
 cp -R "$export_dir/frontend" "$output_dir/frontend"
+cp -R "$export_dir/bootstrap" "$output_dir/bootstrap"
 (
   cd "$output_dir"
   find . -type f ! -name SHA256SUMS -printf '%P\0' |

@@ -1,0 +1,9 @@
+{
+  "classification": "Public V1 recovery receipt from the genuine canonical signed-II browser journey; no credentials or signed delegation chains",
+  "qualified_source": "97343f8dbb714a0a12f90a474805518c83017184",
+  "review_bundle_sha256": "82ae2336edcd57d899059486b07992fb31333b8cfaf790c8dea828cc1dfa2e3c",
+  "member": "./dist/creation-qualification/final-97343f8dbb714a0a12f90a474805518c83017184/canonical-signed-browser-evidence/creation-production/creation-code-removed.json",
+  "receipt_sha256": "62b9906fad76c5ee7762ca3ebe5448c915c70d0bad3834e19a10dcffa0e92987",
+  "bootstrap_sha256": "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265",
+  "verification": "Actual SDK BLS/root/delegation/canister-range verification; simulated later wall clocks do not establish fresh current authority or new browser permissions"
+}

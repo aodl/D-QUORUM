@@ -122,12 +122,12 @@ export function buildOutcomeExplanation({
   if (ruleId === "DENDRITE-CONTROL-005") {
     const setting = option(report.target)?.not_for_profit?.[0];
     if (status === "Pass") {
-      return "Proposal-based dissolution is disabled because not_for_profit is false.";
+      return "The required not_for_profit setting is false. Governance permissions still depend on the command.";
     }
     if (status === "Fail" && setting === true) {
-      return "Proposal-based dissolution is enabled because not_for_profit is true. The manager group could vote to start dissolving the neuron.";
+      return "The not_for_profit setting is true; the Standard requires false. This flag is not a universal dissolution or economic-operation lock.";
     }
-    return "The not_for_profit setting was unavailable, so proposal-based dissolution could not be assessed.";
+    return "The required not_for_profit setting was unavailable.";
   }
   if (status === "Fail" && observedItems.length && expectedItems.length) {
     return `${observedItems.join("; ")}; expected ${expectedItems.join("; ")}.`;

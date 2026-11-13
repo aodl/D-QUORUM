@@ -15,4 +15,5 @@ type DendriteError = variant { InvalidNeuronId : text; AnalysisFailed : text; Gl
 type HeaderField = record { text; text };
 type HttpRequest = record { method : text; url : text; headers : vec HeaderField; body : blob; certificate_version : opt nat16 };
 type HttpResponse = record { status_code : nat16; headers : vec HeaderField; body : blob; upgrade : opt bool };
-service : () -> { check_neuron : (nat64) -> (variant { Ok : ComplianceReport; Err : DendriteError }); http_request : (HttpRequest) -> (HttpResponse) query }
+type ControllerObservation = record { neuron_id : nat64; controller : principal; total_num_changes : nat64; module_hash : opt blob; controllers : vec principal; checked_at_timestamp_seconds : nat64 };
+service : () -> { controller_observation : (nat64) -> (variant { Ok : ControllerObservation; Err : DendriteError }); check_neuron : (nat64) -> (variant { Ok : ComplianceReport; Err : DendriteError }); http_request : (HttpRequest) -> (HttpResponse) query }

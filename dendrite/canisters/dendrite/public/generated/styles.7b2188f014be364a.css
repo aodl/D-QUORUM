@@ -491,3 +491,18 @@ table { width: 100%; border-collapse: collapse; }
   .rule-filter[aria-pressed="true"] { outline: 2px solid Highlight; }
   :focus-visible { outline-color: Highlight; }
 }
+/* Creation keeps authority, costs and recovery visible at narrow page widths. */
+.creation-workflow { max-width: 58rem; margin-inline: auto; }
+.creation-workflow section, .creation-workflow details { margin-block: 1.25rem; }
+.creation-workflow form, .creation-workflow section { display: grid; gap: .75rem; }
+.creation-workflow label { display: grid; gap: .35rem; }
+.creation-workflow label:has(input[type="checkbox"]) { display: block; }
+.creation-workflow input:not([type="checkbox"]), .creation-workflow select, .creation-workflow textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.creation-workflow textarea { min-height: 6rem; font: inherit; }
+.creation-workflow code, .creation-workflow pre { overflow-wrap: anywhere; white-space: pre-wrap; }
+.creation-workflow pre { max-height: 26rem; overflow: auto; }
+.creation-workflow button { width: fit-content; max-width: 100%; white-space: normal; }
+.creation-workflow summary { cursor: pointer; padding-block: .5rem; }
+.creation-workflow :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.creation-account { min-width: 0; }
+.creation-review { border: 1px solid currentColor; padding: 1rem; border-radius: .5rem; }

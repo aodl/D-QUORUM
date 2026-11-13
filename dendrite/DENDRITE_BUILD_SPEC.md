@@ -1,6 +1,6 @@
 # Dendrite build specification
 
-**Status:** normative browser-to-NNS management tranche
+**Status:** normative browser-to-NNS management and per-neuron creation tranche
 
 **Standard identifier:** `nns-dendrite/1.1-draft`
 
@@ -25,8 +25,14 @@ assistance run only in the browser through one fixed NNS Governance actor. Inter
 Identity supplies an app-origin parent. The pinned SDK appends a genuinely signed
 Governance-only child before exposing the transaction signer; all ancestor restrictions
 remain effective. Dendrite never receives or reconstructs a delegation or authenticated
-principal. Proposal history, reward calculation or
-distribution, timers, indexers, analytics, and background work remain out of scope.
+principal. The creation workflow may provision one temporary bootstrap canister per
+new neuron, retaining bounded state until its code and controllers are removed. It
+is not a shared factory, wallet, treasury, signing proxy, or application database.
+Dendrite itself remains stateless and D-QUORUM's independent automation is unchanged.
+General proposal-history browsing, new reward policy, timers, indexers, analytics,
+and background work remain out of scope. Creation recovery may explicitly search
+one bounded page of actual Governance proposals for its original marked request;
+a possible match is not authority, proof of execution, or permission to resubmit.
 
 ## 2. Fixed standard constants
 
@@ -109,9 +115,9 @@ count.
 - `DENDRITE-CONTROL-002`: Controller canister has no installed code.
 - `DENDRITE-CONTROL-003`: No principal controls the controller canister.
 - `DENDRITE-CONTROL-004`: Neuron has no hotkeys.
-- `DENDRITE-CONTROL-005`: Proposal-based dissolution is disabled. The neuron must
-  have `not_for_profit = false` so that a Neuron Management proposal cannot start
-  dissolving it.
+- `DENDRITE-CONTROL-005`: The neuron must have `not_for_profit = false`.
+  This flag restricts certain Governance proposal commands. It does not establish a
+  universal prohibition on dissolution, maturity disbursement or economic operations.
 
 ### Manager group
 
@@ -188,7 +194,7 @@ addition invalidates the batch.
 
 ## 6. Production architecture and API
 
-There is exactly one production canister, `dendrite`. It embeds deterministic frontend
+There is exactly one long-lived Dendrite service, `dendrite`. It embeds deterministic frontend
 assets, serves them through HTTP certification v2, collects fixed public evidence, and
 runs the pure rule engine.
 
@@ -197,13 +203,16 @@ Its application API is exactly:
 ```candid
 service : () -> {
   check_neuron : (nat64) -> (CheckResult);
+  controller_observation : (nat64) -> (variant { Ok : ControllerObservation; Err : DendriteError });
   http_request : (HttpRequest) -> (HttpResponse) query;
 }
 ```
 
 Generated Candid support methods do not count as application APIs. There is no cached,
-refresh, status, configuration, history, proposal, authentication, or generic outbound
+refresh, configuration, proposal, authentication, stored-history or generic outbound
 method. `check_neuron` is an update call and its response is the trusted live result.
+`controller_observation` is the bounded replicated read described below; it exposes
+the actual public T-to-C binding and management-history counter without storing it.
 Dynamic compliance certification and client-side Merkle proofs do not exist.
 
 The canister has no stable application state. It stores no report, digest, configuration,
@@ -273,6 +282,48 @@ Return one bounded suggested delay for temporary rejection. The guard resets on 
 has no stable persistence, no per-user state, and no public counters. Each admission
 prunes in-flight entries at least 300 seconds old so a post-await trap cannot consume a
 slot indefinitely.
+
+### Per-neuron creation exception
+
+One additional deployable component type, `dendrite-bootstrap`, is permitted. Each
+instance binds actual creator caller P, one immutable creation identifier/nonce, a
+reviewed plan, a fixed return account, and at most one claimed neuron T. The canister
+principal C remains T's controller after code and controller removal. Initially C's
+exact controller list is `[P]`; P can replace its provisional code. The bootstrap
+receives no browser credentials and has no arbitrary command, recipient, target,
+upload, forwarding, factory or timer endpoint. Its bounded versioned stable state
+preserves dispatched intents across upgrades. Existing Dendrite methods/results and
+the D-QUORUM API and stable V3 remain unchanged. The additive stateless controller
+observation is required for creation's stopped-canister readiness proof.
+
+Production candidates require registration first and verified manager rehearsal,
+then explicit uninstall followed by a separate explicit empty-controller update.
+Only the two known bootstrap code/controller failures may remain at readiness; the
+unchanged evaluator supplies the actual final verdict. Recoverable one-manager test
+creations remain non-compliant and cannot enter irreversible finalisation. Imported
+non-secret receipts establish no authority and never substitute for replicated
+Governance/ledger evidence and fresh certified system state. Financial ambiguity
+retains its exact operation identity, even after deduplication windows expire.
+An explicitly selected recovery-only resume MAY use current approved installed
+code, exactly `[P]` controllers, a fresh owner-authenticated replicated original
+plan and the current public Governance C/T/account binding when historical creation
+proof is unavailable. Before dissolution or any return payment it MUST re-establish
+those bindings and the fixed return destination. It MUST NOT enable provisioning,
+plan edits, configuration, registration, code removal or controller removal. Missing
+code cannot use this path. Existing original financial identities and uncertainty
+remain binding. This exception does not relax certificate/delegation freshness or
+the historical provenance required for irreversible finalisation; P's provisional
+ability to replace code remains explicit.
+Historical transitions MUST retain signature, exact request and subnet/canister
+binding checks; their age alone MUST NOT expire a creation. Present authority and
+credentials MUST retain ordinary freshness checks. Supported historical modules
+MUST be source-reviewed static identities, never arbitrary receipt-nominated Wasm.
+The permanent staking nonce MUST remain distinct from each payment's dispatch
+identity. Definitive refusal recovery MUST prove the original request did not
+execute; missing history MUST NOT clear uncertainty. Teardown MUST disclose and
+require acknowledgement of unused controller-default ICP, including later arrivals,
+without permitting an unsolicited deposit to veto a reviewed finalisation.
+The creation contracts in `docs/architecture.md` define funding and recovery boundaries.
 The local canister clock is used only for this operational guard, including rate-window
 and in-flight expiry behavior; it is never exposed as the NNS evidence timestamp.
 
@@ -349,10 +400,11 @@ decode failure, target/dependency omission, controller Wasm/controllers, hotkeys
 `u64` round trip. Collector tests use one recording fake and assert exact calls, batches,
 early exit, and the absence of a generic destination/method boundary.
 
-PocketIC covers one compliant and one non-compliant end-to-end check with a minimal
+The verifier's PocketIC suite covers one compliant and one non-compliant end-to-end check with a minimal
 fixed-principal Governance mock, upstream rejection, real empty controller inspection
-where supported, certified landing response, and certified assets after upgrade. No
-browser automation framework is required.
+where supported, certified landing response, and certified assets after upgrade.
+Creation additionally requires the consolidated real-artifact and genuinely
+signed local-II browser lanes, including recovery and interrupted finalisation.
 
 Frontend tests cover ID parsing, the actual application bootstrap and routes, loading,
 live success/error/retry, every overall status and public error, controller evidence,
@@ -365,8 +417,9 @@ well-known bytes and certified headers, popup-compatible COOP, session restorati
 failures, exact principal display/copy, local authority roles and duplicate raw manager
 entries, recomputation on new reports, inert untrusted names, and proof that the
 Dendrite actor and request remain anonymous. Rust and PocketIC tests cover every manager
-evidence state and propagation without adding an outbound call. No browser automation
-framework is introduced.
+evidence state and propagation without adding an outbound call to the existing
+report collector. The consolidated browser harness supplies the creation acceptance
+journeys without adding a frontend framework or production automation dependency.
 
 Whole-workspace Rust line coverage must exceed 85%; frontend thresholds remain at 85%.
 Do not split modules merely to manipulate coverage.
@@ -398,11 +451,15 @@ reproducible-build, deployment, upgrade, and operator documents; do not add docu
 They must state that every check is a live update, no result/history/timer exists, no
 delegation reaches the canister, and privileged calls go browser-to-NNS Governance.
 
-Completion requires one canister, one live verification update method, no cache/stable
+Verifier completion requires one long-lived service, one live verification update method,
+the bounded stateless controller observation, no cache/stable
 application state/digest/catalogue/economics call, batches of at most 50, correct
 omission/failure/unknown semantics, official HTTP certification v2, live-only frontend,
 production dependency isolation, passing coverage/scans/PocketIC/frontend tests, and
-byte-identical clean builds.
+byte-identical clean builds. Creation completion additionally requires the temporary
+bootstrap's independently qualified artifact, stable recovery and complete signed
+journeys described in the creation contract; the verifier's prior completion does
+not qualify those new paths.
 
 The final report records commits; line/file deltas; Candid API; exact outbound methods,
 destinations, and source revision; command results and coverage; PocketIC and dependency
@@ -412,3 +469,23 @@ limitations; operator gates; and the exact browser-to-NNS capability policy.
 The anonymous-verifier tranche remains complete. The browser management tranche is
 complete only after all automated and reproducibility gates pass; popup and controlled
 transaction smoke tests remain explicit operator gates unless actually recorded.
+
+
+### Replicated controller-history observation
+
+Creation adds one read-only update, `controller_observation(neuron_id)`, to the
+stateless verifier. It derives the exact public neuron's controller through fixed
+Governance reads and returns bounded management `canister_info` observations,
+including `total_num_changes`. No arbitrary canister argument, command, credential,
+custody, creation registry or permanent onboarding state is introduced. Existing
+`check_neuron` arguments/results and all Standard predicates are preserved. The
+pre-creation Candid remains a required compatibility fixture.
+
+This extension is necessary because the pinned replica rejects direct
+`certified_data` read-state paths and `canister_version` advances during ordinary
+execution. The management history counter instead binds the sealed provenance
+across stop/code removal, and invalidates it after another controller operation.
+The browser obtains the helper's replicated, IC-certified reply, separately checks
+current certified module/controllers and reads current Governance/evaluator state.
+The helper has a separate bounded two-call operational budget; it neither consumes
+nor expands the existing full-report rate/concurrency/cycle limits.

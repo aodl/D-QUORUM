@@ -49,6 +49,14 @@ function foundBytes(certificate, certifiedPath, label) {
   return result.value;
 }
 
+// Parsing alone grants no authority. Callers must verify the certificate's BLS
+// signature before using this timestamp as evidence.
+export function readCertificateTimeNs(certificate) {
+  const value=decodeUnsignedLeb128(foundBytes(certificate,PATH_TIME,"Certificate time"));
+  if(value>0xffffffffffffffffn)throw Error("Certificate time exceeds the reviewed u64 clock.");
+  return value;
+}
+
 export function decodeCertifiedControllers(bytes) {
   let decoded;
   try {
@@ -90,6 +98,9 @@ export function normalizeCertifiedCanisterState(certificate, canisterId) {
     throw new TypeError("Certified module-hash status is ambiguous.");
   }
   const certificateTimeNanos = decodeUnsignedLeb128(foundBytes(certificate, PATH_TIME, "Certificate time"));
+  const dataLookup = certificate.lookup_path(path(principal, "certified_data"));
+  let certifiedData;
+  if(dataLookup.status===LookupPathStatus.Found){if(!(dataLookup.value instanceof Uint8Array)||dataLookup.value.length>32)throw new TypeError("Certified data is malformed.");certifiedData=new Uint8Array(dataLookup.value);}
   const certificateTimeMilliseconds = certificateTimeNanos / 1_000_000n;
   if (certificateTimeMilliseconds > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new TypeError("Certificate time is outside the supported range.");
@@ -97,6 +108,7 @@ export function normalizeCertifiedCanisterState(certificate, canisterId) {
   return Object.freeze({
     callSucceeded: true,
     moduleHash,
+    certifiedData,
     controllers: Object.freeze(controllers),
     certificateTime: new Date(Number(certificateTimeMilliseconds)).toISOString(),
   });

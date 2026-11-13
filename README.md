@@ -2,11 +2,11 @@
 
 One stateful Rust Internet Computer canister for deterministic, topic-specific Dendrite delegation and equal ICP rewards to selected neuron staking accounts.
 
-**Integration status: scoped real-II browser management and a connected economic journey are implemented; current qualification evidence is recorded in the report.** Dendrite is imported with its full history under [`dendrite/`](dendrite/README.md), retaining its own workspace, frontend, authority and release process. The earlier D-QUORUM maturity-barrier candidate remains historical evidence; see [qualification](docs/qualification.md) and [integration baseline](docs/integration-baseline.json). Installation defaults to `ObserveOnly`. Publication, deployment and activation require separate authorization.
+**Integration status: browser-led neuron creation, registration-first finalisation, scoped real-II management and connected economics are locally qualified on `97343f8dbb714a0a12f90a474805518c83017184` through all 22 required lanes.** Dendrite is imported with its full history under [`dendrite/`](dendrite/README.md), retaining its own workspace, frontend, authority and release process. The earlier D-QUORUM maturity-barrier candidate remains historical evidence; see [qualification](docs/qualification.md) and [integration baseline](docs/integration-baseline.json). Installation defaults to `ObserveOnly`. Publication, deployment and activation require separate authorization.
 
 The provisional reward policy gives **one equal net share to each distinct neuron in the latest fully applied, sufficiently fresh roster**, regardless of how many topics select it. VP ranks delegates; it does not weight payment. Managers get no additional share. Reward-receiver declarations do not redirect ICP. Review this policy before any deployment.
 
-The production workspace consists of `canisters/d_quorum`, `crates/policy`, `crates/accounting`, `crates/ic_clients`, and the unchanged vendored Dendrite evaluator. Test-only recording canisters live in `tests/mocks`; real and mock PocketIC suites live in `tests/pocketic`. The nested Dendrite workspace has its existing verifier/asset canister and team-management frontend. The canisters remain independently deployable; their controllers and hotkeys are not combined.
+The production workspace consists of `canisters/d_quorum`, `crates/policy`, `crates/accounting`, `crates/ic_clients`, and the shared vendored Dendrite evaluator. Test-only recording canisters live in `tests/mocks`; real and mock PocketIC suites live in `tests/pocketic`. The nested Dendrite workspace has its verifier/asset canister, team-management frontend and an undeployed [per-neuron temporary creation bootstrap](dendrite/docs/operations/creation.md). The canisters remain independently deployable; their controllers and hotkeys are not combined. Creation changes neither D-QUORUM policy/economics nor stable V3. New canonical candidates are retained under revision-specific directories, preserving prior release records.
 
 ```sh
 cargo run --locked -p xtask -- unit
@@ -25,7 +25,12 @@ cargo run --locked -p xtask -- integration_inventory
 cargo run --locked -p xtask -- component_dendrite
 cargo run --locked -p xtask -- system_protocol
 cargo run --locked -p xtask -- system_browser
+cargo run --locked -p xtask -- creation_pure
+cargo run --locked -p xtask -- creation_recording
+cargo run --locked -p xtask -- creation_protocol
+cargo run --locked -p xtask -- creation_browser
 cargo run --locked -p xtask -- component_dendrite_canonical
+cargo run --locked -p xtask -- creation_canonical
 cargo run --locked -p xtask -- integrated_acceptance
 ```
 

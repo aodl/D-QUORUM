@@ -9,7 +9,7 @@ static PUBLIC: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/public");
 const SECURITY_HEADERS: [(&str, &str); 7] = [
     (
         "Content-Security-Policy",
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://icp-api.io http://127.0.0.1:4943 http://localhost:4943; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://icp-api.io http://127.0.0.1:4943 http://localhost:4943 http://127.0.0.1:4944 http://localhost:4944; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     ),
     (
         "Strict-Transport-Security",
@@ -129,6 +129,24 @@ fn configs() -> Vec<AssetConfig> {
         AssetConfig::Pattern {
             pattern: "generated/*.css".into(),
             content_type: Some("text/css; charset=utf-8".into()),
+            headers: immutable.clone(),
+            encodings: vec![],
+        },
+        AssetConfig::Pattern {
+            pattern: "generated/*.wasm".into(),
+            content_type: Some("application/wasm".into()),
+            headers: immutable.clone(),
+            encodings: vec![],
+        },
+        AssetConfig::Pattern {
+            pattern: "generated/*.json".into(),
+            content_type: Some("application/json; charset=utf-8".into()),
+            headers: immutable.clone(),
+            encodings: vec![],
+        },
+        AssetConfig::Pattern {
+            pattern: "generated/*.did".into(),
+            content_type: Some("text/plain; charset=utf-8".into()),
             headers: immutable,
             encodings: vec![],
         },
@@ -180,11 +198,14 @@ mod tests {
     #[test]
     fn policies_cover_html_well_known_and_hashed_assets() {
         let configs = configs();
-        assert_eq!(configs.len(), 6);
+        assert_eq!(configs.len(), 9);
         let rendered = format!("{configs:?}");
         for expected in [
             "no-cache",
             "immutable",
+            "application/wasm",
+            "generated/*.json",
+            "generated/*.did",
             "Content-Security-Policy",
             "X-Content-Type-Options",
             "frame-ancestors 'none'",

@@ -101,13 +101,30 @@ controller/hotkey set invalidates the review.
 
 ## Dependency exceptions
 
+Creation's additional trust boundary is the provisional controller P: P can replace
+C's reviewed code until all canister controllers are removed. A module checksum
+does not constrain its controller's future actions. The bootstrap authenticates P,
+fixes its one plan/neuron/return account, and retains dispatched effects across
+upgrades; the service stores no onboarding state. Separately consented creation
+delegations use named short-lived targets and memory-only keys. Management target
+scoping does not restrict arguments or prevent another P-owned canister being
+addressed. Exact request review and replica controller checks remain essential.
+
+Receipts contain public operation identities and certified transition evidence,
+never credentials. Imported JSON is bounded, schema checked and independently
+verified; a checksum supplies no authority. Registration and rehearsal are observed
+Governance decisions, not creator-supplied flags. Readiness uses current evaluator
+results and replicated controller history. Uninstall precedes empty controllers,
+with fresh checks at both steps and an unavoidable non-atomic gap. See
+[creation and recovery](operations/creation.md) for the financial and restart limits.
+
 | Package/version | Reachability | Exception and removal condition |
 | --- | --- | --- |
 | `paste 1.0.15` | Transitive Candid compile-time macro | RUSTSEC-2024-0436 abandonment; review on Candid update or 2026-12-04 |
 | `pocket-ic 15.0.0` | Workspace development only | Required local consensus scenarios; remove on compatible replacement |
 | `backoff 0.4.0` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
 | `instant 0.1.13` | PocketIC development tree only | Remove when PocketIC removes it or if production reachability changes |
-| `serde_cbor 0.11.2` | Official certification libraries and PocketIC | Not directly used by application code; review when certification reachability changes |
+| `serde_cbor 0.11.2` | Official certification libraries, PocketIC, and direct bootstrap refusal-certificate decoding | RUSTSEC-2021-0127 unmaintained dependency; the bootstrap accepts only owner-authenticated proofs bounded to 8 KiB and verifies the root signature, pinned Governance module and original ingress. Dendrite maintainers must review on codec/certification replacement or by 2026-12-04. |
 
 Automated dependency reachability fails if `pocket-ic`, `backoff`, or `instant` enters
 the production Wasm normal/build tree. Lockfiles, advisory scans, reproducible
@@ -155,3 +172,71 @@ not a severity change, a general ignore, or a claim the packages are fixed. Raw 
 OSV findings are retained. The two OSV exclusions expire 2026-12-04 and require renewed
 review if the tool/path/configuration changes. The four previously reviewed Rust
 maintenance notices retain their individual reasons and the same next-review date.
+
+Creation recovery separates authentic historical transitions from fresh current
+power. Historical certificate verification still checks the BLS signature, subnet
+delegation and canister range, exact original ingress request and reply. Its SDK
+clock is anchored narrowly to that certificate's signed time, with original-request
+and present-future bounds. This does not renew a signing credential or substitute
+for fresh module/controller, Governance and controller-history observations. A
+static source-reviewed artifact map permits the two qualified V1 build variants;
+unknown modules fail closed. An explicit upgrade binds the old module and new
+module while preserving the original plan, accounts, nonce and pending operations.
+Removed code is never reinstalled to resume finalisation.
+
+Governance ballots are caller-filtered. Exact proposal execution and its aggregate
+tally demonstrate the network's decision under that proposal's electorate. Fresh
+following establishes present configuration. Neither proves historical voter IDs,
+uninterrupted membership, independent humans or creator authority over every
+manager. Other managers vote under their own existing authority, without granting
+the creator hotkeys. Proposal refusal recovery requires a certified typed response
+for the pre-reserved full ingress request ID, not just equal arguments or an error
+message. Unavailable original evidence preserves uncertainty.
+
+The unused controller-default ICP account is distinct from stake and user-owned
+workflow accounts. Teardown requires an explicit C/T/plan-bound acknowledgement
+of its observed balance and later arrivals. Unsolicited deposits do not revoke it.
+There is no new sweep endpoint. Actual creation liabilities must still settle.
+Financial attempts retain their independently prepared timestamps and ingress IDs;
+the permanent staking nonce is never renewed. A bounded purpose-specific ICRC-2
+compare-and-set reservation prevents competing tabs from both gaining dispatch
+authority. Its additional fees and prior consumed reservation fees are reviewed;
+ICP uses a management-principal spender; Cycles uses a fixed domain-derived
+29-byte opaque marker because the pinned ledger denies management-principal
+approvals before charging. No signing key or canister is created for that marker.
+Its amount is additionally below the current fee. Original development approval
+arguments remain immutable; only the exact pinned denied-owner error 100001 for
+the management spender proves that legacy Cycles reservation did not execute.
+
+The pinned signer 5.4.0 heartbeat source receives a digest-bound build patch in
+`canisters/dendrite/web/sdk-heartbeat-policy.mjs`. It retains recent pending IDs,
+checks the source and JSON-RPC shape for both ready and pending replies, and
+schedules polls only after matching replies. Production and local builds apply
+the same patch. Original and patched source hashes are fixed; drift fails the
+build. Timeout durations, delegation expiry and certificate checks are unchanged.
+Focused SDK tests include unpatched negative controls; they are not replica or
+II authentication evidence. Same-origin script compromise remains within the
+provisional controller trust boundary described above.
+
+The frontend runtime SBOM annotates the signer component with the complete reviewed
+heartbeat build policy and retains its upstream package version. SBOM generation
+rechecks the actual pinned SDK source and transformed digest before writing this
+annotation and a separate checksummed build-policy record.
+
+Creation long-wait tests align the browser and the owned PocketIC process with
+explicit replica time jumps. `tests/browser/pocketic-wall-clock.c` changes only
+that process's real-time reads; monotonic timers and certificate/delegation limits
+remain unchanged. It is test infrastructure and is never embedded in application
+or bootstrap assets. The production journey includes a deliberately misaligned
+gateway check that must fail response verification before alignment is restored.
+The native virtual-authenticator target survives II document reloads, modelling
+retained hardware without exporting a passkey or extending an old credential.
+The local authenticator fixture retains its original II target through an
+origin-checked public window-reference handoff after application document reloads.
+It closes the previous SDK channel through `Signer.closeChannel()` before
+reloading that target. No SDK envelopes or credentials are forwarded by this
+handoff. Creation Chrome scheduling flags disable background power throttling;
+the two-second SDK disconnect timeout is unchanged. Newly opened application
+pages receive the virtual clock before loading the SDK, so they request fresh
+short-lived credentials at replica time rather than extending an old delegation.
+These checks do not establish browser qualification until their actual run passes.

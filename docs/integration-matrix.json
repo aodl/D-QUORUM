@@ -77,7 +77,8 @@
       "status": "implemented",
       "mandatory": true,
       "tests": [
-        "real_ii_scoped_child_is_enforced_by_replica"
+        "real_ii_scoped_child_is_enforced_by_replica",
+        "real_ii_creation_authentication_lifecycle"
       ],
       "validators": []
     },
@@ -148,6 +149,81 @@
         "actual canonical Dendrite runtime Candid extraction",
         "canonical pair and local-browser artifact source binding"
       ]
+    },
+    {
+      "id": "creation-plans-and-receipts",
+      "suite": "creation_pure",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "reviewed revisions preserve financial provenance and cannot upgrade a test profile",
+        "receipt restart preserves original identities and imports prepared calls as unknown"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-recording-financial-and-upgrade-faults",
+      "suite": "creation_recording",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "unused ICP return reconciles the original fixed-account block after losing its reply",
+        "two tabs with different fresh timestamps can dispatch only one financial request through the shared reservation",
+        "a first payment after a 48-hour planning pause gets a fresh attempt timestamp and keeps the staking nonce",
+        "a certified first-dispatch BadFee refusal survives receipt reload and permits one fresh reviewed fee-bounded attempt",
+        "current-controller recovery needs explicit consent and fresh C P plan and Governance bindings without historical proof",
+        "recovery-only import cannot enable full workflow methods or change its on-chain fixed recipient",
+        "recovery-only resume rejects absent unknown or differently controlled code and a changed target"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-pinned-real-provisioning-and-recovery",
+      "suite": "creation_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_cmc_conversion_and_cycles_ledger_creation_deduplicate",
+        "real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return",
+        "real_bootstrap_external_disbursement_error_retains_its_financial_intent",
+        "real_production_creation_registration_rehearsal_teardown_and_post_final_management",
+        "real_premature_controller_removal_retains_executable_neuron_authority_and_fails_evaluation"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-real-ii-full-journeys",
+      "suite": "creation_browser",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_recoverable_creation_and_ledger_recovery",
+        "real_ii_production_creation_finalisation_and_subsequent_management"
+      ],
+      "validators": []
+    },
+    {
+      "id": "creation-canonical-bootstrap-full-journey",
+      "suite": "creation_canonical",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "real_ii_production_creation_finalisation_and_subsequent_management"
+      ],
+      "validators": [
+        "canonical bootstrap exact production exports",
+        "canonical bootstrap exact Candid compatibility"
+      ]
+    },
+    {
+      "id": "creation-new-candidate-direct-only-election-and-real-staking-reward",
+      "suite": "creation_protocol",
+      "status": "implemented",
+      "mandatory": true,
+      "tests": [
+        "newly_created_dendrite_enters_direct_only_election_and_receives_reward"
+      ],
+      "validators": []
     }
   ]
 }

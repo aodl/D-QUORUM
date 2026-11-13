@@ -1,3 +1,12 @@
+#[allow(dead_code)]
+#[path = "../../../dendrite/canisters/bootstrap/src/model.rs"]
+mod bootstrap_model;
+#[path = "support/browser_clock.rs"]
+mod browser_clock;
+#[path = "support/browser_creation.rs"]
+mod browser_creation;
+#[path = "support/creation.rs"]
+mod creation;
 mod support;
 use candid::{CandidType, Deserialize, Principal, encode_one};
 use pocket_ic::common::rest::{IcpFeatures, IcpFeaturesConfig, InstanceHttpGatewayConfig};
@@ -155,12 +164,12 @@ fn gateway_get(id: Principal, directory: &Path, label: &str) -> (u16, Vec<u8>) {
             "--max-time",
             "30",
             "--resolve",
-            &format!("{id}.localhost:4943:127.0.0.1"),
+            &format!("{id}.localhost:{}:127.0.0.1", browser_port()),
             "--output",
             body.to_str().unwrap(),
             "--write-out",
             "%{http_code}",
-            &format!("http://{id}.localhost:4943/"),
+            &format!("http://{id}.localhost:{}/", browser_port()),
         ])
         .output()
         .unwrap();
@@ -216,33 +225,73 @@ fn local_frontend(
     alternate_assets: bool,
     identity_provider: &str,
     tamper_http: bool,
+    creation_instrumentation: bool,
+    historical_bootstrap: bool,
 ) -> Vec<u8> {
+    const HISTORICAL_FRONTEND_SOURCE: &str = "97343f8dbb714a0a12f90a474805518c83017184";
+    const HISTORICAL_BOOTSTRAP: &str =
+        "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265";
     let source = directory.join("source");
     fs::create_dir_all(&source).unwrap();
-    let listed = Command::new("git")
-        .args([
+    let mut listing = Command::new("git");
+    if historical_bootstrap {
+        listing.args([
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            HISTORICAL_FRONTEND_SOURCE,
+            "--",
+            "dendrite/",
+        ]);
+    } else {
+        listing.args([
             "ls-files",
             "--cached",
             "--others",
             "--exclude-standard",
             "-z",
             "dendrite/",
-        ])
-        .current_dir(root())
-        .output()
-        .unwrap();
+        ]);
+    }
+    let listed = listing.current_dir(root()).output().unwrap();
     assert!(listed.status.success());
+    let mut source_files = std::collections::BTreeMap::new();
     for file in listed.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
         let file = std::str::from_utf8(file).unwrap();
         assert!(!file.ends_with(".pem") && !file.split('/').any(|p| p.starts_with(".env")));
         // Development diagnostics may have a reviewed old generated asset staged
         // for deletion. Full qualification independently requires a clean source.
-        if !root().join(file).is_file() {
+        if !historical_bootstrap && !root().join(file).is_file() {
             continue;
         }
         let target = source.join(file.strip_prefix("dendrite/").unwrap());
         fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::copy(root().join(file), target).unwrap();
+        let content = if historical_bootstrap {
+            let old = Command::new("git")
+                .args(["show", &format!("{HISTORICAL_FRONTEND_SOURCE}:{file}")])
+                .current_dir(root())
+                .output()
+                .unwrap();
+            assert!(
+                old.status.success(),
+                "reviewed historical frontend source is unavailable"
+            );
+            old.stdout
+        } else {
+            fs::read(root().join(file)).unwrap()
+        };
+        source_files.insert(file.to_string(), hex::encode(Sha256::digest(&content)));
+        fs::write(target, content).unwrap();
+    }
+    if historical_bootstrap {
+        for file in ["package.json", "package-lock.json"] {
+            assert_eq!(
+                fs::read(source.join(file)).unwrap(),
+                fs::read(root().join("dendrite").join(file)).unwrap(),
+                "historical frontend requires its exact reviewed npm dependency lock"
+            );
+        }
     }
     std::os::unix::fs::symlink(
         root().join("dendrite/node_modules"),
@@ -263,14 +312,67 @@ fn local_frontend(
         bytes.extend_from_slice(b"\n/* isolated authenticated-upgrade asset evidence */\n");
         fs::write(css, bytes).unwrap();
     }
-    let origin = format!("http://{id}.localhost:4943");
-    let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":"http://127.0.0.1:4943","DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
-    let mut build = Command::new("npm");
-    build.args(["run", "build"]).current_dir(&source);
+    let origin = format!("http://{id}.localhost:{}", browser_port());
+    let config = serde_json::json!({"DENDRITE_BUILD_MODE":"local","DENDRITE_CANISTER_ID":id.to_text(),"DENDRITE_API_HOST":format!("http://127.0.0.1:{}",browser_port()),"DENDRITE_FETCH_ROOT_KEY":"true","DENDRITE_DERIVATION_ORIGIN":origin,"DENDRITE_IDENTITY_PROVIDER":identity_provider,"DENDRITE_ALTERNATIVE_ORIGINS_JSON":"[]"});
+    let mut build = if creation_instrumentation {
+        let mut cmd = Command::new("node");
+        cmd.arg(root().join("tests/browser/build-creation-fixture.mjs"))
+            .arg(&source);
+        cmd
+    } else {
+        let mut cmd = Command::new("npm");
+        cmd.args(["run", "build"]);
+        cmd
+    };
+    build.current_dir(&source);
+    if historical_bootstrap {
+        let compiled = directory.join("historical-bootstrap-input");
+        fs::create_dir_all(&compiled).unwrap();
+        let wasm = fs::read(root().join(format!(
+            "dendrite/canisters/bootstrap/compat/{HISTORICAL_BOOTSTRAP}.wasm"
+        )))
+        .unwrap();
+        assert_eq!(hex::encode(Sha256::digest(&wasm)), HISTORICAL_BOOTSTRAP);
+        fs::write(compiled.join("bootstrap.wasm"), wasm).unwrap();
+        fs::copy(
+            source.join("canisters/bootstrap/bootstrap.did"),
+            compiled.join("bootstrap.did"),
+        )
+        .unwrap();
+        fs::copy(
+            source.join("src/declarations/bootstrap/policy.json"),
+            compiled.join("policy.json"),
+        )
+        .unwrap();
+        build
+            .env_remove("DENDRITE_BOOTSTRAP_RELEASE_DIR")
+            .env("DENDRITE_BOOTSTRAP_COMPILED_DIR", compiled);
+    } else {
+        build.env(
+            "DENDRITE_BOOTSTRAP_RELEASE_DIR",
+            std::env::var_os("DENDRITE_BOOTSTRAP_RELEASE_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| root().join("dendrite/target/bootstrap-release")),
+        );
+    }
     for (key, value) in config.as_object().unwrap() {
         build.env(key, value.as_str().unwrap());
     }
     assert!(build.status().unwrap().success());
+    if historical_bootstrap {
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(source.join("target/bootstrap-release/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["sha256"], HISTORICAL_BOOTSTRAP);
+        fs::write(directory.join("historical-bootstrap-policy.json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "classification":"actual reviewed historical frontend source, with current synthetic authenticator hardware and bounded negative authority probes; production authentication transport unchanged; no canonical production-byte claim",
+            "historical_frontend_source":HISTORICAL_FRONTEND_SOURCE,
+            "source_files":source_files,
+            "npm_dependency_lock_identical":true,
+            "manifest":manifest
+        })).unwrap()).unwrap();
+    }
     let mut probe = Command::new("node");
     probe
         .arg(root().join("tests/browser/build-scope-probe.mjs"))
@@ -329,7 +431,14 @@ fn publish(directory: &Path, name: &str, value: serde_json::Value) {
     fs::rename(temporary, directory.join(format!("{name}.json"))).unwrap();
 }
 fn signal(directory: &Path, name: &str, child: &mut Child) -> serde_json::Value {
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // Five independent II setups are serial and each retains the SDK's own
+    // channel timeout. This orchestration budget is not delegation freshness.
+    let seconds = if name == "creation-principal" {
+        600
+    } else {
+        240
+    };
+    let deadline = Instant::now() + Duration::from_secs(seconds);
     loop {
         let path = directory.join(format!("{name}.json"));
         if path.exists() {
@@ -360,6 +469,24 @@ fn real_ii_compiled_frontend_known_managers_and_signed_governance() {
 #[ignore = "xtask system_browser uses real II with dummy authentication disabled"]
 fn real_ii_scoped_child_is_enforced_by_replica() {
     browser_world("scoped-signing");
+}
+
+#[test]
+#[ignore = "small real-II production authentication lifecycle diagnostic"]
+fn real_ii_creation_authentication_lifecycle() {
+    browser_world("creation-auth");
+}
+
+#[test]
+#[ignore = "creation_browser signed real-II recoverable creation journey"]
+fn real_ii_recoverable_creation_and_ledger_recovery() {
+    browser_world("creation-recoverable");
+}
+
+#[test]
+#[ignore = "creation_browser signed real-II registration-first finalisation journey"]
+fn real_ii_production_creation_finalisation_and_subsequent_management() {
+    browser_world("creation-production");
 }
 #[test]
 #[ignore = "xtask system_browser uses the real SDK channel-establishment timeout"]
@@ -441,17 +568,30 @@ fn browser_world(scenario: &str) {
     // Compile and checksum the local application before starting the test world.
     let expected_verifier = Principal::from_text("pi33i-pt777-77776-aaaaa-cai").unwrap();
     let provider = if scenario == "wrong-provider" {
-        format!("http://{expected_verifier}.localhost:4943/authorize")
+        format!(
+            "http://{expected_verifier}.localhost:{}/authorize",
+            browser_port()
+        )
     } else {
-        "http://id.ai.localhost:4943/authorize".into()
+        format!("http://id.ai.localhost:{}/authorize", browser_port())
     };
-    let local = local_frontend(&directory, expected_verifier, false, &provider, false);
-    let upgraded_local = if scenario == "team-management" {
+    let local = local_frontend(
+        &directory,
+        expected_verifier,
+        false,
+        &provider,
+        false,
+        scenario.starts_with("creation-"),
+        scenario == "creation-recoverable",
+    );
+    let upgraded_local = if scenario == "team-management" || scenario == "creation-recoverable" {
         Some(local_frontend(
             &directory.join("upgrade"),
             expected_verifier,
-            true,
+            scenario == "team-management",
             &provider,
+            false,
+            scenario == "creation-recoverable",
             false,
         ))
     } else {
@@ -464,6 +604,8 @@ fn browser_world(scenario: &str) {
             false,
             &provider,
             true,
+            false,
+            false,
         ))
     } else {
         None
@@ -474,12 +616,19 @@ fn browser_world(scenario: &str) {
         .as_nanos() as u64;
     let domains = directory.join("domains.txt");
     fs::write(&domains, format!("id.ai.localhost:{}\n", ii_frontend_id())).unwrap();
-    let mut pic = builder()
+    let clock_server = scenario
+        .starts_with("creation-")
+        .then(|| browser_clock::ClockServer::start(&directory));
+    let mut world_builder = builder();
+    if let Some(clock) = &clock_server {
+        world_builder = world_builder.with_server_url(clock.url.parse().unwrap());
+    }
+    let mut pic = world_builder
         .with_initial_time(pocket_ic::Time::from_nanos_since_unix_epoch(host_time))
         .with_ii_subnet()
         .with_http_gateway(InstanceHttpGatewayConfig {
             ip_addr: Some("127.0.0.1".into()),
-            port: Some(4943),
+            port: Some(browser_port()),
             domains: Some(vec!["localhost".into()]),
             https_config: None,
             domain_custom_provider_local_file: Some(domains.to_str().unwrap().into()),
@@ -491,7 +640,7 @@ fn browser_world(scenario: &str) {
             ..Default::default()
         })
         .build();
-    configure_real_ii(&pic);
+    configure_real_ii_at_port(&pic, browser_port());
     let verifier = pic.create_canister();
     pic.add_cycles(verifier, 200_000_000_000_000);
     assert_eq!(
@@ -510,7 +659,10 @@ fn browser_world(scenario: &str) {
         interactive_time,
     ));
     pic.auto_progress();
-    pic.make_live(Some(4943));
+    pic.make_live(Some(browser_port()));
+    if scenario == "creation-production" {
+        browser_clock::verify_gateway_freshness(&pic, &directory, verifier);
+    }
     let uid = Command::new("id").arg("-u").output().unwrap();
     let gid = Command::new("id").arg("-g").output().unwrap();
     let process_user = format!(
@@ -546,7 +698,7 @@ fn browser_world(scenario: &str) {
             .env("DENDRITE_BROWSER_CANISTER_ID", verifier.to_text())
             .env(
                 "DENDRITE_BROWSER_BASE_URL",
-                format!("http://{verifier}.localhost:4943"),
+                format!("http://{verifier}.localhost:{}", browser_port()),
             )
             .env(
                 "DENDRITE_BROWSER_EVIDENCE_DIR",
@@ -557,7 +709,7 @@ fn browser_world(scenario: &str) {
             .spawn()
             .unwrap()
     } else {
-        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:4943"),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
+        Command::new("docker").args(["run","--rm","--name",&name,"--network","host","--user",&process_user,"-v",&format!("{}:/workspace:ro",root().display()),"-v",&format!("{}:/coordination",directory.display()),"-w","/workspace","-e",&format!("SYSTEM_BROWSER_SCENARIO={scenario}"),"-e","SYSTEM_BROWSER_COORDINATION=/coordination","-e","DEBUG=","-e","NODE_DEBUG=","-e",&format!("SYSTEM_BROWSER_ORIGIN=http://{verifier}.localhost:{}",browser_port()),"ghcr.io/puppeteer/puppeteer:25.16.0@sha256:956a72e3d523c76606efaad23392fbe33950370189f749715222c7427f57392b","node","tests/browser/team-management.mjs"]).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap()
     };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if scenario == "anonymous" {
@@ -585,17 +737,198 @@ fn browser_world(scenario: &str) {
             install_real(
                 &pic,
                 vec![seed(100, user(100), at)],
-                vec![],
+                vec![(
+                    l::Account {
+                        owner: user(41),
+                        subaccount: None,
+                    },
+                    1_000_000_000,
+                )],
                 artifact("governance-canister"),
                 artifact("ledger-canister"),
             );
+            creation::install_provisioning(&pic);
             publish(&directory, "provisioned", serde_json::json!({}));
+            let identity = signal(&directory, "scope-provisioning-principal", &mut child);
+            let principal = Principal::from_text(identity["principal"].as_str().unwrap()).unwrap();
+            let payment: Result<candid::Nat, l::TransferError> = update(
+                &pic,
+                LEDGER,
+                user(41),
+                "icrc1_transfer",
+                l::TransferArg {
+                    from_subaccount: None,
+                    to: l::Account {
+                        owner: principal,
+                        subaccount: None,
+                    },
+                    fee: Some(10_000u64.into()),
+                    amount: 600_000_000u64.into(),
+                    memo: None,
+                    created_at_time: Some(pic.get_time().as_nanos_since_unix_epoch()),
+                },
+            );
+            payment.unwrap();
+            publish(&directory, "scope-funding-ready", serde_json::json!({}));
             let proof = signal(&directory, "scope-probe", &mut child);
             assert_eq!(proof["unrestrictedRejected"], true);
             assert_eq!(proof["principalPreserved"], true);
             assert_eq!(proof["allowedGovernanceRead"], true);
             assert_eq!(proof["nonGovernanceScopeDenied"], true);
             assert_eq!(proof["controlDestinationSucceeded"], true);
+            let provisioned = &proof["provisioning"];
+            assert_eq!(provisioned["principal"], principal.to_text());
+            assert_eq!(provisioned["exactBootstrapManagementDenied"], true);
+            assert_eq!(
+                provisioned["sameManagementScopeCanReadOtherOwnedCanister"],
+                true
+            );
+            for name in [
+                "principalPreserved",
+                "fundingManagementDenied",
+                "soleControllerVerified",
+                "installedHashVerified",
+                "bootstrapCallSucceeded",
+                "stopVerified",
+                "uninstallBeforeControllerRemoval",
+                "certifiedModuleAbsent",
+                "certifiedControllersEmpty",
+                "reinstallDenied",
+            ] {
+                assert_eq!(
+                    provisioned[name], true,
+                    "missing real delegated provisioning proof: {name}"
+                );
+            }
+            assert!(
+                pic.get_controllers(
+                    Principal::from_text(provisioned["canister"].as_str().unwrap()).unwrap()
+                )
+                .is_empty()
+            );
+            assert_eq!(
+                pic.get_controllers(
+                    Principal::from_text(provisioned["otherOwnedCanister"].as_str().unwrap())
+                        .unwrap()
+                ),
+                vec![principal]
+            );
+            assert!(child.wait().unwrap().success());
+            return;
+        }
+        if scenario == "creation-auth" {
+            use bootstrap_model::{Following, Network, Plan, Profile};
+            let people = signal(&directory, "auth-participants", &mut child);
+            let people: Vec<Principal> = people
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| Principal::from_text(p.as_str().unwrap()).unwrap())
+                .collect();
+            assert_eq!(people.len(), 5);
+            assert_eq!(
+                people
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                5
+            );
+            let at = now(&pic);
+            let mut neurons = vec![seed(100, user(100), at)];
+            for (index, person) in people.iter().enumerate() {
+                let mut manager = seed(11 + index as u64, *person, at);
+                manager.known_neuron_data = Some(known(11 + index as u64));
+                neurons.push(manager);
+            }
+            install_real(
+                &pic,
+                neurons,
+                vec![],
+                artifact("governance-canister"),
+                artifact("ledger-canister"),
+            );
+            creation::install_provisioning(&pic);
+            let owner = people[0];
+            let c = pic.create_canister();
+            pic.add_cycles(c, 20_000_000_000_000);
+            pic.set_controllers(c, None, vec![owner]).unwrap();
+            let bytes = fs::read(
+                root()
+                    .join("dendrite/target/wasm32-unknown-unknown/release/dendrite_bootstrap.wasm"),
+            )
+            .unwrap();
+            let plan = Plan {
+                version: 1,
+                profile: Profile::RecoverableTest,
+                owner,
+                network: Network::Local,
+                dendrite_service: verifier,
+                origin: format!("http://{verifier}.localhost:{}", browser_port()),
+                api_host: format!("http://127.0.0.1:{}", browser_port()),
+                funding_budget_e8s: 200_010_000,
+                icp_fee_e8s: 10_000,
+                provision_cycles: 2_000_000_000_000,
+                policy_version: dendrite_types::STANDARD_VERSION.into(),
+                creation_id: vec![41; 32],
+                nonce: 9041,
+                revision: 1,
+                policy_revision: dendrite_types::SOURCE_REVISION.into(),
+                bootstrap_sha256: Sha256::digest(&bytes).to_vec(),
+                managers: vec![11],
+                committed_topics: vec![],
+                following: vec![Following {
+                    topic: 1,
+                    followees: vec![11],
+                }],
+                stake_e8s: 200_000_000,
+                lock_seconds: bootstrap_model::INITIAL_CLAIM_LOCK_SECONDS,
+                cycle_reserve: bootstrap_model::MIN_RESERVE,
+                return_account: l::account_id(owner, None),
+                metadata: None,
+            };
+            pic.install_canister(c, bytes, encode_one(plan).unwrap(), Some(owner));
+            assert_eq!(pic.get_controllers(c), vec![owner]);
+            publish(
+                &directory,
+                "auth-fixtures",
+                serde_json::json!({"canister":c.to_text(),"managers":[11]}),
+            );
+            for (day, delta) in [(31, 31), (90, 59)] {
+                signal(&directory, &format!("auth-clock-{day}-ready"), &mut child);
+                browser_clock::advance(&pic, &directory, Duration::from_secs(delta * 86400));
+                publish(
+                    &directory,
+                    &format!("auth-clock-{day}"),
+                    serde_json::json!({"now_ms":pic.get_time().as_nanos_since_unix_epoch()/1_000_000}),
+                );
+            }
+            let proof = signal(&directory, "auth-capability-result", &mut child);
+            for name in [
+                "normalPopupClosure",
+                "signoutReauthentication",
+                "reloadDraftReceiptImport",
+                "secondTabSamePrincipal",
+                "wrongParticipantRejected",
+                "cancelledGenerationCleared",
+                "expiryRejected",
+            ] {
+                assert_eq!(proof[name], true, "missing authentication proof: {name}");
+            }
+            assert_eq!(proof["observations"].as_array().unwrap().len(), 16);
+            assert_eq!(pic.get_controllers(c), vec![owner]);
+            publish(&directory, "browser-complete", serde_json::json!({}));
+            assert!(child.wait().unwrap().success());
+            return;
+        }
+        if scenario.starts_with("creation-") {
+            browser_creation::coordinate(
+                &pic,
+                verifier,
+                &directory,
+                scenario,
+                &mut child,
+                upgraded_local.as_deref(),
+            );
             assert!(child.wait().unwrap().success());
             return;
         }
@@ -1324,10 +1657,68 @@ fn browser_world(scenario: &str) {
         "browser-system.log",
         "ii-failure.json",
         "authentication-retries.json",
+        "creation-reauthentication-retries.json",
         "review.json",
         "submitted.json",
         "voted.json",
         "scope-probe.json",
+        "creation-build-delta.json",
+        "scope-build-delta.json",
+        "synthetic-passkey-lifecycle.json",
+        "authentication-error.json",
+        "auth-capability-result.json",
+        "auth-capability-observations.json",
+        "auth-participants.json",
+        "ii-capability-failure.png",
+        "browser-scheduling-policy.json",
+        "creation-principal.json",
+        "creation-plan.json",
+        "creation-controller-installed.json",
+        "creation-configured.json",
+        "creation-rehearsal.json",
+        "creation-dissolving.json",
+        "creation-recovered.json",
+        "creation-code-removed.json",
+        "creation-finalised.json",
+        "creation-signed-creator-denied.json",
+        "creation-authority-probe-policy.json",
+        "creation-post-final-management.json",
+        "creation-resources.json",
+        "historical-bootstrap-policy.json",
+        "clock-policy.json",
+        "pocketic-wall-clock.so",
+        "clock-freshness-negative.json",
+        "clock-offset-ns",
+        "creation-historical-frontend-migrated.json",
+        "creation-recoverable-90-day-resumed.json",
+        "creation-stake-payment-unknown.json",
+        "creation-stake-payment-recovered.json",
+        "creation-31-day-resumed.json",
+        "creation-90-day-resumed.json",
+        "creation-sealed.json",
+        "creation-registration-refused.json",
+        "creation-registration-refusal-step.bin",
+        "creation-refusal-v2-stable.bin",
+        "creation-refusal-provenance.json",
+        "creation-rehearsal-refused.json",
+        "creation-rehearsal-unknown.json",
+        "creation-manager-authority-matrix.json",
+        "creation-membership-before-requested.json",
+        "creation-membership-before-changed.json",
+        "creation-membership-before-blocked.json",
+        "creation-membership-before-restored.json",
+        "creation-membership-during-requested.json",
+        "creation-membership-during-changed.json",
+        "creation-membership-during-blocked.json",
+        "creation-membership-during-restored.json",
+        "creation-membership-after-requested.json",
+        "creation-membership-after-changed.json",
+        "creation-membership-after-blocked.json",
+        "creation-membership-after-restored.json",
+        "creation-failure-receipt.json",
+        "creation-accessibility.json",
+        "creation-mobile.png",
+        "creation-recoverable.png",
         "principals.json",
         "verified.json",
         "proposal-evidence.json",
@@ -1366,7 +1757,13 @@ fn browser_world(scenario: &str) {
         }
     }
     for (variant, prefix) in [("upgrade", "upgraded"), ("corrupt-http", "corrupt-http")] {
-        for filename in ["local-build.json", "dendrite-local.wasm"] {
+        for filename in [
+            "local-build.json",
+            "dendrite-local.wasm",
+            "creation-build-delta.json",
+            "scope-build-delta.json",
+            "historical-bootstrap-policy.json",
+        ] {
             let path = directory.join(variant).join(filename);
             if path.exists() {
                 fs::copy(path, evidence.join(format!("{prefix}-{filename}"))).unwrap();

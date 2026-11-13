@@ -240,7 +240,7 @@ test("the 1.1 direct-rule title catalogue is exact", () => {
     "DENDRITE-CONTROL-002": "Controller canister has no installed code",
     "DENDRITE-CONTROL-003": "No principal controls the controller canister",
     "DENDRITE-CONTROL-004": "Neuron has no hotkeys",
-    "DENDRITE-CONTROL-005": "Proposal-based dissolution is disabled",
+    "DENDRITE-CONTROL-005": "Required not_for_profit setting is false",
     "DENDRITE-NM-001": "There are 5–15 managers",
     "DENDRITE-NM-002": "Manager list contains no duplicates",
     "DENDRITE-NM-003": "Neuron is not its own manager",
@@ -392,12 +392,12 @@ test("controller unavailable and missing-controller diagnostics never infer a re
   assert.match(missing.conciseReason, /did not report a controller canister/);
 });
 
-test("proposal-based dissolution diagnostics state the security consequence", () => {
+test("not-for-profit diagnostics preserve status without promising a universal operation lock", () => {
   const source = report();
   for (const [value, status, phrase] of [
-    [false, "Pass", "disabled because not_for_profit is false"],
-    [true, "Fail", "could vote to start dissolving the neuron"],
-    [undefined, "Indeterminate", "proposal-based dissolution could not be assessed"],
+    [false, "Pass", "required not_for_profit setting is false"],
+    [true, "Fail", "Standard requires false"],
+    [undefined, "Indeterminate", "not_for_profit setting was unavailable"],
   ]) {
     source.target[0].not_for_profit = value === undefined ? [] : [value];
     const diagnostic = buildRuleDiagnostic({
@@ -406,6 +406,7 @@ test("proposal-based dissolution diagnostics state the security consequence", ()
       requirement: ruleDescription("DENDRITE-CONTROL-005"),
     });
     assert.match(diagnostic.conciseReason, new RegExp(phrase));
+    assert.doesNotMatch(diagnostic.conciseReason + ruleDescription("DENDRITE-CONTROL-005"), /dissolution is disabled|cannot start dissolving|prevents all/);
     assert.equal(diagnostic.expectedItems[0], "not_for_profit = false");
   }
 });

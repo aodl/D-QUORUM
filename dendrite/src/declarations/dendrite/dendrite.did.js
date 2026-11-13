@@ -12,19 +12,19 @@ export const idlFactory = ({ IDL }) => {
     'links' : IDL.Vec(IDL.Text),
   });
   const ManagerEvidenceStatus = IDL.Variant({
+    'Found' : IDL.Null,
     'Unavailable' : IDL.Null,
     'ConfirmedMissing' : IDL.Null,
-    'Found' : IDL.Null,
   });
   const ManagerSummary = IDL.Record({
     'controller' : IDL.Opt(IDL.Principal),
-    'evidence_status' : ManagerEvidenceStatus,
-    'hot_keys' : IDL.Vec(IDL.Principal),
-    'known_neuron' : IDL.Opt(KnownNeuron),
-    'neuron_id' : IDL.Nat64,
+    'omega_ready_topics' : IDL.Vec(IDL.Int32),
     'minted_stake_e8s' : IDL.Opt(IDL.Nat64),
     'neuron_management_followees' : IDL.Vec(IDL.Nat64),
-    'omega_ready_topics' : IDL.Vec(IDL.Int32),
+    'hot_keys' : IDL.Vec(IDL.Principal),
+    'known_neuron' : IDL.Opt(KnownNeuron),
+    'evidence_status' : ManagerEvidenceStatus,
+    'neuron_id' : IDL.Nat64,
   });
   const TopicSummary = IDL.Record({
     'topic' : IDL.Int32,
@@ -99,10 +99,18 @@ export const idlFactory = ({ IDL }) => {
   const DendriteError = IDL.Variant({
     'GlobalRateLimit' : IDL.Record({ 'retry_after_seconds' : IDL.Nat64 }),
     'InvalidNeuronId' : IDL.Text,
-    'AnalysisFailed' : IDL.Text,
     'LowCycles' : IDL.Null,
+    'AnalysisFailed' : IDL.Text,
     'ConcurrencyLimit' : IDL.Null,
     'DuplicateInFlight' : IDL.Null,
+  });
+  const ControllerObservation = IDL.Record({
+    'controller' : IDL.Principal,
+    'controllers' : IDL.Vec(IDL.Principal),
+    'module_hash' : IDL.Opt(IDL.Vec(IDL.Nat8)),
+    'total_num_changes' : IDL.Nat64,
+    'checked_at_timestamp_seconds' : IDL.Nat64,
+    'neuron_id' : IDL.Nat64,
   });
   const HeaderField = IDL.Tuple(IDL.Text, IDL.Text);
   const HttpRequest = IDL.Record({
@@ -122,6 +130,11 @@ export const idlFactory = ({ IDL }) => {
     'check_neuron' : IDL.Func(
         [IDL.Nat64],
         [IDL.Variant({ 'Ok' : ComplianceReport, 'Err' : DendriteError })],
+        [],
+      ),
+    'controller_observation' : IDL.Func(
+        [IDL.Nat64],
+        [IDL.Variant({ 'Ok' : ControllerObservation, 'Err' : DendriteError })],
         [],
       ),
     'http_request' : IDL.Func([HttpRequest], [HttpResponse], ['query']),

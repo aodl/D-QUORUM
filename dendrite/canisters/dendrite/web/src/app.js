@@ -10,6 +10,9 @@ import { renderControlPanel } from "./control-panel.js";
 import { createTransactionPipeline } from "./transaction.js";
 import { createAnonymousGovernanceReadActor } from "./governance-read-actor.js";
 import { createPreliminaryAnalyzer, STANDARD_VERSION } from "./preliminary-evaluator.js";
+import { runtimeConfiguration } from "./actor.js";
+import { createCreationController } from "./creation-controller.js";
+import { createCreationView } from "./creation-view.js";
 
 function resources() {
   const node = document.createElement("p");
@@ -86,6 +89,9 @@ export function createApplication({
   let preliminaryOperation;
   let currentTransactionReceipt;
   let currentTransactionNotices;
+  let creationController;
+  let creationView;
+  let creationContainer;
 
   const newOperation = (kind, neuronId, generation) => Object.freeze({
     kind,
@@ -110,6 +116,7 @@ export function createApplication({
   function supersedeRouteOperations() {
     invalidatePreliminaryOperation();
     invalidateUnsubmittedWork();
+    void creationController?.deactivate();
   }
 
   function transactionNotices() {
@@ -296,6 +303,7 @@ export function createApplication({
       }
       authenticationTransition = "signing-out";
       transactionPipeline.discardUnsubmittedReview();
+      void creationController?.cancelCapabilities();
       renderCurrent();
       try {
         await browserAuth.signOut();
@@ -433,6 +441,10 @@ export function createApplication({
   }
 
   function renderCurrent() {
+    if (currentView === "creation" && /^#\/(create|resume)$/.test(location.hash)) {
+      renderCreation();
+      return;
+    }
     const match = /^#\/neuron\/([1-9][0-9]*)$/.exec(location.hash);
     if (match && currentView === "report" && currentPreliminaryReport && currentPreliminaryNeuronId === match[1]) {
       const id = match[1];
@@ -482,6 +494,37 @@ export function createApplication({
       element("p", "Committed topics use selected managers; known uncommitted topics use alpha-vote, omega-vote, or omega-reject, while committed delegates follow omega-reject exactly."),
       resources(),
     );
+    const creationLinks = element("p", undefined, "creation-entry");
+    const create = element("a", "Create a Dendrite"), resume = element("a", "Resume creation");
+    create.href = "#/create"; resume.href = "#/resume";
+    creationLinks.append(create, document.createTextNode(" · "), resume);
+    root.append(creationLinks);
+  }
+
+  function renderCreation() {
+    clear(root);
+    appendChrome();
+    creationContainer = document.createElement("div");
+    root.append(creationContainer);
+    creationView.render(creationContainer);
+  }
+
+  function loadCreation() {
+    supersedeRouteOperations();
+    currentView = "creation";
+    if (!creationController) {
+      const config = runtimeConfiguration();
+      const bindings = { origin: location.origin ?? globalThis.location.origin, host: config.host, canisterId: config.canisterId, local: config.shouldFetchRootKey };
+      creationController = createCreationController({ bindings,
+        getSession: () => authenticationTransition === "none" ? authenticatedSession : undefined,
+        getNnsActor: async () => { if (!authenticatedNnsActor) throw Error("Sign in with the existing Governance-only identity first."); return authenticatedNnsActor; },
+        getService: actor,
+        onChange: () => { if (currentView === "creation" && creationContainer) creationView.render(creationContainer); },
+      });
+      creationView = createCreationView({ controller: creationController, copyText, signedIn: () => !!authenticatedSession });
+    }
+    creationController.activate();
+    renderCreation();
   }
 
   function landing(generation = ++routeGeneration) {
@@ -546,6 +589,7 @@ export function createApplication({
 
   function route() {
     const generation = ++routeGeneration;
+    if (/^#\/(create|resume)$/.test(location.hash)) return loadCreation();
     const match = /^#\/neuron\/([1-9][0-9]*)$/.exec(location.hash);
     if (!match) return landing(generation);
     try {

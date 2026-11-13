@@ -1,10 +1,210 @@
 # Architecture
 
-Dendrite is exactly one stateless Rust canister. It embeds and certifies the frontend,
+Dendrite's long-lived service is one stateless Rust canister. It embeds and certifies the frontend,
 accepts anonymous update `check_neuron` calls, obtains bounded live evidence from fixed
 NNS Governance `list_neurons` and management-canister `canister_info` calls, evaluates
 the standard, and returns the report. Certified assets are served by the sole query
 application method, `http_request`.
+
+## Creation authority and protocol contract
+
+One temporary bootstrap C is permitted per new neuron T. P is the stable II-derived
+application principal, not a child key's standalone principal. Initially C's sole
+controller is P, and application calls authenticate P. P can replace provisional
+code. After finalisation T still names C, but C has neither module nor controllers.
+Managers then use Governance's actual supported commands. Neither service controls
+creations or receives funds. D-QUORUM policy, financial state and stable V3 are unchanged.
+
+The single route is P-owned ICP funding -> CMC `notify_mint_cycles` -> P-owned Cycles
+Ledger subaccount -> Cycles Ledger `create_canister` -> P installs the pinned
+bootstrap. Stake is a separate direct payment to Governance's
+`SHA256(0x0c || "neuron-stake" || C || nonce_be64)` subaccount. Provisioning spend is
+not stake; converted/spent cycles are not an ICP refund.
+
+Contracts below use executable IC source `83f29e0803496ba6aaea3d6b43f6c6bebea12dd9`
+and Cycles Ledger `58f1d01ce1e5e41e61005f8103cc7560e9d81cc2` (release 1.1.0).
+Artifact checksums are in root `protocol-pins.json`; none assert current mainnet
+deployment. The separate Standard policy pin remains `d55a0f…`. Execution evidence
+must distinguish actual signed-browser calls, native real-protocol probes and mocks.
+
+An installed module hash binds the exact `install_code.wasm_module` bytes, including
+gzip packaging when used. The bootstrap is installed as raw Wasm, so its file and
+installed-module hashes coincide. System fixtures install the reviewed raw protocol
+modules; the ICP Ledger itself uploads its pinned gzip archive, whose observed
+module hash therefore matches the compressed pin (`sha256`), while `wasm_sha256`
+records the decompressed executable. The real archive-recovery gate checks both
+identities. Source/artifact equivalence does not establish a live deployed module;
+the browser requires its exact reviewed observed protocol hashes before spending.
+See the [interface specification](https://docs.internetcomputer.org/references/ic-interface-spec/abstract-behavior/)
+for the module-hash contract.
+
+| Operation | Actual caller, destination and exact argument | Charges, deduplication and readback | Authority or irreversible effect |
+| --- | --- | --- | --- |
+| ICP payment | P -> ICP Ledger `icrc1_transfer(TransferArg { from_subaccount; to: Account; fee; amount; memo; created_at_time })` | Fresh `icrc1_fee`; save exact intent before signing. Reuse all fields; Duplicate names the original block. Exact block proves execution; TooOld alone proves no absence. | Only workflow-bound CMC, stake or return accounts. External-wallet sender is not assumed to be P. |
+| Quote | Replicated anonymous read -> CMC `get_icp_xdr_conversion_rate()` | Fresh timestamp/rate and maximum independently authorised ICP spend. | Before spending, protocol/policy, fee, quote and manager preflight must pass. |
+| Conversion | P -> CMC `notify_mint_cycles(record { block_index: nat64; to_subaccount: opt blob; deposit_memo: opt blob })` | Original ICP payment pays CMC's principal-derived P subaccount with MINT memo `0x544e494d`. Reuse that block; stored result, Processing and purged history are distinct. Refund response's optional ICP block must be independently verified. | Credits only P's chosen Cycles Ledger account. Successful conversion burns ICP; refund goes to original payer less protocol charges. |
+| Create C | P -> Cycles Ledger `create_canister(record { from_subaccount; created_at_time; amount: nat; creation_args: opt record { settings; subnet_selection } })` | Current `icrc1_fee` plus amount. Success names block/C. Duplicate may omit C: unresolved, never permission to create again. Failure names fee/refund blocks. Deduplication does not bind arbitrary settings, so exact reviewed request digest must. | Explicit `[P]`, zero compute/memory reservations, reviewed reserve. No provisional creation API in the claimed path. |
+| Install | P -> management `install_code(record { mode = variant { install }; canister_id = C; wasm_module; arg; sender_canister_version })` | Execution cycles; lost reply reconciles certified module hash and replicated initial plan binding. Never reinstall. | Actual controller check plus exact reviewed module; bind P, plan, nonce and fixed return account. |
+| Claim | C -> Governance `manage_neuron(record { id = null; neuron_id_or_subaccount = null; command = opt variant { ClaimOrRefresh = record { by = opt variant { MemoAndController = record { memo: nat64; controller = opt C } } } } })` | Current minimum stake; same C/nonce resolves same staking account. Independently read T/controller/account/stake/initial state. | No delegation goes to C; conflicting binding is an error. |
+| Configure | C -> Governance typed `manage_neuron`: `Configure(SetVisibility { visibility = opt 2 })`, `Follow { topic; followees }`, `Configure(IncreaseDissolveDelay { additional_dissolve_delay_seconds: nat32 })`, `RefreshVotingPower {}` | One bounded intent at a time and readback per effect. Reconcile additive lock before calculating remaining increase. | Reversible setup before separately reviewed long lock; no target hotkey, invented not-for-profit setter or shortening promise. |
+| Register | Existing eligible M -> Governance `manage_neuron(MakeProposal { action = RegisterKnownNeuron { id = opt T; known_neuron_data }; title; summary; url })` | Fresh rejection fee/eligibility review. Lost proposal reply stays unresolved pending exact readback. | Network-wide Governance decision, never nested management command or automatic browse action. Registration is neither immutability nor manager consent. |
+| Rehearse | M -> Governance `MakeProposal(ManageNeuron(T, RefreshVotingPower {}))`; other M vote through reviewed controls | Verify exact target/action, Executed status, execution timestamp, tally and readable electorate. Caller-supplied success flags are insufficient. | Ballots are filtered to caller-controlled/hotkey neurons. Insufficient independently readable electorate evidence blocks automatic finalisation. |
+| Recover stake | C -> Governance `manage_neuron(Disburse { to_account = opt fixed_return; amount })` after proven dissolved state | Exact fixed return account; ledger block proves the transfer. Ambiguity stays pending. Underpayment may require separately reviewed top-up before claim. | No immediate locked-stake refund or delay reduction. Starting dissolution requires separate consent. |
+| Quiesce | P -> management `stop_canister(record { canister_id = C })` | Verify settled intents and stopped state. Stop does not undo remote effects. | Seal before stopping; only explicitly safe unseal before uninstall can resume mutation. |
+| Remove code | P -> management `uninstall_code(record { canister_id = C; sender_canister_version })` | Certified module absence with controllers still `[P]`; export checkpoint before next step. | Destroys code/state; P still controls C. Resume using receipt and external reads, without automatic reinstall. |
+| Remove controllers | P -> management `update_settings(record { canister_id = C; settings.controllers = opt vec {}; sender_canister_version })` | Separate full-ID confirmation and fresh C/T association, module absence and sole P controller. Reconcile lost reply by certified system state. | Irreversible ordinary authority removal. Fresh full evaluator report determines compliance; no routine rollback. |
+
+Management delegation targets do not restrict methods, `canister_id` arguments or
+amounts. Exact review, real controller checks, inherited restrictions, short expiry
+and operation/route generations remain essential. The real-replica management and
+effective-canister routing gate must pass before enabling those capabilities. Fresh
+preflight cannot make separate Governance and management calls atomic or lock out
+concurrent legitimate managers.
+
+For the bootstrap's fixed Governance commands, only the audited pre-dispatch
+codes 3–8, 11, 13 and 14 establish a rejection without execution. Governance's
+`From<NervousSystemError>` converts Ledger errors to External (12), including a
+failure after an earlier fee burn or an uncertain remote call. External, unknown
+codes and malformed replies retain the original durable effect; a typed error is
+not a universal no-execution certificate. The executable implementation and error
+enum are checksum-bound in `protocol-pins.json`. Recording tests cover an effect
+followed by External; the real-protocol negative gate forces a Ledger refusal and
+requires C to retain its disbursement intent without a second financial dispatch.
+
+Sealing records management `canister_info.total_num_changes` in replicated state
+and its certified reply. Ordinary canister execution advances `canister_version`,
+so that execution counter is unsuitable for a persistent seal. Approved bootstrap
+code rejects every sealed mutation except unseal; unseal requires an independently
+observable controller-history change. The browser's explicit unseal path upgrades
+only the same approved module, compares the stable checkpoint, then calls unseal.
+Old sealed provenance is invalid after that history change. Native protocol gates
+must establish that stop preserves the history count and uninstall advances it.
+
+The additive anonymous update `controller_observation(neuron_id)` is the narrowly
+required backwards-compatible API extension. Pinned management `canister_info`
+cannot be called by browser ingress, and direct certified-data reads are forbidden.
+The stateless verifier already performs this management read for its reports. This
+helper returns the same replicated history counter with the exact public T-to-C
+binding, module/controllers and Governance observation time. It accepts no caller-
+supplied canister, command, credentials, payment or success flag and stores no
+creation/user data. Its two calls use a separate bounded operational guard with
+the same limits; the existing report budget and `check_neuron` interface/results
+remain unchanged. A retained predecessor Candid verifies compatibility. No Standard
+predicate, evaluator status, D-QUORUM API, state version or policy changes.
+
+The pinned HTTP endpoint implementation rejects direct requests for the
+`canister/C/certified_data` path with 404. It permits controllers, module hash and
+time, which remain independently certified. Source contract SHA-256 is in root
+`protocol-pins.json` (`read_state.rs`, revision `83f29e…`). Readiness does not
+request or trust an unsupported certified-data path. Failed browser attempts and
+the disproved legacy-route diagnostic are retained separately from qualification.
+
+The initial native real-protocol probe
+`real_cmc_conversion_and_cycles_ledger_creation_deduplicate` passed the pinned
+conversion/creation path, transfer/conversion/creation duplicates, a real failed
+creation with refund, a duplicate lacking a recoverable canister ID, and a failed CMC
+deposit with an independently decoded ICP refund to the original funding subaccount.
+For the pinned invalid-subnet case the loss was two Cycles Ledger fees plus CMC's
+100M-cycle bad-request penalty; this is not a universal refund/cost promise. The CMC
+deposit failure refunded original ICP less its two-transfer-fee penalty and refund
+transfer fee. These native probes use fixture callers and do not count as real-II
+delegation or positive signed-browser journey proof.
+
+The development real-II scope probe subsequently passed the actual signed funding,
+CMC conversion, Cycles Ledger creation and duplicate, bootstrap installation/call,
+stop, uninstall, certified empty-module/empty-controller and refused-reinstall path.
+The funding-only child was denied management by the replica. A child targeted only
+at C could call C but could not call management; the named management child targeting
+`[aaaaa-aa, C]` succeeded. The same management child could read another canister
+actually owned by P. Thus inclusion of `aaaaa-aa` does **not** constrain management
+arguments to C. Production UI must independently bind each reviewed request to its
+verified creation and recheck sole P authority. These are development probes, not the
+final unchanged-source browser-creation qualification or a mainnet compatibility claim.
+
+Pinned Governance initially claims a neuron with a seven-day dissolve delay
+(`INITIAL_NEURON_DISSOLVE_DELAY = 7 * ONE_DAY_SECONDS`), verified by real claim and
+configuration readback. The recoverable test profile therefore uses that short lock;
+it does not promise immediate disbursement. The native journey separately started
+dissolution, advanced the actual seven-day wait, verified an executed management
+proposal and independently decoded the eventual fixed-destination ledger return.
+The production Standard remains exactly 63,115,200 seconds.
+
+The repeated real-II development probe also verified public request-content plus
+IC-certified reply witnesses after code removal. They contain no signed ingress
+envelopes, keys or reusable delegations. Historical provenance verifies the exact
+request, BLS signature, delegated subnet/canister range and signed certificate time
+without expiring an authentic transition after 30 days. A certificate-anchored SDK
+clock is used only for that historical verification, subject to original request
+and present-future bounds. Missing or forged provenance blocks finalisation.
+Current canister state and credentials retain ordinary freshness checks independently. Local qualification may
+bind loopback port 4944 when another workspace owns 4943; origin, API and port must
+match in the reviewed plan and II fixture configuration.
+
+First installation additionally requires management `canister_status.version = 0`,
+an absent module, sole P control and the original certified Cycles Ledger creation
+reply. The pinned management response calls this field `version`, not
+`canister_version` (source `rs/types/management_canister_types/src/lib.rs`, SHA-256
+`929c3330996802635006b50ce71ccfadf63109fd112133c4b33e6de36c71a37b`). Installation
+or code removal changes that version. An old pre-install receipt is therefore not
+enough to authorise installing into a previously emptied controller. This check
+uses replicated controller-authorised status; management `canister_info` is not
+accepted as an ingress update. Every read/write pair still has a non-atomic gap.
+
+The receipt retains every reviewed plan revision and binds each financial/proposal
+intent to its original plan digest. A proposed replacement is exported before
+dispatch and reconciled by a replicated read at its exact revision after a lost
+reply. Profile, P, network/origin, provisioning amounts/fee, deterministic account
+inputs, bootstrap digest and fixed return account cannot change. A changed manager,
+metadata or reviewed stake invalidates old readiness approvals. Open/adopted or
+unresolved external proposals block replacement. A profile change starts a separate
+creation and cannot turn a test receipt into finalisation authority.
+
+The plan digest is SHA-256 over the domain `dendrite-creation-plan-v1` and an
+explicit ordered binary encoding of every Plan field. Integers use fixed-width
+little endian; blobs/UTF-8 strings and vectors carry a 32-bit length; profile,
+network and metadata presence use one-byte tags. The implementation and
+Rust-generated cross-language vectors define the exact order. It is not a hash of
+Candid bytes: equivalent Rust/SDK Candid type tables may produce different bytes.
+The monetary request digest, in contrast, binds the exact original wire argument
+that was reviewed and sent. Candid-decoded integer vectors are normalised to plain
+JSON arrays in receipts.
+
+Proposal submission reserves one exact operation in C before the browser sends
+Governance its separately reviewed request. C grants dispatch once, persists that
+grant across upgrades and resolves the exact proposer, creation/operation marker,
+target and action through Governance. A grant whose reply is lost before the browser
+can send, or a MakeProposal response lost without any discoverable proposal ID, can
+remain unresolved. An original full-ingress-bound certified typed no-creation
+refusal can release a reservation while retaining its audit; unknown, external or
+pruned outcomes cannot. Time passing does not release that grant. This deliberate
+fail-closed boundary can require external investigation; receipts cannot prove a
+negative or confer a force-clear privilege. An external proposer can instead export
+the exact typed registration payload/Candid, review their own eligibility and fee,
+and submit independently. Registration remains pending until actual metadata agrees.
+
+Pinned Governance filters individual ballots by the reader's authority.
+Finalisation uses the exact reserved proposal, actual execution and aggregate
+majority, separately checking fresh target following. The creator may control
+only one manager. Other managers review the certified creation reservation and
+vote through their own Governance-scoped II sessions; this path exposes no owner
+commands or ordinary-management bypass. Aggregate execution does not identify
+historical voters or prove uninterrupted manager membership. No manager keys or
+following are changed to give the creator additional authority.
+
+Unused workflow ICP returns only to the reviewed legacy account, with its own exact
+intent, fee, timestamp and ledger history anchor. Unknown replies are reconciled
+against direct or Ledger-endorsed archived blocks. Dissolved-stake recovery similarly
+binds the exact amount and current Governance fee in C's typed command; changed
+amounts/fees fail before dispatch. C retains an ambiguous disbursement and accepts
+only its matching fixed-destination block, including time and amount/fee checks.
+Converted/spent cycles are never counted as returned ICP. Locked stake must wait;
+there is no promise that all provisioning costs can be recovered.
+
+Anyone can call the pinned `ClaimOrRefresh(MemoAndController)` for an explicitly
+named controller. This does not transfer neuron control to the payer or caller.
+The bootstrap refuses an externally pre-existing neuron unless its own durable
+claim intent or existing binding proves continuity. Such interference is a visible
+conflict, not permission to adopt a different neuron, nonce or creation canister.
 
 ```text
 Public route report:

@@ -6,5 +6,6 @@
 /.icp/cache/
 *.wasm
 *.wasm.gz
+!/canisters/dendrite/public/generated/*.wasm
 *.pem
 .env*

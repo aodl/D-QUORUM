@@ -3,9 +3,11 @@
 The normative contract is `DENDRITE_BUILD_SPEC.md`; this document is a reviewer index. A target must be returned as a full public neuron with valid `known_neuron_data`, structurally configure at least one concrete committed topic, remain not dissolving at 63,115,200 seconds, have positive effective stake, and retain undecayed voting power refreshed within six nominal months (15,778,800 seconds). The dissolve delay and refresh threshold are compile-time constants derived from pinned `dfinity/ic@d55a0f4d4edfabe49d8fd543aff473084cb741f2`; the verifier does not query network economics.
 
 Its controller must resolve via `canister_info` to a canister with no module hash and
-no controllers. The target has exactly zero hotkeys. Proposal-based dissolution must
-be disabled with `not_for_profit = false`, preventing the manager group from using a
-Neuron Management proposal to start dissolving the neuron.
+no controllers. The target has exactly zero hotkeys and `not_for_profit = false`.
+That flag is a required Standard setting, not a universal prohibition on dissolution,
+maturity disbursement or economic commands. The pinned executable Governance applies
+command-specific permissions; `StartDissolving` remains available through permitted
+management proposals. The evaluator's predicate and status semantics are unchanged.
 
 The browser may evaluate those same controller rules from fresh IC-certified system
 state for the exact controller principal reported by its validated, replica-signed

@@ -39,7 +39,7 @@ const samePrincipal = (left, right) => left.compareTo(right) === "eq";
 
 // Structural checks complement SDK signatures and replica verification; they do not
 // authenticate the signatures themselves. Unknown delegation restrictions fail closed.
-function inspectChain(identity, now, maximum = 20) {
+function inspectChain(identity, now, maximum = 20, requiredTargets = [NNS_GOVERNANCE_PRINCIPAL], ttl = AUTHENTICATION_DELEGATION_TTL_NS) {
   const chain = identity?.getDelegation?.();
   const bytes = (value, bound) => value instanceof Uint8Array && value.length > 0 && value.length <= bound;
   if (!chain || !Array.isArray(chain.delegations) || !chain.delegations.length || chain.delegations.length > maximum || !bytes(chain.publicKey, 4096)) {
@@ -47,7 +47,7 @@ function inspectChain(identity, now, maximum = 20) {
   }
   const principal = exactPrincipal(identity);
   if (!samePrincipal(principal, Principal.selfAuthenticating(chain.publicKey))) throw new Error("Delegation root does not match the application principal.");
-  let expiration = now + AUTHENTICATION_DELEGATION_TTL_NS;
+  let expiration = now + ttl;
   const seenKeys = new Set([Array.from(chain.publicKey).join(",")]);
   for (const signed of chain.delegations) {
     const link = signed?.delegation;
@@ -59,8 +59,10 @@ function inspectChain(identity, now, maximum = 20) {
     seenKeys.add(publicKey);
     if (typeof link.expiration !== "bigint" || link.expiration <= now || link.expiration > (1n << 64n) - 1n) throw new Error("Internet Identity delegation is expired or malformed.");
     if (link.targets !== undefined) {
-      if (!Array.isArray(link.targets) || !link.targets.length || link.targets.length > 1000 || !link.targets.every((target) => target instanceof Principal) || !link.targets.some((target) => samePrincipal(target, NNS_GOVERNANCE_PRINCIPAL))) {
-        throw new Error("Internet Identity ancestor delegation does not permit NNS Governance.");
+      if (!Array.isArray(link.targets) || !link.targets.length || link.targets.length > 1000 || !link.targets.every((target) => target instanceof Principal) || !requiredTargets.every((required) => link.targets.some((target) => samePrincipal(target, required)))) {
+        throw new Error(requiredTargets.length === 1 && samePrincipal(requiredTargets[0], NNS_GOVERNANCE_PRINCIPAL)
+          ? "Internet Identity ancestor delegation does not permit NNS Governance."
+          : "Internet Identity ancestor delegation does not permit the named provisioning capability.");
       }
     }
     if (link.expiration < expiration) expiration = link.expiration;
@@ -94,7 +96,69 @@ export async function deriveGovernanceSession(bootstrap, bootstrapPublicKey) {
   return validateGovernanceDelegation(identity);
 }
 
+export const PROVISIONING_DELEGATION_TTL_NS = 900_000_000_000n;
+export const ICP_LEDGER_CANISTER_ID = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+export const CMC_CANISTER_ID = "rkp4c-7iaaa-aaaaa-aaaca-cai";
+export const CYCLES_LEDGER_CANISTER_ID = "um5iw-rqaaa-aaaaq-qaaba-cai";
+export const PROVISIONING_PROFILES = Object.freeze(["FundProvisioning", "ManageBootstrap", "CallBootstrap"]);
+
+function provisioningTargets(profile, bootstrapCanisterId) {
+  if (!PROVISIONING_PROFILES.includes(profile)) throw new Error("Unknown provisioning capability profile.");
+  if (profile === "FundProvisioning") {
+    if (bootstrapCanisterId !== undefined) throw new Error("Funding capability does not accept a target list or canister override.");
+    return [ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID].map((text) => Principal.fromText(text));
+  }
+  if (typeof bootstrapCanisterId !== "string") throw new Error("An exact verified bootstrap canister is required.");
+  const canister = Principal.fromText(bootstrapCanisterId);
+  if (canister.toUint8Array().at(-1) !== 1 || [NNS_GOVERNANCE_CANISTER_ID, ICP_LEDGER_CANISTER_ID, CMC_CANISTER_ID, CYCLES_LEDGER_CANISTER_ID].includes(canister.toText())) {
+    throw new Error("Provisioning requires an application-canister binding.");
+  }
+  // Management target restrictions do not constrain canister_id arguments. The
+  // exact reviewed C and actual sole-controller check remain separate safeguards.
+  return profile === "ManageBootstrap" ? [Principal.managementCanister(), canister] : [canister];
+}
+
+export function validateProvisioningDelegation(identity, profile, bootstrapCanisterId, nowNanoseconds = BigInt(Date.now()) * 1_000_000n) {
+  const required = provisioningTargets(profile, bootstrapCanisterId);
+  const { chain, principal } = inspectChain(identity, nowNanoseconds, 20, required, PROVISIONING_DELEGATION_TTL_NS);
+  const leaf = chain.delegations.at(-1).delegation;
+  if (!Array.isArray(leaf.targets) || leaf.targets.length !== required.length
+    || !required.every((target) => leaf.targets.some((candidate) => samePrincipal(target, candidate)))
+    || leaf.expiration > nowNanoseconds + PROVISIONING_DELEGATION_TTL_NS
+    || chain.delegations.some(({ delegation }) => delegation.expiration < leaf.expiration)) {
+    throw new Error("Unscoped, broadened or overlong provisioning signer.");
+  }
+  return Object.freeze({ principal, signingIdentity: identity, profile, bootstrapCanisterId,
+    validate() { validateProvisioningDelegation(identity, profile, bootstrapCanisterId); return true; } });
+}
+
+export async function deriveProvisioningSession(bootstrap, bootstrapPublicKey, profile, bootstrapCanisterId) {
+  const targets = provisioningTargets(profile, bootstrapCanisterId);
+  const { chain, principal, expiration } = inspectChain(bootstrap, BigInt(Date.now()) * 1_000_000n, 19, targets, PROVISIONING_DELEGATION_TTL_NS);
+  const leaf = chain.delegations.at(-1).delegation.pubkey;
+  if (!(bootstrapPublicKey instanceof Uint8Array) || leaf.length !== bootstrapPublicKey.length || !leaf.every((byte, index) => byte === bootstrapPublicKey[index])) {
+    throw new Error("Internet Identity delegation does not bind the requested provisioning key.");
+  }
+  const key = await ECDSAKeyIdentity.generate({ extractable: false });
+  const chainWithChild = await DelegationChain.create(bootstrap, key.getPublicKey(), new Date(Number(expiration / 1_000_000n)), { previous: chain, targets });
+  const identity = DelegationIdentity.fromDelegation(key, chainWithChild);
+  if (!samePrincipal(exactPrincipal(identity), principal)) throw new Error("Provisioning identity changed the application principal.");
+  return validateProvisioningDelegation(identity, profile, bootstrapCanisterId);
+}
+
 export function createBrowserAuthSession(options = {}) {
+  return browserSession(options, deriveGovernanceSession, AUTHENTICATION_DELEGATION_TTL_NS);
+}
+
+export function createBrowserProvisioningSession(profile, bootstrapCanisterId, options = {}) {
+  provisioningTargets(profile, bootstrapCanisterId);
+  // The application's ordinary login owns the SDK's singleton idle lifecycle.
+  // A capability's explicit disposal must not exit that shared manager: exit()
+  // fires every registered callback, including the application's reload handler.
+  return browserSession(options, (bootstrap, key) => deriveProvisioningSession(bootstrap, key, profile, bootstrapCanisterId), PROVISIONING_DELEGATION_TTL_NS, false);
+}
+
+function browserSession(options, deriveSession, maximumTtl, managesApplicationIdle = true) {
   const configuration = identityConfiguration(options);
   const currentOrigin = options.currentOrigin ?? globalThis.location?.origin;
   let originError;
@@ -135,8 +199,8 @@ export function createBrowserAuthSession(options = {}) {
           ...(derivationOrigin ? { derivationOrigin } : {}),
         });
         client = authClient;
-        const bootstrap = await authClient.signIn({ maxTimeToLive: AUTHENTICATION_DELEGATION_TTL_NS });
-        session = await deriveGovernanceSession(bootstrap, bootstrapKey.getPublicKey().toDer());
+        const bootstrap = await authClient.signIn({ maxTimeToLive: maximumTtl });
+        session = await deriveSession(bootstrap, bootstrapKey.getPublicKey().toDer());
       } finally {
         try { if (authClient) await authClient.signOut(); } finally { client = undefined; busy = false; }
       }
@@ -145,7 +209,7 @@ export function createBrowserAuthSession(options = {}) {
         if (token !== generation) throw new Error("Authentication session has been signed out.");
         return session.validate();
       } });
-      if (globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => {
+      if (managesApplicationIdle && globalThis.window && globalThis.document) idle = IdleManager.create({ onIdle: () => {
         // SDK exit() invokes callbacks even during manual teardown. Clear the
         // reference first, and never recursively exit an already exiting manager.
         if (!idle) return;

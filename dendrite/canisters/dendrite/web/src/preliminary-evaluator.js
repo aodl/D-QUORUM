@@ -233,10 +233,10 @@ export function evaluatePreliminary(neuronId, evidence) {
     target.hotKeys.length ? `${target.hotKeys.length} hotkey${target.hotKeys.length === 1 ? "" : "s"}: ${hotkeyText}` : "0 hotkeys",
     "no hotkeys"));
   rules.push(evidencedRule("DENDRITE-CONTROL-005", target.notForProfit === false,
-    "Proposal-based dissolution is disabled because not_for_profit is false.",
+    "The required not_for_profit setting is false. Governance permissions still depend on the command.",
     target.notForProfit === true
-      ? "Proposal-based dissolution is enabled because not_for_profit is true. The manager group could vote to start dissolving the neuron."
-      : "The not_for_profit setting was unavailable, so proposal-based dissolution could not be assessed.",
+      ? "The not_for_profit setting is true; the Standard requires false. This flag is not a universal dissolution or economic-operation lock."
+      : "The required not_for_profit setting was unavailable.",
     `not_for_profit = ${target.notForProfit ?? "unavailable"}`, "not_for_profit = false"));
   const managers = target.followees.get(1) ?? [];
   rules.push(evidencedRule("DENDRITE-NM-001", managers.length >= 5 && managers.length <= 15,
@@ -311,7 +311,7 @@ export function evaluatePreliminary(neuronId, evidence) {
                 : false;
     if (unavailable) setStatus(result, "Indeterminate",
       result.rule_id === "DENDRITE-CONTROL-005"
-        ? "The not_for_profit setting was unavailable, so proposal-based dissolution could not be assessed."
+        ? "The required not_for_profit setting was unavailable."
         : `${result.message}; mandatory evidence was unavailable`);
   }
   const distinctManagers = new Set(managers.map(key)).size;

@@ -18,8 +18,20 @@ controller query/update, `/call`, and every unexpected canister destination.
 ## Canonical Docker build
 
 The digest-pinned `Dockerfile.repro`, pinned lockfiles, and `linux/amd64` platform
-produce only `dendrite.wasm`, `frontend/`, `asset-manifest.json`,
+produce only `dendrite.wasm`, `bootstrap/`, `frontend/`, `asset-manifest.json`,
 `build-configuration.txt`, and deterministic `SHA256SUMS`. The latter excludes itself.
+
+The creation candidate builds the temporary bootstrap first, then embeds its raw
+Wasm, exact Candid and checksum manifest through the certified frontend path, then
+builds the service. Both forced-clean builds must have identical complete file
+sets and bytes, including the embedded bootstrap identity. Docker receives only a
+Git archive of the unchanged reviewed source, excluding ignored operator files.
+Consolidated qualification retains Dendrite candidates under
+`dist/dendrite-canonical/<revision>/` and D-QUORUM candidates under
+`dist/d-quorum-canonical/<revision>/`; existing production release records and
+deployment recipes remain separate. Canonical creation acceptance must install
+those exact bootstrap bytes. Local-origin browser assets and native-passkey window
+fixtures are independently recorded, never labelled identical production bundles.
 
 ## Local determinism check
 
@@ -31,10 +43,13 @@ useful diagnostics, not the canonical public container artifact.
 The canonical comparison performs two clean no-cache Docker builds into separate temporary directories and
 fails on any missing, extra, or different file or manifest.
 
-## Scoped authentication integration candidate — 2026-11
+## Scoped authentication integration release — 2026-11
 
-This is an undeployed integration candidate. Its completed source-stable acceptance
-record and independently checksummed review bundle are reported in the root
+This release was upgraded to production on 2026-11-08 at the user's explicit request;
+installed-module and certified-asset evidence, command results, and the incomplete
+additional browser qualification are retained in the [production record](production-record.md).
+Its completed source-stable integration acceptance record and independently
+checksummed review bundle are reported in the root
 [qualification report](../../../docs/qualification.md). Updating the local prebuilt
 binding does not authorise an installation, upgrade, activation or network write.
 
@@ -49,15 +64,15 @@ Keep these identities separate:
   `a11efe497e802c6f93b54540043b73505c2271b46219785d2dd90657146933af`.
   Those differing frontend inputs explain why equality with the older bound release
   was not established; this was not a failed two-build reproducibility comparison.
-- The latest operator-supplied [production record](production-record.md) records
+- The historical 2026-07-29 [production record](production-record.md) records
   `5b20aa2aa7b3d3b6706698bbd75dfaf6775a96d27c744fd230e7fd709ba448eb`
   at source `694e1c2a47f3a2fc238b9b3799748610ca22b274`, verified on
   2026-07-29. This historical record is unchanged and is not a fresh observation.
-- The intended scoped-authentication candidate is
+- The deployed scoped-authentication release is
   `5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d`.
   It uses `app.eb36d22b3c1a1093.js` and the unchanged
-  `styles.008b98904943b9ca.css`. The final qualification record must bind this hash to
-  its exact source and both clean build sets. The production configuration remains
+  `styles.008b98904943b9ca.css`. The 2026-11-08 production record binds this hash to
+  its exact source and both clean canonical build sets. The production configuration remains
   unchanged; the separate local-browser configuration and Wasm are labelled as such.
 
 The fixed candidate in `icp.yaml` and `mainnet-deploy.sh` must agree with the exact
@@ -85,6 +100,12 @@ delegation, and all rule groups and rows. Header characteristics, Raw Report cop
 and navbar authentication are directly available. Status filtering never expands a group. Section summaries and group
 counts are right aligned. Proposal-based dissolution is described through the
 security consequence of `not_for_profit = false`.
+
+Creation-tranche correction: the preceding paragraph records historical presentation,
+not a protocol security guarantee. `not_for_profit = false` is the unchanged Standard
+predicate. It does not prevent every dissolution or economic operation; the pinned
+executable Governance authorises commands individually, including management-proposal
+`StartDissolving`. New candidate presentation uses this narrower, verified description.
 
 Two clean local builds were byte-identical. Two forced-clean `--no-cache`
 `linux/amd64` Docker exports had identical file sets, byte-identical files, and

@@ -22,10 +22,17 @@ while i<len(b):
             name,k=string(k);kind=b[k];_,k=leb(k+1);exports.append(name)
     i=end
 component=sys.argv[2] if len(sys.argv)>2 else 'dquorum'
+if component=='bootstrap':
+    expected={'canister_update status','canister_update replace_plan','canister_update advance'}
+    allowed=expected|{'memory','get_candid_pointer','canister_init','canister_post_upgrade','__data_end','__heap_base'}
+    assert set(exports)==allowed,(set(exports)-allowed,allowed-set(exports))
+    assert not any(any(word in x.lower() for word in ('debug','admin','test','probe','timer','query')) for x in exports),exports
+    print(json.dumps({'component':'dendrite-bootstrap','wasm_sha256':hashlib.sha256(b).hexdigest(),'wasm_bytes':len(b),'exports':exports,'candid_section':'require runtime extraction and structural interface comparison'},indent=2))
+    sys.exit(0)
 if component=='dendrite':
-    for marker in (b'scopeProbeResult',b'Scripted lost Governance mutation response after dispatch',b'invalid-certified-body',b'publicEvidenceProbe'):
+    for marker in (b'scopeProbeResult',b'Scripted lost Governance mutation response after dispatch',b'invalid-certified-body',b'publicEvidenceProbe',b'__dendriteTestRetainII',b'creationNativeAuthenticatorWindow'):
         assert marker not in b,'test-only browser probe present in production artifact: '+marker.decode()
-    expected={'canister_query http_request','canister_update check_neuron'}
+    expected={'canister_query http_request','canister_update check_neuron','canister_update controller_observation'}
     allowed=expected|{'memory','get_candid_pointer','canister_init','canister_post_upgrade','__data_end','__heap_base'}
     assert set(exports)==allowed,(set(exports)-allowed,allowed-set(exports))
     assert not any(any(word in x.lower() for word in ('debug','admin','test','probe')) for x in exports),exports
