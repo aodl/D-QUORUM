@@ -110,21 +110,30 @@ use automatic mode or `reinstall`. Dendrite has no application stable state; upg
 replaces code and certified assets and resets only heap-local guards. Browser sessions,
 receipts, and unresolved-outcome markers are also outside canister stable state.
 
-For the deployed November 13 experimental release, `icp.yaml` and the guard now
-bind `dist/release/dendrite.wasm` to
-`3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc`.
-The executed upgrade used a separately checksum-verified candidate at
-`dist/candidates/4dcf91d80efdc12b27817d1ece2561c9fdf45597/dendrite.wasm`;
-its bytes are identical to the current release. The prior verified Wasm is retained
-locally as `dist/deployment-20261113/previous-dendrite.wasm`. These binding and
-record changes do not qualify a new application binary; application qualification
-remains the successful hosted run linked in the production record.
+For the November 13 reviewed-mainnet compatibility upgrade, `icp.yaml` and the
+guard bind `dist/release/dendrite.wasm` to
+`682ea727371a7d7cc110e29f89e331620efd545dea2412020f06bb2c6a4d54ec`.
+The explicit candidate at `dist/candidates/9863d7b0dbe19756579b4c57192b3101d0dc7115/dendrite.wasm`
+was independently verified before the one upgrade invocation; its bytes are
+identical to the promoted release. The preceding verified release is retained
+locally at `dist/protocol-review-20261113/previous-release/` and
+`dist/protocol-review-20261113/previous-dendrite.wasm`.
 
-The creation UI and certified bootstrap are live for acceptance testing, but the
-November 13 read-only checks found all four live dependency module hashes outside
-the compiled creation pins. Creation remains blocked before spending. Keep testing
-unfunded; do not bypass the module checks. Live II interaction, funded creation,
-recovery and finalisation remain separate manual acceptance work.
+The static reviewed-mainnet registry is separate from unchanged PocketIC fixture
+pins. All four current installed module identities were verified through certified
+production reads and matched checksum-verified published executables. Unknown or
+missing evidence still blocks spending. The production record documents the
+source/behavior review, native and signed-browser qualification, and actual upgrade.
+Deployment metadata changes do not create or qualify different application bytes.
+
+The creation UI, four-canister compatibility report and certified bootstrap are
+live. Begin with an unfunded one-manager RecoverableTest review while signed in as
+that manager's actual controller or hot key. Obtain a fresh conversion quote and
+adjust the provisioning budget before funding: the observed quote required more
+than the default 1 ICP for a 2 trillion cycle allocation plus fees. Live financial
+creation remains manual acceptance work; no mainnet financial operation was used
+for deployment verification. Keep `DENDRITE_SMOKE_NEURON_ID` unset for strictly
+read-only checks.
 
 ## Post-install verification
 

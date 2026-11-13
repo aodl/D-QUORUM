@@ -5,6 +5,130 @@
 Only an operator-supplied real deployment result may change this into completed
 evidence. Never include private identity or authentication material.
 
+## Experimental reviewed-mainnet compatibility upgrade — 2026-11-13
+
+**DEPLOYED — exact canonical application, certified assets and read-only creation
+preflight verified.** This is the explicitly authorised experimental upgrade of
+the existing Dendrite canister only. Earlier release and failure records remain
+intact below; no mainnet financial or Governance update was performed.
+
+| Field | Recorded value |
+| --- | --- |
+| Application source | `9863d7b0dbe19756579b4c57192b3101d0dc7115` |
+| Hosted qualification | [Run 43474576752](https://github.com/aodl/D-QUORUM/actions/runs/43474576752), all 16 jobs successful |
+| Hosted canonical artifact | `canonical-candidate`, ID `14068419377`; ZIP SHA-256 `576655599095436852b92dd529222ff931fdd48ccc83488d9292fcc6a3d59ae7` |
+| Signed-browser qualification source | `9863d7b0dbe19756579b4c57192b3101d0dc7115`; identical Dendrite subtree `608c1f874ceee24d6451fe8dd793c00512823994` |
+| Canister / canonical origin | `hp4av-oiaaa-aaaar-qcaha-cai` / [Dendrite creation](https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io/#/create) |
+| Previous installed module | `3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc` |
+| New installed module / canonical Wasm SHA-256 | `682ea727371a7d7cc110e29f89e331620efd545dea2412020f06bb2c6a4d54ec` |
+| Embedded certified bootstrap SHA-256 | `099836276a1282afd94f5676282ff20cbcbbb0f0451dfaa94166f9b78dd88bc2` |
+| Bootstrap manifest SHA-256 | `54d1c7fb254024f12d77e7269b7babb2ef850f1355f80989321873874a1c68a6` |
+| Bootstrap source fingerprint | `464aca60a3c6298f051dff7b2d1e9e707b3acacb6bab5240ad67cb13bd92cea0` |
+| Asset manifest SHA-256 | `0ba1f562bc19d48a3c62cc24a272bb99a916947982d70fdd85d19265a74708a3` |
+| Content-addressed JavaScript SHA-256 | `61a8f3bbe0a275e3a21d115f64fd00b11a6d3d9fdcabd135885b0ae282a31b75` |
+| Stylesheet SHA-256 | `7b2188f014be364ac6ea3ffcd7b37365bb352a7df3185e21efbf6e35f5def453` |
+| Lifecycle client / identity / operator | `dfx 0.31.0` / `codex_local` / `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae` |
+| Controllers before and after | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae`, `zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe` |
+| Cycles immediately before / after | `4_698_232_983_577 Cycles` / `4_629_419_411_030 Cycles` |
+| Observed cycle decrease | `68813572547` including upgrade and intervening normal activity; no top-up |
+| Freezing threshold before / after | `7_776_000 Seconds` / `7_776_000 Seconds` |
+| Upgrade invoked / status verified | `2026-11-13T19:16:23.480525+00:00` / `2026-11-13T19:16:55.830388+00:00` |
+| Certified public assets verified | `2026-11-13T19:17:45.947Z` |
+| Conditional actual production preflight | `2026-11-13T19:17:37.216Z`, successful, no signer or updates |
+
+The current `codex_local` principal was independently checked in the live
+controller list. The upgrade command was issued once, followed by status readback:
+
+```sh
+DFX_IDENTITY=codex_local DFX_WARNING=-mainnet_plaintext_identity \
+  dfx canister install hp4av-oiaaa-aaaar-qcaha-cai --network ic --mode upgrade \
+  --wasm /home/codexdev/src/D-QUORUM/dendrite/dist/candidates/9863d7b0dbe19756579b4c57192b3101d0dc7115/dendrite.wasm \
+  --argument '()'
+```
+
+The warning setting only suppresses the existing plaintext-identity warning.
+No private credential was read out or exported. Controllers, canister ID,
+allocation settings, freezing threshold, reserved-cycle limit, Wasm memory settings
+and public log visibility were unchanged. Only ordinary upgrade execution cycles
+were spent; there was no transfer, funding, neuron creation, NNS proposal,
+controller mutation, blackholing, D-QUORUM deployment or activation.
+
+Two independent clean no-cache canonical builds produced byte-identical exports.
+Their complete checksums, production configuration, runtime Candid and embedded
+bootstrap manifest/bytes were verified. The explicit candidate recipe prevented
+selection of the preceding release. After installed-module and asset verification,
+`dist/release`, the tracked recipe and deployment guard were bound to the exact
+new bytes. These final binding/documentation edits are release metadata, not a
+new application binary or a claim of another hosted qualification.
+
+Source-bound hosted run 43474576752 passed all 16 jobs, including signed creation, canonical reproducibility and integrated readiness. Required component checks, unit/protocol tests, coverage, dependency scan
+and SBOM generation passed. Python qualification-runner regressions passed 24/24;
+bootstrap Rust units 29/29; fresh-versus-historical protocol regressions 87/87;
+frontend coverage 356/356; pure creation 94/94; canonical scope-builder regressions
+17/17; archived BLS refusal/receipt checks 5/5. Rust line coverage was 85.82%;
+frontend line/branch/function coverage 95.51% / 85.70% / 91.31%, above unchanged 85%
+thresholds. Eight focused real PocketIC scenarios passed: three retain the exact
+local fixture pins and five execute checksum-verified published mainnet binaries,
+including mint/create deduplication, dispatch reservation, recoverable creation,
+production registration/finalisation and Governance refusal behavior. The exact
+canonical bootstrap passed the native production lifecycle and canonical real-II
+production creation/finalisation journey. The separate full signed-browser lane
+also passed historical one-manager creation/migration, 90-day payment recovery
+and controller recovery using its reviewed local-build fixture, and the production
+registration, refusal retention, quorum rehearsal, finalisation and management journey.
+These monetary scenarios ran only in PocketIC, never mainnet.
+
+Failures are retained separately: the mainnet-ledger companion archive expectation
+was corrected in test fixtures; two bounded orchestration timeouts and initial-II
+channel closures did not qualify their runs; the historical recovery scenario's
+initial-module assertion was corrected to require its archived executable before
+migration and the canonical executable afterwards. Initial unbound II setup uses the existing one-retry fresh-context policy before any manager authority or funds exist; failed attempts are retained and bound capability sessions never restart. An unsuccessful public-asset warmup diagnostic was removed; ordinary SDK loading is retained. Production SDK, certificate,
+delegation, transaction and financial recovery limits were not relaxed. The
+[exact-source hosted run 43474576752](https://github.com/aodl/D-QUORUM/actions/runs/43474576752)
+passed all 16 jobs. The earlier failed run 43434102278 remains retained as failure
+evidence; its quinn-udp advisory was fixed by the 0.5.16 lockfile update, and the
+browser driver now skips disabled Continue controls before selecting the remembered
+identity. No old passing run substitutes for the new exact-source qualification.
+
+All active public assets, index/manifest and alternative-origin document matched
+the canonical export byte-for-byte. IC certificate BLS signatures, production root
+key/delegation/canister/time checks and certified-data witness roots verified;
+certification v2 and popup-compatible COOP/CSP/nosniff headers remained present.
+The current `099836276a1282afd94f5676282ff20cbcbbb0f0451dfaa94166f9b78dd88bc2` bootstrap and previous `ac7e2907…32b107` asset remain
+available with exact reviewed hashes. Identity provider `https://id.ai/authorize`,
+API `https://icp-api.io` and `{"alternativeOrigins":[]}` are unchanged. Anonymous
+Chrome browsing still renders the factual 23-rule compliance report and the
+updated creation form without an update call. `DENDRITE_SMOKE_NEURON_ID` was unset.
+
+Fresh read-only production evidence supports all four exact installed versions
+listed in the **Read-only mainnet protocol review** below. The original CMC error
+was a real module mismatch, not missing certified evidence; all four installed
+identities differed from local fixture pins. Cycles Ledger is the same executable
+in a verified compressed encoding. Published artifact digests and source reviews
+are separate provenance evidence from certified installed-module state. Unknown
+versions and missing/malformed certificates continue to block monetary actions;
+historical financial/refusal witnesses retain their original executable binding.
+
+The actual conditional one-manager preflight succeeded for public manager
+`428687636340283207` and its observed controller authority
+`mucdz-5afc2-k53bs-7cxj4-nb35w-4ofwx-ju435-o6zg7-vtqas-ulmvx-mqe`. This does not claim an authenticated
+session as that person or prove the user's authority. Nine actual anonymous
+production API probes passed. At the observed conversion rate the 1 ICP default
+provisioning budget was below the existing guard's required amount for 2 trillion
+cycles plus fees; obtain a fresh quote and increase the budget before funding.
+Fresh post-upgrade quote observed `2026-11-13T19:17:46.914Z`: `19156` XDR permyriad per ICP; the existing guard requires at least **1.04441592 ICP for provisioning 2 trillion cycles**, separately from stake. The default 1 ICP budget was not changed.
+RecoverableTest remains non-compliant, controller-recoverable and ineligible for
+irreversible finalisation. Final-origin II/popup/sign-out, UX and voluntarily funded
+creation remain manual acceptance work; no mainnet financial success is claimed.
+
+Bounded generated evidence is retained locally, ignored by Git, under
+`dist/protocol-review-20261113/`, including canonical exports, prior verified
+release, original failures, qualification logs, `upgrade-invocation.json`,
+`upgrade.log`, status before/after, `deployment-result.json`, certified asset and
+read-only mainnet reports, and browser screenshots. These plain paths are local
+operator retention locations, not published artifact URLs. Earlier records below
+are preserved.
+
 ## Experimental creation workflow upgrade — 2026-11-13
 
 **DEPLOYED for hands-on acceptance testing. Creation remains blocked before
