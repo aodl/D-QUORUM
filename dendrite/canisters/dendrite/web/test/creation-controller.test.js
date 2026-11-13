@@ -45,8 +45,8 @@ function fixture(shared,production=false){
   transport:{financialWithWitness:async(actor,method,args,binding)=>{
     const type=method==='icrc2_approve'?creationArgumentTypes.approve:creationArgumentTypes.transfer,value=await actor[method](args),request=binding?.request??{request_type:'call',canister_id:'ryjl3-tyaaa-aaaaa-aaaba-cai',method_name:method,arg:bytesHex(IDL.encode([type],[args])),sender:owner.toText(),ingress_expiry:String(BigInt(Date.now()+300000)*1000000n),nonce:null};
     const errors={BadFee:IDL.Record({expected_fee:IDL.Nat}),InsufficientFunds:IDL.Record({balance:IDL.Nat}),TooOld:IDL.Null,CreatedInFuture:IDL.Record({ledger_time:IDL.Nat64}),Duplicate:IDL.Record({duplicate_of:IDL.Nat}),AllowanceChanged:IDL.Record({current_allowance:IDL.Nat}),Expired:IDL.Record({ledger_time:IDL.Nat64}),GenericError:IDL.Record({error_code:IDL.Nat,message:IDL.Text}),TemporarilyUnavailable:IDL.Null};
-    const reply=IDL.encode([IDL.Variant({Ok:IDL.Nat,Err:IDL.Variant(errors)})],[value]),certificate=bytesHex(recordingCertificate(undefined,state.certificates.size+1));state.certificates.set(certificate,reply);state.certificateModules??=new Map();state.certificateModules.set(certificate,moduleHash('ryjl3-tyaaa-aaaaa-aaaba-cai'));
-    return {system:{moduleHash:hexBytes(state.wrongFinancialModule?'00'.repeat(32):moduleHash('ryjl3-tyaaa-aaaaa-aaaba-cai'))},value,witness:{request,request_id:binding?.request_id??bytesHex(requestIdOf(witnessRequestContent(request))),certificate}};
+    const reply=IDL.encode([IDL.Variant({Ok:IDL.Nat,Err:IDL.Variant(errors)})],[value]),certificate=bytesHex(recordingCertificate(undefined,state.certificates.size+1));state.certificates.set(certificate,reply);state.certificateModules??=new Map();state.certificateModules.set(certificate,state.witnessModule??moduleHash('ryjl3-tyaaa-aaaaa-aaaba-cai'));
+    return {system:{moduleHash:hexBytes(state.wrongFinancialModule?'00'.repeat(32):(state.witnessModule??moduleHash('ryjl3-tyaaa-aaaaa-aaaba-cai')))},value,witness:{request,request_id:binding?.request_id??bytesHex(requestIdOf(witnessRequestContent(request))),certificate}};
    },readControllerIcpBalance:async()=>state.defaultIcpBalance??0n,readSystem:async id=>(typeof id==='string'?id:id.toText())===state.bootstrapId?state.bootstrapSystem:{moduleHash:hexBytes(moduleHash(id))},readLedgerBlock:async id=>{if(!state.blocks.has(id))throw Error("recording block unavailable");return state.blocks.get(id);},
    authFactory:(profile,bootstrapCanisterId)=>{let valid=true;return {signIn:async()=>({principal:state.principal,profile,bootstrapCanisterId,validate(){if(!valid)throw Error("revoked child");}}),signOut:async()=>{if(state.signOutFailure)throw Error("recording fault: SDK cleanup failed");valid=false;}};},actorsFactory:async()=>actors}});
  return {controller,state,actors,gov};
@@ -492,23 +492,24 @@ test('changed target membership blocks a new rehearsal before another fee or res
  assert.equal(f.controller.prepared,undefined);assert.equal(f.calls(),0);assert.equal(f.bootstrapState.external_proposal.length,0);
 });
 
-test('funded creation receipt recovers its original payment across a reviewed executable encoding change',async()=>{
- const f=fixture(undefined,true);await prepare(f);f.state.lostPayment=true;const intent=f.controller.prepared.intent;f.controller.export();
+test('funded creation receipt recovers its original payment across reviewed Ledger executable revisions',async()=>{
+ const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.state.lostPayment=true;const intent=f.controller.prepared.intent;f.controller.export();
  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/reply lost/);
  const original=structuredClone(intent),json=f.controller.export();
+ assert.equal(f.state.certificateModules.get(intent.dispatch_reservation.reply_witness.certificate),CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
  for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
  const resumed=fixture(f.state);await resumed.controller.import(json);await resumed.controller.reconcileLedger(7n);
  assert.equal(f.state.transfers.length,1);assert.equal(resumed.controller.receipt.intents[0].id,original.id);assert.equal(resumed.controller.receipt.intents[0].argument,original.argument);assert.equal(resumed.controller.receipt.intents[0].state,'Confirmed');
 });
 test('financial refusal retains its original certified executable when a reviewed current version changes',async t=>{
- const f=fixture(undefined,true);await prepare(f);f.controller.export();f.state.paymentRefusal={BadFee:{expected_fee:20000n}};
+ const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.controller.export();f.state.paymentRefusal={BadFee:{expected_fee:20000n}};
  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/conclusively refused/);
  const original=f.controller.receipt.intents[0],witness=structuredClone(original.reply_witness),cert=original.reply_witness.certificate;
- const oldHash=f.state.certificateModules.get(cert);assert.equal(oldHash,REVIEWED_MAINNET_PROTOCOL.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'].installed_gzip_sha256);
+ const oldHash=f.state.certificateModules.get(cert);assert.equal(oldHash,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);assert.notEqual(oldHash,REVIEWED_MAINNET_PROTOCOL.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'].wasm_sha256);
  for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
  const resumed=fixture(f.state);await resumed.controller.import(f.controller.export());recordingFinancialCertificates(t,f.state);await resumed.controller.connect('FundProvisioning');
  f.state.certificateModules.set(cert,'00'.repeat(32));await assert.rejects(()=>resumed.controller.prepareProvisioning(),/conclusively refused/);assert.equal(f.state.transfers.length,0);
- f.state.certificateModules.set(cert,oldHash);f.state.paymentRefusal=undefined;await resumed.controller.prepareProvisioning();
+ f.state.certificateModules.set(cert,oldHash);f.state.witnessModule=undefined;f.state.paymentRefusal=undefined;await resumed.controller.prepareProvisioning();
  assert.deepEqual(resumed.controller.receipt.intents[0].reply_witness,witness);assert.equal(resumed.controller.prepared.intent.reviewed_prior_dispatch_fees,'10000');
  resumed.controller.export();await resumed.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);
 });
