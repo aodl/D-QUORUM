@@ -45,7 +45,7 @@ test("production mapping, cache exclusion, manifest, and release sums are strict
   const yaml = readFileSync("icp.yaml", "utf8");
   assert.match(yaml, /type: "@dfinity\/prebuilt@v2\.0\.0"/);
   assert.match(yaml, /path: dist\/release\/dendrite\.wasm/);
-  const candidateHash = "5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d";
+  const candidateHash = "3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc";
   assert.match(yaml, new RegExp(`sha256: ${candidateHash}\n`));
   assert.match(readFileSync("tools/scripts/mainnet-deploy.sh", "utf8"),
     new RegExp(`^canonical_wasm_hash=${candidateHash}$`, "m"));

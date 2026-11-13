@@ -5,6 +5,118 @@
 Only an operator-supplied real deployment result may change this into completed
 evidence. Never include private identity or authentication material.
 
+## Experimental creation workflow upgrade — 2026-11-13
+
+**DEPLOYED for hands-on acceptance testing. Creation remains blocked before
+spending by the existing live protocol-module checks.** The operator explicitly
+authorised this existing-canister upgrade, its normal execution cycles, and the
+previously working `dfx` / `codex_local` route, without a second approval. This is
+an experimental release, not authorisation for financial or controller operations.
+
+| Field | Recorded value |
+| --- | --- |
+| Application source on `main` | `4dcf91d80efdc12b27817d1ece2561c9fdf45597` |
+| Qualified PR source | `f9cf96e27ff2ec0401310630f32f504f5ea7ba2e` |
+| Identical Git tree | `3a1beac3a77f0e4ba8a7aa4e9f5d4af4e2bd510e` |
+| Hosted qualification | [PR run 43320120629](https://github.com/aodl/D-QUORUM/actions/runs/43320120629), 16/16 jobs successful, integrated readiness qualified |
+| Subsequent main qualification | [Main run 43385211598](https://github.com/aodl/D-QUORUM/actions/runs/43385211598), still running at deployment; 14 prerequisites passed by final verification, canonical qualification still running, no known security or application failure |
+| Canonical artifact | `canonical-candidate`, artifact ID `13995151112`; hosted checkout `56e60650f82d75357b63f9b72dc7864b02b311f2`, identical qualified tree |
+| Artifact ZIP SHA-256 | `8bc918e067851506b9acb48e43f1bf7bdbeac3f6f70f46e75d39941013623dc2` |
+| Mainnet canister | `hp4av-oiaaa-aaaar-qcaha-cai` |
+| Canonical frontend | [Dendrite](https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io), [creation](https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io/#/create) |
+| Lifecycle client / selected identity | `dfx 0.31.0` / `codex_local` |
+| Verified operator principal | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae` |
+| Previous installed module | `5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d` |
+| New installed canonical Wasm SHA-256 | `3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc` |
+| Certified bootstrap SHA-256 | `ac7e2907b323f980b108548978837b114cb7bfcce35034ed0f19f8ee9932b107` |
+| Asset-manifest SHA-256 | `ac078e585c806cc07987e56f4b28da73ae529f0ae864cb9df5ad96e118af138d` |
+| Active JavaScript SHA-256 | `1d89ca625b5982767419fa81c916c95eecf290468133dd0d8cee048daa228105` |
+| Active stylesheet SHA-256 | `7b2188f014be364ac6ea3ffcd7b37365bb352a7df3185e21efbf6e35f5def453` |
+| Controllers before and after | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae`, `zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe` |
+| Cycles immediately before / after | `4_759_923_594_720` / `4_699_820_631_354` |
+| Observed cycle decrease | `60_102_963_366`, including upgrade execution and normal intervening activity; no top-up or transfer |
+| Freezing threshold before and after | `7_776_000` seconds |
+| Upgrade invoked / independent verification completed | `2026-11-13T07:55:01Z` / `2026-11-13T08:04:31Z` |
+
+The command was executed once and returned success. Independent status readback
+confirmed the exact approved module and running state:
+
+```sh
+DFX_IDENTITY=codex_local DFX_WARNING=-mainnet_plaintext_identity \
+  dfx canister install hp4av-oiaaa-aaaar-qcaha-cai --network ic --mode upgrade \
+  --wasm /home/codexdev/src/D-QUORUM/dendrite/dist/candidates/4dcf91d80efdc12b27817d1ece2561c9fdf45597/dendrite.wasm \
+  --argument '()'
+```
+
+The operator principal was confirmed in the live controller list before the write.
+Controllers, allocation settings, freezing threshold, reserved-cycle limit, Wasm
+memory settings and log visibility were unchanged. No secret identity material was
+read out or exported. The warning flag only suppressed the plaintext-identity warning;
+it did not change credential protection.
+
+The hosted canonical export was reused without rebuilding application or bootstrap
+bytes. Its manifest, both identical exports, complete release checksums, production
+configuration, runtime Candid and embedded bootstrap identity were verified. The
+ZIP omitted the hidden alternative-origin file; the identical tracked source blob
+was restored only after matching its canonical manifest checksum. The candidate
+was explicitly bound and checked before installation. Afterwards the current
+`dist/release` binding, `icp.yaml` and guard were updated to the deployed hash.
+These are deployment metadata changes, not qualification of a different binary.
+The previously installed, checksum-verified Wasm is retained locally at
+`dist/deployment-20261113/previous-dendrite.wasm` for a later corrective upgrade.
+
+Nine public paths returned HTTP 200 and bytes identical to the approved export:
+`/`, `/index.html`, `/asset-manifest.json`, `/.well-known/ii-alternative-origins`,
+and every active manifest asset, including the canonical bootstrap and its manifest
+and Candid file. IC certificate signatures and certified-data witness roots were
+verified with the production root key, without disabling freshness verification.
+Certification v2, MIME/cache policy, CSP, nosniff and popup-compatible
+`Cross-Origin-Opener-Policy: same-origin-allow-popups` were present. The identity
+provider remained `https://id.ai/authorize`, API `https://icp-api.io`, and alternative
+origins exactly `{"alternativeOrigins":[]}`.
+
+A limited headless Chrome check loaded public neuron `2947465672511369` anonymously,
+rendered its factual `Not Compliant` result and all 23 rules, and then displayed
+the actual creation profiles and review form. No page error or update request
+occurred. `DENDRITE_SMOKE_NEURON_ID` remained unset; no deployment-verification
+`check_neuron` update was sent.
+
+### Live creation dependency limitation
+
+Fresh, IC-certified module-state reads found these exact identity mismatches:
+
+| Dependency | Compiled creation pin | Observed live module hash |
+| --- | --- | --- |
+| Governance `rrkah-fqaaa-aaaaa-aaaaq-cai` | `dbcf97ae8729a956521a0a928f1b1bcb93f6e9c0dafd0e42aa985588713b88c0` | `7f85124ee08c3f59c0050009268807c7aea2b80ee296c23338b05458888f19df` |
+| ICP Ledger `ryjl3-tyaaa-aaaaa-aaaba-cai` | `538fc204379c53f6cb9ddc70c11122a0a26f6a7a7a01a0a2a6c30c5d3c76ef4d` | `51f4be010f23064137defacd627ffbec024c5133210c68ca3b80ab8f257101d6` |
+| CMC `rkp4c-7iaaa-aaaaa-aaaca-cai` | `1473c16c544f3ee6b86449107c4118f336e648eed3146b60edd0a8e143e89d56` | `c5e9adf7c953f1922fd75d502a38aa4c0f1fefb6ce877845a8e374c07ca2f950` |
+| Cycles Ledger `um5iw-rqaaa-aaaaq-qaaba-cai` | `a19eb3490ce67255ac6f4873f25b9f7d20abf78030f4782f8ee1b66f42cd2763` | `70f8bd40d022374622b34266d2c182d2a5b711d965f3bef9e505467a84c40bce` |
+
+Nine anonymous query probes passed: Governance economics and public neuron info;
+ICP Ledger fee, standards and zero-length history; CMC conversion rate; Cycles
+Ledger fee, standards and zero-length history. This checks only those read APIs,
+not financial write compatibility. The observed Cycles Ledger hash equals the
+already recorded compressed release digest; no inference that every mismatch is
+a different executable was used to bypass the exact production allowlist.
+
+`creationPreflight` rejects these mismatches before spending. Production pins and
+their checks were not changed. **Do not fund a live creation until the deployed
+protocol identities and write contracts receive a separate reviewed qualification.**
+
+Manual acceptance remains outstanding for final-origin II sign-in/popup/sign-out,
+responsive presentation, and unfunded form/plan behaviour. Financial creation,
+registration, recovery, finalisation and post-final management were not exercised
+on mainnet. No ICP transfer, NNS proposal, neuron creation/funding, controller
+modification, blackholing, D-QUORUM deployment or activation occurred.
+
+Bounded generated evidence is retained outside Git under
+`dist/deployment-20261113/`: `release-verification.json`, `candidate.icp.yaml`,
+`upgrade-invocation.json`, `upgrade.log`, `status-preinstall.txt`, `status-after.txt`,
+`live-assets.json`, `live-protocol.json`, `browser-readonly.json`, screenshots and
+`deployment-result.json`. These are local operator evidence paths, not published
+artifact URLs. This tracked entry retains the durable deployment result; all
+earlier production records below are preserved.
+
 ## Scoped authentication frontend upgrade — 2026-11-08
 
 The user explicitly requested deployment of the latest Dendrite frontend using

@@ -15,6 +15,13 @@ tracked mapping, a production controller identity selected in `icp-cli`, adequat
 cycles, Docker daemon/buildx access, and all automated gates. `codex_local` is
 local-only and must never be the production identity.
 
+The operator explicitly authorised exceptions to that lifecycle-client and identity
+policy for the November 8 and November 13 upgrades recorded in the
+[production record](production-record.md). The November 13 experimental creation
+release used `dfx 0.31.0` and `DFX_IDENTITY=codex_local` only after its current
+principal was confirmed in the live controller list. No identity material was
+exported and no controller was changed.
+
 Ordinary browser analysis uses the configured API host anonymously for fixed Governance
 queries and certified system-state reads for only the controller principal returned by
 validated Governance evidence. It never uses the operator identity. Deployment does not
@@ -102,6 +109,22 @@ with `DENDRITE_DRY_RUN_MODE=upgrade`, then execute the guarded `upgrade` mode. N
 use automatic mode or `reinstall`. Dendrite has no application stable state; upgrade
 replaces code and certified assets and resets only heap-local guards. Browser sessions,
 receipts, and unresolved-outcome markers are also outside canister stable state.
+
+For the deployed November 13 experimental release, `icp.yaml` and the guard now
+bind `dist/release/dendrite.wasm` to
+`3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc`.
+The executed upgrade used a separately checksum-verified candidate at
+`dist/candidates/4dcf91d80efdc12b27817d1ece2561c9fdf45597/dendrite.wasm`;
+its bytes are identical to the current release. The prior verified Wasm is retained
+locally as `dist/deployment-20261113/previous-dendrite.wasm`. These binding and
+record changes do not qualify a new application binary; application qualification
+remains the successful hosted run linked in the production record.
+
+The creation UI and certified bootstrap are live for acceptance testing, but the
+November 13 read-only checks found all four live dependency module hashes outside
+the compiled creation pins. Creation remains blocked before spending. Keep testing
+unfunded; do not bypass the module checks. Live II interaction, funded creation,
+recovery and finalisation remain separate manual acceptance work.
 
 ## Post-install verification
 

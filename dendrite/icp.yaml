@@ -6,5 +6,5 @@ canisters:
       type: "@dfinity/prebuilt@v2.0.0"
       configuration:
         path: dist/release/dendrite.wasm
-        # Deployed scoped-authentication release; see docs/operations/production-record.md.
-        sha256: 5ff6e1d3c79fa310f45d9f314ebb578d7f5b71abed15cd7f236fa5b7b122cf8d
+        # Deployed experimental creation release; see docs/operations/production-record.md.
+        sha256: 3fd6a1c02093841b9fe8ae2df8c52e9ec82082c103ec48e6392a5036cb7e51fc
