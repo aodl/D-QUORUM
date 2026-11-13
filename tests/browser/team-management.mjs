@@ -137,9 +137,23 @@ async function authenticate(index){
   }
  }
 }
+// Load only the public II landing page before the SDK channel exists. Cold
+// headless asset compilation must not consume the unchanged heartbeat window.
+// No passkey device, authorization request, signer or manager authority exists.
+async function warmCreationIdentityAssets(context,index){
+ if(!scenario.startsWith('creation-'))return;
+ const page=await context.newPage();
+ try{
+  await guard(page);
+  await page.goto(`http://id.ai.localhost:${new URL(origin).port}/`,{waitUntil:'networkidle0',timeout:120000});
+  await page.waitForFunction(()=>document.body.innerText.includes('Internet Identity')&&document.querySelector('button'),{timeout:90000});
+  console.error(JSON.stringify({phase:'II public assets ready before SDK channel',index}));
+ }finally{await page.close();}
+}
 async function authenticateAttempt(index){
  const actions=[],label=`participant${index}`;console.error(JSON.stringify({phase:'II participant setup',index}));
  const context=await browser.createBrowserContext(),page=await context.newPage();applicationPages.push(page);await guard(page);
+ await warmCreationIdentityAssets(context,index);
  await page.goto(scopeProbeMode?`${origin}/404.html`:origin,{waitUntil:'domcontentloaded'});
  if(scenario==='team-management')await page.evaluate(async()=>{globalThis.fixtureMutationFault=await import('/generated/mutation-fault-probe.js');});await page.waitForSelector('button');
  const registered=passkeys.registered(label),ticket=await passkeys.begin(page,label,'Governance');let finished=false;
