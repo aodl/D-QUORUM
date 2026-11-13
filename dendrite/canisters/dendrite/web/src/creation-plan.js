@@ -1,6 +1,7 @@
 import {Principal} from "@icp-sdk/core/principal";
 import policy from "../../../../src/declarations/bootstrap/policy.json" with {type:"json"};
 import protocolPins from "../../../../src/declarations/bootstrap/protocol-pins.json" with {type:"json"};
+import {inspectCreationProtocols,supportsProtocolModule} from "./creation-protocol-compatibility.js";
 import {parseNeuronId} from "./ids.js";
 import {parseIcpToE8s} from "./transaction.js";
 import {RECOGNISED_TOPICS, SOURCE_REVISION, OMEGA_REJECT_NEURON_ID} from "./preliminary-evidence.js";
@@ -15,7 +16,7 @@ export function verifySealedControllerChanges(state,status,{codeRemoved=false}={
   return changes;
 }
 export function creationVotingMinimum(economics,qualifiedModule){
-  if(qualifiedModule!==protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"])throw Error("Voting defaults require the exact qualified Governance executable.");
+  if(!["Local","Ic"].some(network=>supportsProtocolModule("rrkah-fqaaa-aaaaa-aaaaq-cai",qualifiedModule,network)))throw Error("Voting defaults require the exact qualified Governance executable.");
   const outer=economics.voting_power_economics;if(!Array.isArray(outer)||outer.length>1)throw Error("Current voting economics are unavailable.");
   if(!outer.length)return 15_778_800n;const inner=outer[0]?.neuron_minimum_dissolve_delay_to_vote_seconds;
   if(!Array.isArray(inner)||inner.length>1||(inner.length&&(typeof inner[0]!=="bigint"||inner[0]<0n)))throw Error("Malformed current minimum voting delay.");
@@ -105,12 +106,13 @@ export function createCreationPlan(input,owner,bindings,bootstrap) {
     return_account:input.returnAccount?bytesHex(validateLegacyAccount(input.returnAccount)):bytesHex(legacyAccount(owner)),metadata:input.metadata??null},bindings);
 }
 
-export async function creationPreflight(plan,{actor,readSystem,targetId,now=BigInt(Math.floor(Date.now()/1000))}) {
+export async function creationPreflight(plan,{actor,readSystem,targetId,onProtocolReport=()=>{},now=BigInt(Math.floor(Date.now()/1000))}) {
   const economics=await actor.get_network_economics_parameters();
   for(const field of ["neuron_minimum_stake_e8s","reject_cost_e8s","transaction_fee_e8s","neuron_management_fee_per_proposal_e8s"])if(typeof economics?.[field]!=="bigint"||economics[field]<0n)throw Error("Current network economics are unavailable.");
   if(plan.stake_e8s<economics.neuron_minimum_stake_e8s)throw Error("Reviewed stake is below the current network minimum; funding is blocked.");
-  for(const [canister,hash] of Object.entries(protocolPins.modules)){let state;try{state=await readSystem(canister);}catch(error){throw Error(`Required certified protocol state ${canister} is unavailable: ${error.message}`);}if(!state.moduleHash||bytesHex(state.moduleHash)!==hash)throw Error(`Unreviewed deployed protocol module ${canister}; creation is blocked before spending.`);}
-  const votingMinimumSeconds=creationVotingMinimum(economics,protocolPins.modules["rrkah-fqaaa-aaaaa-aaaaq-cai"]);
+  const protocol=await inspectCreationProtocols(readSystem,plan.network);onProtocolReport(protocol);
+  if(!protocol.ok){const error=Error("Required certified protocol state is unavailable or an Unreviewed deployed protocol module was found; creation is blocked before spending.");error.protocol=protocol;throw error;}
+  const votingMinimumSeconds=creationVotingMinimum(economics,protocol.rows.find(row=>row.canister==="rrkah-fqaaa-aaaaa-aaaaq-cai").moduleHash);
   if(variant(plan.profile)==="ProductionCandidate"&&plan.lock_seconds<votingMinimumSeconds)throw Error("Current network voting minimum exceeds the pinned Standard lock. Creation is blocked before spending; the Standard lock is unchanged.");
   if(plan.metadata.length){const known=await actor.list_known_neurons();
     if(!Array.isArray(known?.known_neurons)||known.known_neurons.length>5000||new Set(known.known_neurons.map(n=>String(n.id?.[0]?.id))).size!==known.known_neurons.length||known.known_neurons.some(n=>!n.id?.[0]?.id||!n.known_neuron_data?.[0]))throw Error("Known-neuron catalogue is incomplete, malformed or exceeds the reviewed preflight bound.");
@@ -128,5 +130,5 @@ export async function creationPreflight(plan,{actor,readSystem,targetId,now=BigI
     managers.push({id,full,scalar,role});
   }
   if(!managers.some(m=>m.role!=="No authority"))throw Error("Creator has no observed authority on a proposed manager. Listing a known neuron is not its owner's consent.");
-  return {economics,managers,votingMinimumSeconds,observedAt:now};
+  return {economics,managers,votingMinimumSeconds,protocol,observedAt:now};
 }

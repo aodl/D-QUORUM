@@ -119,6 +119,7 @@ export function createCreationView({controller,copyText=()=>{},signedIn=()=>fals
     return box;}
   function render(container){if(!container)return;root=container;root.replaceChildren();root.className="creation-workflow";root.setAttribute("aria-busy",String(c.busy));root.append(element("h1","Create a Dendrite"),element("p","Plan → Provision controller → Fund stake → Configure → Registration → Ready to finalise → Code removed → Finalised"));
     if(error){const message=element("p",error,"error");message.setAttribute("role","alert");root.append(message);}
+    if(c.observed?.protocol){const box=section("Protocol compatibility — read only");for(const row of c.observed.protocol.rows)box.append(element("h3",`${row.name}: ${row.status}`),element("p",row.canister),element("p",`Observed module: ${row.moduleHash??"unavailable"}`),element("p",`Supported modules: ${row.supported.join(", ")}`),element("p",row.reason));root.append(box);}
     if(copied){const message=element("p",`Copied ${copied}.`,"status");message.setAttribute("role","status");root.append(message);}
     if(!signedIn())root.append(element("p","Sign in above to establish your stable II application principal P. Browsing never starts a payment or signature prompt."));
     if(!c.plan){root.append(planForm(),importPanel(),teamVotePanel());return;}

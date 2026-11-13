@@ -182,3 +182,11 @@ test('dispatch reservation disclosure uses the exact marker instead of assuming 
  assert.match(f.root.textContent,/exact fixed marker owner, subaccount and below-fee allowance/);assert.ok(!f.root.textContent.includes('Its spender is the management principal'));assert.match(f.root.textContent,/Exact atomic dispatch reservation/);assert.match(f.root.textContent,new RegExp(cId));
  }finally{f.close();}
 });
+
+test('failed plan review shows all protocol canisters with observed and supported hashes before offering funding',()=>{
+ const f=mount({planless:true});try{
+  f.c.observed.protocol={ok:false,rows:['CMC','Governance','ICP Ledger','Cycles Ledger'].map((name,i)=>({name,canister:`canister-${i}`,status:i?'Supported':'Blocked',moduleHash:i?'ab'.repeat(32):null,supported:['cd'.repeat(32)],reason:i?'Certified and reviewed':'Missing certified evidence'}))};
+  f.view.render(f.root);for(const name of ['CMC','Governance','ICP Ledger','Cycles Ledger'])assert.match(f.root.textContent,new RegExp(name));
+  assert.match(f.root.textContent,/Missing certified evidence/);assert.match(f.root.textContent,/Supported modules/);assert.match(f.root.textContent,/Observed module: unavailable/);assert.equal(f.calls.length,0);assert.ok(!labels(f.root).some(x=>/provisioning request/.test(x)));
+ }finally{f.close();}
+});

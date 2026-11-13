@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-11-13",
+  "review_record": "dendrite/docs/operations/production-record.md",
+  "modules": {
+    "rkp4c-7iaaa-aaaaa-aaaca-cai": {
+      "name": "CMC",
+      "artifact": "cycles-minting-canister",
+      "source_revision": "237a41f0f03801f24d6eda835248bcb5ce189f0e",
+      "artifact_url": "https://download.dfinity.systems/ic/237a41f0f03801f24d6eda835248bcb5ce189f0e/canisters/cycles-minting-canister.wasm.gz",
+      "installed_gzip_sha256": "c5e9adf7c953f1922fd75d502a38aa4c0f1fefb6ce877845a8e374c07ca2f950",
+      "wasm_sha256": "ac0e651d0363a81f85316198d08f51ce3eb0bd4cabfd5d25a95c4414ad296931",
+      "semantics": "cmc-mint-v1"
+    },
+    "rrkah-fqaaa-aaaaa-aaaaq-cai": {
+      "name": "NNS Governance",
+      "artifact": "governance-canister",
+      "source_revision": "98c898f8de068a1fc0e97ebc805f9fa7f315d862",
+      "artifact_url": "https://download.dfinity.systems/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/canisters/governance-canister.wasm.gz",
+      "installed_gzip_sha256": "7f85124ee08c3f59c0050009268807c7aea2b80ee296c23338b05458888f19df",
+      "wasm_sha256": "5ddc11d2c59d0199c48e50dcc29c5ac6d10011daa6a7594eee954bfc140e3944",
+      "semantics": "governance-make-proposal-v1"
+    },
+    "ryjl3-tyaaa-aaaaa-aaaba-cai": {
+      "name": "ICP Ledger",
+      "artifact": "ledger-canister",
+      "source_revision": "69b755062f5ef0a7d6efc9a127172b46121420c8",
+      "artifact_url": "https://download.dfinity.systems/ic/69b755062f5ef0a7d6efc9a127172b46121420c8/canisters/ledger-canister_notify-method.wasm.gz",
+      "installed_gzip_sha256": "51f4be010f23064137defacd627ffbec024c5133210c68ca3b80ab8f257101d6",
+      "wasm_sha256": "fca0a9713133c67edf4ba0375c64afb81561123a4fe2b53b4bac740e7e1048f5",
+      "semantics": "icp-ledger-dispatch-v1"
+    },
+    "um5iw-rqaaa-aaaaq-qaaba-cai": {
+      "name": "Cycles Ledger",
+      "artifact": "cycles-ledger",
+      "source_revision": "58f1d01ce1e5e41e61005f8103cc7560e9d81cc2",
+      "artifact_url": "https://github.com/dfinity/cycles-ledger/releases/download/cycles-ledger-v1.1.0/cycles-ledger.wasm.gz",
+      "installed_gzip_sha256": "70f8bd40d022374622b34266d2c182d2a5b711d965f3bef9e505467a84c40bce",
+      "wasm_sha256": "a19eb3490ce67255ac6f4873f25b9f7d20abf78030f4782f8ee1b66f42cd2763",
+      "semantics": "cycles-ledger-dispatch-v1"
+    }
+  }
+}

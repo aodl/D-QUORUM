@@ -6,7 +6,8 @@ import {importCreationReceipt} from './creation-receipt.js';
 import {creationArtifact} from './creation-compatibility.js';
 import {verifyCreationWitness,creationArgumentTypes} from './creation-protocol.js';
 import {bytesHex,hexBytes,fundingSubaccount,stakingSubaccount,sha256Hex} from './creation-accounts.js';
-import {creationPlanDigest,CREATION_PROTOCOL_PINS} from './creation-plan.js';
+import {supportsProtocolModule} from './creation-protocol-compatibility.js';
+import {creationPlanDigest} from './creation-plan.js';
 import {buildDirectManagerOperation} from './transaction.js';
 import {CYCLES_LEDGER_CANISTER_ID,NNS_GOVERNANCE_CANISTER_ID} from './auth.js';
 const eq=(a,b)=>bytesHex(a??[])===bytesHex(b??[]);
@@ -35,7 +36,7 @@ export function createCreationTeamVote({bindings,getSession,getNnsActor,readSyst
   const intent=r.intents.find(i=>i.id===bytesHex(reservation.intent_id)&&i.argument_digest===bytesHex(reservation.request_digest)&&['Registration','Rehearsal'].includes(i.kind));
   if(!intent)throw Error('Original proposal request is unavailable.');
   const system=await readSystem(c),gov=await readSystem(NNS_GOVERNANCE_CANISTER_ID);
-  if(!eq(system.moduleHash,activeHash)||system.controllers.map(x=>x.toText()).join(',')!==p.owner.toText()||bytesHex(gov.moduleHash??[])!==CREATION_PROTOCOL_PINS.modules[NNS_GOVERNANCE_CANISTER_ID])throw Error('Fresh approved module/controller/protocol evidence changed.');
+  if(!eq(system.moduleHash,activeHash)||system.controllers.map(x=>x.toText()).join(',')!==p.owner.toText()||!supportsProtocolModule(NNS_GOVERNANCE_CANISTER_ID,bytesHex(gov.moduleHash??[]),p.network))throw Error('Fresh approved module/controller/protocol evidence changed.');
   const n=(await actor.list_neurons(list(BigInt(r.neuron_id)))).full_neurons?.[0],m=(await actor.list_neurons(list(manager))).full_neurons?.[0];
   if(n?.id[0]?.id!==BigInt(r.neuron_id)||n.controller?.[0]?.toText()!==r.canister_id||!eq(n.account,stakingSubaccount(c,p.nonce))||n.hot_keys.length||n.visibility[0]!==2)throw Error('Fresh target identity or authority changed.');
   for(const f of p.following){const actual=n.followees.find(([t])=>t===f.topic)?.[1]?.followees.map(x=>x.id)??[];if(actual.join(',')!==f.followees.join(','))throw Error('Fresh target following differs from the reviewed managers/delegates.');}

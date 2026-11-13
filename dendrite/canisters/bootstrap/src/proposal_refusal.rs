@@ -149,13 +149,8 @@ pub fn verify(
         }
     };
     let gov = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("fixed Governance");
-    if lookup(vec![b"canister", gov.as_slice(), b"module_hash"])?
-        != [
-            219, 207, 151, 174, 135, 41, 169, 86, 82, 26, 10, 146, 143, 27, 27, 203, 147, 246, 233,
-            192, 218, 253, 14, 66, 170, 152, 85, 136, 113, 59, 136, 192,
-        ]
-    {
-        return Err("Refusal certificate does not bind the pinned Governance module".into());
+    if !reviewed_refusal_module(lookup(vec![b"canister", gov.as_slice(), b"module_hash"])?) {
+        return Err("Refusal certificate does not bind a reviewed Governance executable".into());
     }
     let time = nat(lookup(vec![b"time"])?)?;
     // Authentic historical refusal evidence remains valid. Bound its time to the
@@ -192,4 +187,54 @@ pub fn verify(
         reply_digest: hash(reply),
         error_type: error.error_type,
     })
+}
+
+// Source audit: protocol-mainnet.json / production-record.md, 2026-11-13.
+// Governance 98c898f8 and local 83f29e08 have identical make_proposal,
+// manage_neuron and ErrorType definitions. All audited errors precede fee charge
+// and insertion; post-insertion execution errors still return Ok(proposal_id).
+// Keep the old executable for authentic historical proofs. A new Candid-compatible
+// module alone must never extend this no-creation proof classification.
+fn reviewed_refusal_module(module: &[u8]) -> bool {
+    const REVIEWED: [[u8; 32]; 3] = [
+        [
+            219, 207, 151, 174, 135, 41, 169, 86, 82, 26, 10, 146, 143, 27, 27, 203, 147, 246, 233,
+            192, 218, 253, 14, 66, 170, 152, 85, 136, 113, 59, 136, 192,
+        ],
+        [
+            127, 133, 18, 78, 224, 140, 63, 89, 192, 5, 0, 9, 38, 136, 7, 199, 174, 162, 184, 14,
+            226, 150, 194, 51, 56, 176, 84, 88, 136, 143, 25, 223,
+        ],
+        [
+            93, 220, 17, 210, 197, 157, 1, 153, 196, 142, 80, 220, 194, 156, 90, 198, 209, 0, 17,
+            218, 166, 167, 89, 78, 238, 149, 75, 252, 20, 14, 57, 68,
+        ],
+    ];
+    REVIEWED.iter().any(|hash| module == hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn refusal_keeps_original_executable_binding_across_reviewed_upgrades() {
+        // The original local and mainnet encodings remain accepted independently
+        // of the currently installed version. Unknown/malformed bytes stay closed.
+        assert!(reviewed_refusal_module(&[
+            219, 207, 151, 174, 135, 41, 169, 86, 82, 26, 10, 146, 143, 27, 27, 203, 147, 246, 233,
+            192, 218, 253, 14, 66, 170, 152, 85, 136, 113, 59, 136, 192
+        ]));
+        assert!(reviewed_refusal_module(&[
+            127, 133, 18, 78, 224, 140, 63, 89, 192, 5, 0, 9, 38, 136, 7, 199, 174, 162, 184, 14,
+            226, 150, 194, 51, 56, 176, 84, 88, 136, 143, 25, 223
+        ]));
+        assert!(reviewed_refusal_module(&[
+            93, 220, 17, 210, 197, 157, 1, 153, 196, 142, 80, 220, 194, 156, 90, 198, 209, 0, 17,
+            218, 166, 167, 89, 78, 238, 149, 75, 252, 20, 14, 57, 68
+        ]));
+        assert!(!reviewed_refusal_module(&[0; 32]));
+        assert!(!reviewed_refusal_module(&[0; 31]));
+        assert!(!audited_no_creation_error(12));
+        assert!(!audited_no_creation_error(99));
+    }
 }

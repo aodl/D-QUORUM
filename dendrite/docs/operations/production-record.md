@@ -337,3 +337,106 @@ this entry retains the durable result.
 | Gate 2 result | UNRUN |
 | Known limitations | `tools/scripts/verify-mainnet-readonly.sh` did not complete: its anonymous `icp-cli` controller-settings read was rejected, and direct follow-up verification found `/asset-manifest.json` returns HTTP 404. Other directly checked routes (`/`, `/index.html`, `/.well-known/ii-alternative-origins`, `/404.html`, and the hashed JS/CSS assets) return HTTP 200; the well-known document is exactly `{"alternativeOrigins":[]}`. |
 | Operator notes | `icp-cli 1.2.0` remained the release and no-write dry-run client. No controller, freezing-threshold, or other settings change was made. No cycles wallet was used. All `dfx` management calls ran from a temporary directory outside the repository, which was removed; no dfx project configuration was introduced. No push, NNS mutation, or blackholing was performed. |
+
+## November 13, 2026 — creation protocol compatibility review
+
+This review follows the experimental creation deployment above. It does not change
+any Dendrite Standard predicate, custody boundary, financial request identity,
+known-manager configuration or D-QUORUM behavior. Initial inspection used only
+anonymous replica-signed queries and IC-root-verified `read_state` certificates
+through `https://icp-api.io`, with normal certificate/delegation/time verification.
+All four certificates verified at 09:33–09:34 UTC. The reported CMC failure was an
+installed-module mismatch, not missing certified evidence. All four exact hashes
+mismatched the local uncompressed PocketIC pins:
+
+| Dependency | Certified installed SHA-256 | Exact local test SHA-256 |
+| --- | --- | --- |
+| CMC `rkp4c-7iaaa-aaaaa-aaaca-cai` | `c5e9adf7c953f1922fd75d502a38aa4c0f1fefb6ce877845a8e374c07ca2f950` | `1473c16c544f3ee6b86449107c4118f336e648eed3146b60edd0a8e143e89d56` |
+| Governance `rrkah-fqaaa-aaaaa-aaaaq-cai` | `7f85124ee08c3f59c0050009268807c7aea2b80ee296c23338b05458888f19df` | `dbcf97ae8729a956521a0a928f1b1bcb93f6e9c0dafd0e42aa985588713b88c0` |
+| ICP Ledger `ryjl3-tyaaa-aaaaa-aaaba-cai` | `51f4be010f23064137defacd627ffbec024c5133210c68ca3b80ab8f257101d6` | `538fc204379c53f6cb9ddc70c11122a0a26f6a7a7a01a0a2a6c30c5d3c76ef4d` |
+| Cycles Ledger `um5iw-rqaaa-aaaaq-qaaba-cai` | `70f8bd40d022374622b34266d2c182d2a5b711d965f3bef9e505467a84c40bce` | `a19eb3490ce67255ac6f4873f25b9f7d20abf78030f4782f8ee1b66f42cd2763` |
+
+Executable provenance is distinct from certified installation evidence. Downloaded
+published artifacts independently hash to the certified installed values above:
+
+- [CMC artifact](https://download.dfinity.systems/ic/237a41f0f03801f24d6eda835248bcb5ce189f0e/canisters/cycles-minting-canister.wasm.gz),
+  source `237a41f0f03801f24d6eda835248bcb5ce189f0e`, raw Wasm
+  `ac0e651d0363a81f85316198d08f51ce3eb0bd4cabfd5d25a95c4414ad296931`.
+- [Governance artifact](https://download.dfinity.systems/ic/98c898f8de068a1fc0e97ebc805f9fa7f315d862/canisters/governance-canister.wasm.gz),
+  source `98c898f8de068a1fc0e97ebc805f9fa7f315d862`, raw Wasm
+  `5ddc11d2c59d0199c48e50dcc29c5ac6d10011daa6a7594eee954bfc140e3944`.
+- [ICP Ledger artifact](https://download.dfinity.systems/ic/69b755062f5ef0a7d6efc9a127172b46121420c8/canisters/ledger-canister_notify-method.wasm.gz),
+  source `69b755062f5ef0a7d6efc9a127172b46121420c8`, raw Wasm
+  `fca0a9713133c67edf4ba0375c64afb81561123a4fe2b53b4bac740e7e1048f5`;
+  [published upgrade proposal 138271](https://dashboard.internetcomputer.org/proposal/138271).
+- [Cycles Ledger v1.1.0](https://github.com/dfinity/cycles-ledger/releases/tag/cycles-ledger-v1.1.0),
+  source `58f1d01ce1e5e41e61005f8103cc7560e9d81cc2`, release asset digest
+  `70f8bd40d022374622b34266d2c182d2a5b711d965f3bef9e505467a84c40bce`.
+  Decompression produces exactly the existing local Wasm hash, not another
+  executable. The release Candid hash is
+  `af8f846f268d1ca34f51d1c9b00ed77f90c11e8c3aa288fd915eae5aea28457f`.
+
+The first three published Wasms also contain `icp:public git_commit_id` sections
+matching those exact source revisions and embedded Candid matching the published
+source files. DFINITY's [mainnet revision catalogue](https://github.com/dfinity/ic/blob/master/mainnet-canister-revisions.json)
+corroborates their hashes; that mutable catalogue and dashboard metadata do not
+replace the certified installed-module reads or artifact digest checks.
+
+The compatibility review covers these implementation assumptions:
+
+- CMC `notify_mint_cycles` validates the original ICP payment destination/memo,
+  retains per-block notification status, returns the same recorded result on
+  repeated notification, and does not mint twice. Its implementation at the
+  reviewed mainnet revision differs from the local source only in diagnostic
+  printing. Conversion quote fields match the live signed query; timestamp,
+  fee and budget freshness checks remain mandatory before dispatch.
+- Cycles Ledger `create_canister`, its controller settings, exact timestamp/burn
+  deduplication, duplicate canister ID, refusal/refund distinctions and bounded
+  dispatch reservation use the identical v1.1.0 executable already tested locally.
+  Compression changes its installed module identity only.
+- ICP Ledger legacy and ICRC transfers retain exact account/memo/timestamp
+  identities, fee validation, deduplication and the finite transaction window.
+  Reviewed `ledger_canister_core::apply_transaction` still performs age/future and
+  duplicate checks before applying a transaction and recording its block.
+  Duplicate/expired/ambiguous history never grants a replacement payment identity.
+  Changes to burn/mint fee validation do not authorise normal transfer retries.
+- Governance claim/controller/staking-subaccount binding, configuration,
+  visibility, following, dissolution and proposal handling were compared with
+  the local source. `governance.rs` differs only by a return-type lifetime in
+  `ready_to_be_settled_proposal_ids`; `network_economics.rs` and `governance.proto`
+  are byte-identical. In particular `make_proposal` and its dispatch through
+  `manage_neuron` are identical. Audited refusal codes 3–8, 11 and 14 occur before
+  fee charging/proposal insertion. After insertion it returns a proposal ID even
+  if execution fails; External(12), malformed and unknown codes remain unresolved.
+  This source/behavior review, rather than interface compatibility alone, is the
+  basis for accepting this specific Governance executable in refusal verification.
+
+The browser now keeps the unchanged exact local pins separate from the static
+reviewed mainnet registry in `src/declarations/bootstrap/protocol-mainnet.json`.
+Both published gzip and raw encodings are explicitly reviewed. Unknown identities,
+wrong canister IDs and missing/malformed certified evidence remain blocked.
+Preflight collects and displays all four statuses before allowing funding. A
+historical financial/refusal witness is checked against its own certified module;
+a newer installed version cannot replace that binding. Previously accepted
+historical bindings remain readable, without authorising new mainnet dispatches
+under an unreviewed local fixture version. The previously deployed bootstrap
+`ac7e2907…32b107` remains an exact reviewed historical asset for existing receipts
+and explicitly consented same-canister migration.
+
+Read-only production probes decoded all nine previously recorded query methods.
+A complete conditional one-manager RecoverableTest preflight also succeeded with
+actual public manager `428687636340283207` and its observed controller authority,
+without a signer, II authentication, updates or financial effects. This proves the
+read-only dependency/manager checks conditional on signing in as that authority;
+it does not claim to have authenticated as that manager. Alpha-vote's public
+record did not establish a self-authenticating creator authority for this probe.
+RecoverableTest remains one-manager, non-compliant, controller-recoverable and
+ineligible for irreversible finalisation.
+
+Raw read-only inspection, source comparisons and downloaded artifacts are retained
+locally under ignored `dendrite/dist/protocol-review-20261113/`; they are not tracked
+artifact URLs. Run `node tools/scripts/inspect-creation-mainnet.mjs <manager-id>`
+from `dendrite` to repeat production read-only checks. The
+`creation_mainnet_protocol` qualification command executes monetary behavior only
+inside PocketIC with checksum-verified published executables; it makes no mainnet
+financial or Governance updates.

@@ -162,3 +162,16 @@ methods unavailable in that mode.
 - Dirty worktree: commit/review intended changes; the deploy guard intentionally fails.
 - Release hash mismatch: rebuild canonically, regenerate `SHA256SUMS`, then update
   `icp.yaml`.
+
+Creation protocol compatibility keeps exact local executable pins separate from the
+reviewed mainnet executable registry. `python3 tools/scripts/xtask.py
+creation_mainnet_protocol` from the consolidated repository root downloads and
+verifies the reviewed releases and exercises conversion, deduplication, reservation,
+claim/configuration/recovery and production creation in PocketIC. The existing
+`creation_protocol` lane includes these cases after its unchanged local fixtures.
+This is local monetary execution, never permission to call mainnet updates.
+From `dendrite`, `node tools/scripts/inspect-creation-mainnet.mjs <manager-id>` uses
+production-root-verified anonymous reads to report all four modules and conditional
+one-manager preflight authority. It does not authenticate as that manager or prove
+financial update behavior. Preserve its actual observations separately from
+synthetic browser coordination tests.

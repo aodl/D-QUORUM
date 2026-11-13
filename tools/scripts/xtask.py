@@ -139,7 +139,7 @@ def prepare_bootstrap():
 
 def creation_pure():
     run(['node','--test','tests/browser/synthetic-passkeys.test.mjs','tests/browser/auth-lifecycle-audit.test.mjs','tests/browser/creation-virtual-clock.test.mjs','tests/browser/pocketic-wall-clock.test.mjs','tests/browser/mutation-fault-probe.test.mjs','tests/browser/build-scope-probe.test.mjs'],kind='behaviour',name='coordinated browser clock harness invariants; no replica permission claim')
-    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
+    run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation.test.js canisters/dendrite/web/test/creation-view.test.js canisters/dendrite/web/test/creation-rehearsal.test.js canisters/dendrite/web/test/creation-compatibility.test.js canisters/dendrite/web/test/creation-protocol-compatibility.test.js canisters/dendrite/web/test/creation-default-icp.test.js canisters/dendrite/web/test/creation-financial-attempt.test.js canisters/dendrite/web/test/sdk-heartbeat-policy.test.js'],kind='behaviour',name='creation plan account receipt and UI guardrail properties')
     completed_suites.add('creation_pure')
 
 def creation_recording():
@@ -151,6 +151,30 @@ def creation_protocol():
     run(['sh','-c','cd dendrite && node --test canisters/dendrite/web/test/creation-historical-proof.test.js'],kind='behaviour',name='genuine archived certificate verification: historical provenance, not live permissions')
     prepare_bootstrap();suite('creation_protocol')
     run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','browser_creation::real_creation_proposal_fee_refusal_contract','--nocapture'],kind='behaviour',name='native pinned Governance economics repair and typed fee refusal; not II authority')
+    creation_mainnet_protocol()
+
+def creation_mainnet_protocol():
+    # Read-only mainnet provenance is recorded separately. Monetary execution here
+    # is exclusively in fresh PocketIC worlds using the exact reviewed releases.
+    entries=json.loads((ROOT/'dendrite/src/declarations/bootstrap/protocol-mainnet.json').read_text())['modules']
+    cache=ROOT/'.cache/protocol-mainnet';cache.mkdir(exist_ok=True)
+    for entry in entries.values():
+        target=cache/(entry['artifact']+'.wasm.gz')
+        if not target.exists():target.write_bytes(urllib.request.urlopen(entry['artifact_url'],timeout=60).read())
+        data=target.read_bytes()
+        if hashlib.sha256(data).hexdigest()!=entry['installed_gzip_sha256'] or hashlib.sha256(gzip.decompress(data)).hexdigest()!=entry['wasm_sha256']:
+            raise RuntimeError('reviewed mainnet executable checksum mismatch: '+entry['artifact'])
+    prepare_bootstrap()
+    previous=os.environ.get('DENDRITE_PROTOCOL_PROFILE')
+    os.environ['DENDRITE_PROTOCOL_PROFILE']='reviewed-mainnet'
+    try:
+        for case in ['real_cmc_conversion_and_cycles_ledger_creation_deduplicate','real_creation_dispatch_reservation_compare_and_set','real_bootstrap_claim_configuration_upgrade_manager_rehearsal_and_short_lock_return','real_production_creation_registration_rehearsal_teardown_and_post_final_management']:
+            run(['cargo','test','--locked','-p','quorum-pocketic','--test','creation_protocol','--','--ignored','--exact',case,'--nocapture','--test-threads=1'],kind='behaviour',name='reviewed mainnet executable in PocketIC:'+case)
+        run(['cargo','test','--locked','-p','quorum-pocketic','--test','browser_system','--','--ignored','--exact','browser_creation::real_creation_proposal_fee_refusal_contract','--nocapture'],kind='behaviour',name='reviewed mainnet Governance fee-refusal semantics in PocketIC')
+    finally:
+        if previous is None:os.environ.pop('DENDRITE_PROTOCOL_PROFILE',None)
+        else:os.environ['DENDRITE_PROTOCOL_PROFILE']=previous
+    completed_suites.add('creation_mainnet_protocol')
 
 def creation_browser():
     prepare_bootstrap();prepare()
@@ -624,7 +648,7 @@ def integrated_readiness():
     (OUT/'integrated-readiness.json').write_text(json.dumps(verdict,indent=2)+'\n')
     if not verdict['qualified']:raise RuntimeError('Required hosted evidence is incomplete; inspect integrated-readiness.json')
 
-COMMANDS={'creation_canonical':creation_canonical,'creation_browser':creation_browser,'creation_pure':creation_pure,'creation_recording':creation_recording,'creation_protocol':creation_protocol,'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
+COMMANDS={'creation_mainnet_protocol':creation_mainnet_protocol,'creation_canonical':creation_canonical,'creation_browser':creation_browser,'creation_pure':creation_pure,'creation_recording':creation_recording,'creation_protocol':creation_protocol,'integration_negative_controls':integration_negative_controls,'integrated_readiness':integrated_readiness,'system_protocol_canonical':system_protocol_canonical,'component_dendrite_canonical':component_dendrite_canonical,'integration_inventory':integration_inventory,'integrated_acceptance':integrated_acceptance,'system_browser':system_browser,'evaluator_consistency':evaluator_consistency,'component_dendrite':component_dendrite,'system_protocol':system_protocol,'unit':unit,'mock':lambda:suite('mocked'),'hardening':lambda:suite('hardening'),'capacity':lambda:suite('capacity'),'protocol':lambda:suite('protocol'),'production':production,'canonical_artifact':canonical_artifact,'scale':lambda:suite('scale'),'coverage':coverage,'security':security,'acceptance':full,'reproducible':reproducible,'prepare':prepare}
 def main():
     global RUN_STATUS
     try:

@@ -29,6 +29,42 @@ pub fn dendrite_wasm() -> Vec<u8> {
     fs::read(path).expect("prepare the independent Dendrite artifact before creating a fixture")
 }
 pub fn artifact(name: &str) -> Vec<u8> {
+    if std::env::var("DENDRITE_PROTOCOL_PROFILE").as_deref() == Ok("reviewed-mainnet") {
+        let reviewed: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(
+                root().join("dendrite/src/declarations/bootstrap/protocol-mainnet.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        if let Some(entry) = reviewed["modules"]
+            .as_object()
+            .unwrap()
+            .values()
+            .find(|entry| entry["artifact"] == name)
+        {
+            let bytes = fs::read(root().join(format!(".cache/protocol-mainnet/{name}.wasm.gz")))
+                .expect("download and verify the reviewed mainnet executable first");
+            assert_eq!(
+                hex::encode(Sha256::digest(&bytes)),
+                entry["installed_gzip_sha256"].as_str().unwrap()
+            );
+            let mut raw = vec![];
+            flate2::read::GzDecoder::new(bytes.as_slice())
+                .read_to_end(&mut raw)
+                .unwrap();
+            assert_eq!(
+                hex::encode(Sha256::digest(&raw)),
+                entry["wasm_sha256"].as_str().unwrap()
+            );
+            return bytes;
+        }
+    } else {
+        assert!(
+            std::env::var("DENDRITE_PROTOCOL_PROFILE").is_err(),
+            "unknown protocol profile"
+        );
+    }
     let pins: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root().join("protocol-pins.json")).unwrap())
             .unwrap();
