@@ -118,9 +118,9 @@ async function wrongProvider(){
 // Only setup-channel failures can restart once before manager authority exists.
 // A failed unbound setup context is discarded before any principal acquires
 // manager authority. Bound participants never receive this retry.
-// All identities are provisioned before manager authority or mutations exist.
+// Creation uses this only for initial, unbound setup too. All identities are
+// provisioned before manager authority or mutations exist.
 async function authenticate(index){
- if(typeof scenario==='string'&&scenario.startsWith('creation-'))return authenticateAttempt(index);
  for(let attempt=0;attempt<2;attempt++){
   const pageIndex=applicationPages.length;
   try{return await authenticateAttempt(index);}

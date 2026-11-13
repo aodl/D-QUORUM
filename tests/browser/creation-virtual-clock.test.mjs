@@ -69,6 +69,30 @@ test('actual II authentication attempt re-observes a detached control and classi
  }
 });
 
+test('initial creation setup retries one closed channel in a discarded unbound context and propagates other failures',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function authenticate(index){'),end=source.indexOf('\nasync function authenticateAttempt(',start);
+ assert.ok(start>=0&&end>start);
+ for(const mode of ['closed-once','closed-twice','unknown']){
+  const applicationPages=[],authenticationRetries=[],evidence=[];let attempts=0,closed=0;
+  const authenticate=vm.runInNewContext(`(${source.slice(start,end)})`,{
+   scenario:'creation-production',applicationPages,authenticationRetries,directory:'public-evidence',console:{error(){}},
+   writeEvidence:async(_,bytes)=>evidence.push(JSON.parse(bytes)),
+   authenticateAttempt:async index=>{
+    assert.equal(index,0);assert.equal(closed,attempts,'failed context discarded before replacement setup');attempts++;
+    applicationPages.push({browserContext:()=>({close:async()=>closed++})});
+    if(mode==='closed-once'&&attempts===2)return {principal:'new-unbound-setup'};
+    const error=Error(mode);if(mode!=='unknown')error.iiChannelFailure='Connection closed';throw error;
+   },
+  });
+  if(mode==='closed-once')assert.equal((await authenticate(0)).principal,'new-unbound-setup');
+  else await assert.rejects(()=>authenticate(0),error=>error.message===mode);
+  assert.equal(attempts,mode==='unknown'?1:2);assert.equal(closed,mode==='unknown'?0:1);
+  assert.equal(evidence.length,mode==='unknown'?0:1);
+  if(evidence.length){assert.equal(evidence[0][0].freshContext,true);assert.equal(evidence[0][0].failedAttempt,1);}
+ }
+});
+
 test('coordinated local time changes Date construction and now while preserving explicit timestamps and future popup clocks',async()=>{
  const realm=vm.createContext({}),scripts=[];
  const page={evaluateOnNewDocument:async(fn,offset)=>scripts.push(`(${fn})(${offset})`),evaluate:async(fn,offset)=>vm.runInContext(`(${fn})(${offset})`,realm)};
