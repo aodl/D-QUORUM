@@ -516,11 +516,21 @@ pub fn coordinate(
     assert_eq!(pic.get_controllers(c), vec![p]);
     let system = pic.canister_status(c, Some(p)).unwrap();
     let installed_cycles = pic.cycle_balance(c);
-    if let Ok(path) = std::env::var("DENDRITE_BOOTSTRAP_TEST_WASM") {
+    if production {
+        if let Ok(path) = std::env::var("DENDRITE_BOOTSTRAP_TEST_WASM") {
+            assert_eq!(
+                system.module_hash.as_ref().unwrap(),
+                &Sha256::digest(fs::read(path).unwrap()).to_vec(),
+                "signed production creation must install the selected exact canonical bootstrap"
+            );
+        }
+    } else {
+        // Recovery starts with the reviewed historical executable, then rolls
+        // the frontend forward and explicitly migrates the same canister.
         assert_eq!(
-            system.module_hash.as_ref().unwrap(),
-            &Sha256::digest(fs::read(path).unwrap()).to_vec(),
-            "signed creation must install the selected exact canonical bootstrap"
+            hex::encode(system.module_hash.as_ref().unwrap()),
+            "fef1735bb08b92bad58ec761f199741fa459292b81864c219aff5442e7423265",
+            "signed recovery must begin with the exact historical bootstrap"
         );
     }
     assert_eq!(
@@ -614,6 +624,16 @@ pub fn coordinate(
         None
     };
     let configured = signal(directory, "creation-configured", child);
+    if let Ok(path) = std::env::var("DENDRITE_BOOTSTRAP_TEST_WASM") {
+        assert_eq!(
+            pic.canister_status(c, Some(p))
+                .unwrap()
+                .module_hash
+                .unwrap(),
+            Sha256::digest(fs::read(path).unwrap()).to_vec(),
+            "configured creation must use the exact canonical bootstrap, including after historical migration"
+        );
+    }
     if let Some(original) = uncertain_payment {
         let confirmed = configured["intents"]
             .as_array()
