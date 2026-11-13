@@ -493,18 +493,22 @@ test('changed target membership blocks a new rehearsal before another fee or res
 });
 
 test('funded creation receipt recovers its original payment across reviewed Ledger executable revisions',async()=>{
- const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.state.lostPayment=true;const intent=f.controller.prepared.intent;f.controller.export();
+ const f=fixture(undefined,true);await prepare(f);f.state.lostPayment=true;const intent=f.controller.prepared.intent;f.controller.export();
  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/reply lost/);
  const original=structuredClone(intent),json=f.controller.export();
- assert.equal(f.state.certificateModules.get(intent.dispatch_reservation.reply_witness.certificate),CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
+ // Model the saved historical certificate's independently verified old executable,
+ // never a new dispatch under that version. These are recording proofs only.
+ f.state.certificateModules.set(intent.dispatch_reservation.reply_witness.certificate,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
  for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
  const resumed=fixture(f.state);await resumed.controller.import(json);await resumed.controller.reconcileLedger(7n);
  assert.equal(f.state.transfers.length,1);assert.equal(resumed.controller.receipt.intents[0].id,original.id);assert.equal(resumed.controller.receipt.intents[0].argument,original.argument);assert.equal(resumed.controller.receipt.intents[0].state,'Confirmed');
 });
 test('financial refusal retains its original certified executable when a reviewed current version changes',async t=>{
- const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.controller.export();f.state.paymentRefusal={BadFee:{expected_fee:20000n}};
+ const f=fixture(undefined,true);await prepare(f);f.controller.export();f.state.paymentRefusal={BadFee:{expected_fee:20000n}};
  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/conclusively refused/);
  const original=f.controller.receipt.intents[0],witness=structuredClone(original.reply_witness),cert=original.reply_witness.certificate;
+ // Historical-proof fixture: both saved replies retain their own old executable.
+ for(const saved of f.state.certificateModules.keys())f.state.certificateModules.set(saved,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
  const oldHash=f.state.certificateModules.get(cert);assert.equal(oldHash,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);assert.notEqual(oldHash,REVIEWED_MAINNET_PROTOCOL.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'].wasm_sha256);
  for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
  const resumed=fixture(f.state);await resumed.controller.import(f.controller.export());recordingFinancialCertificates(t,f.state);await resumed.controller.connect('FundProvisioning');
@@ -512,4 +516,11 @@ test('financial refusal retains its original certified executable when a reviewe
  f.state.certificateModules.set(cert,oldHash);f.state.witnessModule=undefined;f.state.paymentRefusal=undefined;await resumed.controller.prepareProvisioning();
  assert.deepEqual(resumed.controller.receipt.intents[0].reply_witness,witness);assert.equal(resumed.controller.prepared.intent.reviewed_prior_dispatch_fees,'10000');
  resumed.controller.export();await resumed.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);
+});
+
+test('a historically reviewed local executable cannot authorise a fresh mainnet financial dispatch',async()=>{
+ const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.controller.export();
+ await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/not from the pinned executable/);
+ assert.equal(f.state.transfers.length,0);assert.equal(f.controller.receipt.intents[0].state,'Unknown');
+ await assert.rejects(()=>f.controller.prepareProvisioning(),/unresolved/);
 });

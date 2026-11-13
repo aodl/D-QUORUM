@@ -125,12 +125,12 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     if(!intent?.dispatch_reservation)throw Error("This financial attempt has no exact durable reservation.");
     const approval=validateDispatchReservation(intent.dispatch_reservation,intent,plan),reserved=await financialWithWitness(ledger,"icrc2_approve",approval,intent.reservation_binding);
     intent.dispatch_reservation.reply_witness=reserved.witness;
-    if(!supportsProtocolModule(intent.destination,bytesHex(reserved.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Certified reservation reply is not from the pinned executable; retain the original outcome.");
+    if(!supportsProtocolModule(intent.destination,bytesHex(reserved.system?.moduleHash??[]),plan.network))throw Error("Certified reservation reply is not from the pinned executable; retain the original outcome.");
     if(reserved.value.Ok===undefined){const refused=reservationRefusal(reserved.value,kind,approval),code=Object.keys(reserved.value.Err??{})[0]??"malformed";const e=Error(`Dispatch reservation was not newly granted (${refused??code}). Duplicate, lost or competing reservations never authorise another financial request; retain the original identity.`);if(refused)e.knownRejected=true;throw e;}
     intent.dispatch_reservation.block_id=String(reserved.value.Ok);check();
     const proof=await financialWithWitness(ledger,method,args,intent.request_binding);
     intent.reply_witness=proof.witness;
-    if(!supportsProtocolModule(intent.destination,bytesHex(proof.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Certified financial reply is not from the pinned executable; original outcome remains unresolved.");
+    if(!supportsProtocolModule(intent.destination,bytesHex(proof.system?.moduleHash??[]),plan.network))throw Error("Certified financial reply is not from the pinned executable; original outcome remains unresolved.");
     const refusal=financialRefusal(proof.value,kind);if(refusal){const e=Error(`Pinned Ledger conclusively refused the first reserved ${kind} request: ${refusal}. Review repaired conditions and a new bounded attempt.`);e.knownRejected=true;throw e;}
     return proof;
   }
