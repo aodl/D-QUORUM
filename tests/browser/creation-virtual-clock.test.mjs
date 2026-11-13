@@ -143,3 +143,22 @@ test('II failure diagnostics expose only public HTTP status and path, never resp
  listeners.get('response')({status:()=>200,url:()=>assert.fail('healthy responses need no diagnostics')});
  assert.equal(logs.length,1);
 });
+
+test('actual renewal selects the remembered identity when visible Continue is disabled without restarting authentication',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('async function reauthenticatePage('),end=source.indexOf('\ntry{',start);
+ let selected=false,completed=0,begins=0;const actions=[];
+ const popup={isClosed:()=>selected,evaluate:async()=>({labels:['Synthetic manager 3','Continue'],headings:['Internet Identity']})};
+ const page={on(_,fn){this.opened=fn;},off(){},waitForFunction:async()=>{},bringToFront:async()=>{},evaluate:async()=>({ready:selected,principal:'same-P'})};
+ const authenticate=vm.runInNewContext(`(${source.slice(start,end)})`,{passkeys:{begin:async()=>{begins++;return {generation:3};},finish:async(_,v)=>{assert.equal(v.principal,'same-P');completed++;},isActive:()=>completed===0,abort:async()=>{}},click:async(target,label)=>{actions.push(label);if(target===page){page.opened(popup);return true;}if(label==='Continue')return false;if(label==='Synthetic manager 3'){selected=true;return true;}throw Error('unexpected action');},pause:async()=>{},console:{error(){}}});
+ await authenticate(page,{label:'participant3',index:3,principal:'same-P'},'Sign in with Internet Identity');
+ assert.deepEqual(actions,['Sign in with Internet Identity','Continue','Synthetic manager 3']);assert.equal(begins,1);assert.equal(completed,1);
+});
+
+test('actual click ignores a disabled duplicate and activates only its enabled matching control',async()=>{
+ const source=await readFile(new URL('./team-management.mjs',import.meta.url),'utf8');const start=source.indexOf('async function click('),end=source.indexOf('\nasync function waitSignal',start);
+ const actions=[];const button=disabled=>({evaluate:async fn=>fn({textContent:'Continue',disabled,parentElement:null}),click:async()=>{assert.equal(disabled,false);actions.push('enabled');}});
+ const click=vm.runInNewContext(`(${source.slice(start,end)})`);
+ assert.equal(await click({bringToFront:async()=>{},$$:async()=>[button(true),button(false)]},'Continue'),true);assert.deepEqual(actions,['enabled']);
+ assert.equal(await click({bringToFront:async()=>{},$$:async()=>[button(true)]},'Continue'),false);
+});

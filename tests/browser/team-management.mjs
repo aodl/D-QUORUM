@@ -24,7 +24,7 @@ if(!['scoped-signing','team-management','cancellation','wrong-provider','creatio
 const scopeProbeMode=scenario==='scoped-signing';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function writeEvidence(path,bytes){passkeys.assertEvidence(bytes);await writeFile(path+'.tmp',bytes);await rename(path+'.tmp',path);}
-async function click(page,label){await page.bringToFront();const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label){await b.evaluate(el=>{for(let parent=el.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'&&!parent.open)parent.querySelector('summary')?.click();});await b.click();return true;}}return false;}
+async function click(page,label){await page.bringToFront();const buttons=await page.$$('button');for(const b of buttons){if((await b.evaluate(el=>el.textContent)).trim()===label&&!await b.evaluate(el=>!!el.disabled)){await b.evaluate(el=>{for(let parent=el.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'&&!parent.open)parent.querySelector('summary')?.click();});await b.click();return true;}}return false;}
 async function waitSignal(name){for(let n=0;n<1200;n++){try{return JSON.parse(await readFile(`${directory}/${name}.json`,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}await pause(500);}throw Error(`coordinator timeout: ${name}`);}
 async function guard(page){page.on('response',response=>{if(response.status()<400)return;const url=new URL(response.url());if(url.hostname==='id.ai.localhost')console.error(JSON.stringify({phase:'II public HTTP failure',status:response.status(),origin:url.origin,path:url.pathname}));});page.on('dialog',async d=>{console.error('local UI dialog: '+d.type());await d.dismiss();});await page.setRequestInterception(true);page.on('request',r=>{const u=new URL(r.url());if(!['localhost','127.0.0.1'].includes(u.hostname)&&!u.hostname.endsWith('.localhost')&&!['data:','blob:'].includes(u.protocol)){denied.push(u.origin);r.abort();}else {if(u.pathname.includes('/canister/rrkah-fqaaa-aaaaa-aaaaq-cai/'))events.push({method:r.method(),path:u.pathname});const hold=preflightHolds.get(page);if(hold&&u.pathname.includes(`/canister/${new URL(origin).hostname.split('.')[0]}/call`)){preflightHolds.delete(page);hold(r);}else r.continue();}});}
 async function routeToTarget(page){await page.evaluate(()=>{location.hash='';});await page.evaluate(()=>{location.hash='#/neuron/100';});await page.waitForSelector('.control-panel',{timeout:90000});}
@@ -229,10 +229,14 @@ async function reauthenticatePage(page,participant,label,{profile,probe=false,ex
     const failure=headings.find(h=>['Unable to connect','Connection closed','Invalid request','Unverified origin','Unsupported browser','Authentication failed','Attribute sharing failed'].includes(h));
     if(failure){await popup.screenshot({path:`${directory}/ii-capability-failure.png`});throw Error('Real II authentication failed: '+failure);}
     if(labels.includes('Authenticating...'))await popup.bringToFront();
-    else if(labels.includes('Continue'))await click(popup,'Continue');
-    else if(labels.includes('Authorize'))await click(popup,'Authorize');
-    else if(labels.includes('Sign in with passkey'))await click(popup,'Sign in with passkey');
-    else {const remembered=labels.find(v=>v.includes(`Synthetic manager ${participant.index}`));if(remembered)await click(popup,remembered);}
+    else {
+     // A visible Continue can be disabled until an identity is selected.
+     // Only an enabled click consumes this UI observation; no auth restart.
+     let acted=labels.includes('Continue')&&await click(popup,'Continue');
+     if(!acted&&labels.includes('Authorize'))acted=await click(popup,'Authorize');
+     if(!acted&&labels.includes('Sign in with passkey'))acted=await click(popup,'Sign in with passkey');
+     if(!acted){const remembered=labels.find(v=>v.includes(`Synthetic manager ${participant.index}`));if(remembered)await click(popup,remembered);}
+    }
    }catch(error){if(!popup.isClosed()&&!/Target closed|Execution context was destroyed|^Node is detached from document$/.test(String(error.message)))throw error;}
    await pause(500);
   }
