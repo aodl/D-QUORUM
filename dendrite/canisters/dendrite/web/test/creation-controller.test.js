@@ -534,3 +534,14 @@ test('Governance upgrade permits success but an unaudited refusal reserves only 
   assert.equal(f.calls(),1);
  });
 });
+
+test('generic reservation codes never release an uncertain financial attempt across executable versions',async t=>{
+ const f=fixture();await prepare(f);f.state.witnessModule='ef'.repeat(32);
+ const denied={Err:{GenericError:{error_code:100001n,message:'implementation-specific denial'}}};
+ f.actors.ledger.icrc2_approve=async()=>denied;f.controller.export();
+ await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/retain the original identity/);
+ const intent=f.controller.receipt.intents[0];assert.equal(intent.state,'Unknown');assert.equal(f.state.transfers.length,0);
+ recordedOriginalReplies(t,f,new Map([[intent.reservation_binding.request_id,denied]]));
+ await assert.rejects(()=>f.controller.readOriginalFinancialReply(),/ambiguous/);assert.equal(intent.state,'Unknown');
+ await assert.rejects(()=>f.controller.prepareProvisioning(),/unresolved/);assert.equal(f.state.transfers.length,0);
+});

@@ -328,6 +328,10 @@ allowlist and are not prerequisites for reviewing a plan, spending, configuratio
 or recovery. Unexpected API replies, unavailable evidence, changed fees and
 unresolved original outcomes still block the affected action. An unknown outcome
 never authorises a replacement payment or duplicate canister creation.
+The [ICRC-2 interface](https://github.com/dfinity/ICRC-1/blob/main/standards/ICRC-2/README.md)
+has an implementation-specific `GenericError`; its numeric code alone is not a
+non-execution proof. This includes a saved legacy management-spender approval:
+its uncertain reservation stays unresolved, without preventing unrelated plans.
 
 Financial recovery verifies the original certified request and reply, preserving
 its destination, sender, argument, nonce and request ID across system upgrades.

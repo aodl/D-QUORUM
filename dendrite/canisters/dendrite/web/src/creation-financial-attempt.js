@@ -30,12 +30,11 @@ export function financialRefusal(result,kind){
  return (kind==='CreateCanister'?['InsufficientFunds','TooOld','CreatedInFuture']:['BadFee','InsufficientFunds','TooOld','CreatedInFuture']).includes(key)?key:undefined;
 }
 
-// Pinned cycles-ledger storage::approve rejects a management-principal account
-// before allowance mutation or fee charging. Recognise only that exact legacy
-// request/code; other GenericError outcomes remain uncertain.
+// Only typed public-API refusals release a reservation. A GenericError's
+// numeric code does not establish non-execution across implementations, including
+// the legacy management-spender approval. Preserve that original unknown outcome.
 export function reservationRefusal(result,kind,args){
  const key=Object.keys(result?.Err??{})[0];
  if(['BadFee','InsufficientFunds','AllowanceChanged','Expired','TooOld','CreatedInFuture'].includes(key))return key;
- if(kind==='CreateCanister'&&args.spender.owner.toText()==='aaaaa-aa'&&key==='GenericError'&&result.Err.GenericError.error_code===100001n)return 'CyclesDeniedManagementOwner';
  return undefined;
 }

@@ -43,13 +43,13 @@ test('untrusted saved ingress rejects malformed shape, timestamp range and nonce
  assert.equal(validateCreationRequestBinding(binding,expected),binding,'rejection checks never mutate the original identity');
 });
 
-test('cycles approval uses a fixed non-management marker and audits only the exact denied legacy owner',()=>{
+test('cycles approval uses a fixed non-management marker and retains uncertainty for implementation-specific legacy denial codes',()=>{
  const marker=cyclesDispatchMarker.toUint8Array();assert.equal(marker.length,29);assert.equal(marker[28],1);
  assert.equal(dispatchSpender(plan,'CreateCanister').owner.toText(),cyclesDispatchMarker.toText());
  assert.equal(dispatchSpender(plan,'PayConversion').owner.toText(),'aaaaa-aa');
  const denied={Err:{GenericError:{error_code:100001n,message:'not used as proof'}}};
  const legacy={spender:{owner:Principal.managementCanister()}};
- assert.equal(reservationRefusal(denied,'CreateCanister',legacy),'CyclesDeniedManagementOwner');
+ assert.equal(reservationRefusal(denied,'CreateCanister',legacy),undefined);
  assert.equal(reservationRefusal(denied,'PayStake',legacy),undefined);
  assert.equal(reservationRefusal(denied,'CreateCanister',{spender:{owner:cyclesDispatchMarker}}),undefined);
  assert.equal(reservationRefusal({Err:{GenericError:{error_code:100000n}}},'CreateCanister',legacy),undefined);
