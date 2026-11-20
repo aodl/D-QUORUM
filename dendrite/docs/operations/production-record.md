@@ -67,6 +67,8 @@ The default local release directory, tracked recipe and guarded deployment hash
 were updated to these exact bytes after deployment verification. These are
 release-binding/documentation changes, not a new application binary or a claim
 of new hosted qualification for the record commit.
+The focused release-tooling and documentation checks passed 17/17 after updating
+their exact deployed-hash assertion; the complete local campaign was not repeated.
 
 All 16 exact-source hosted jobs succeeded, including separate signed-II, full
 signed creation/finalisation, creation protocol with the fixed published test
