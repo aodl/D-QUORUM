@@ -5,6 +5,147 @@
 Only an operator-supplied real deployment result may change this into completed
 evidence. Never include private identity or authentication material.
 
+## Experimental stable-interface creation upgrade — 2026-11-20
+
+**DEPLOYED — exact qualified canonical bytes, certified frontend/bootstrap and
+read-only production preflight verified.** This release supersedes the external
+executable-allowlist policy in the November 13 historical record below. NNS module
+upgrades alone no longer block plan review, provisioning, dispatch, configuration
+or ordinary financial recovery. No current CMC hash was added to an allowlist.
+
+| Field | Observed value |
+| --- | --- |
+| Qualified application source | `1e419015bf63b3343bd45fce63f78554b538d0ad` |
+| Dendrite source subtree | `eddd01800df20a5855938c5c6be9d5e043e75422` |
+| Hosted qualification | [Run 44717045537](https://github.com/aodl/D-QUORUM/actions/runs/44717045537), all 16 jobs successful |
+| Hosted canonical artifact | `canonical-candidate`, ID `14623469793`; ZIP `sha256:56c4580d7a80262c78cdcbf5d94e0f79dadd794db658aa6b80e4ed97f1845481` |
+| Canister / origin | `hp4av-oiaaa-aaaar-qcaha-cai` / [Create a Dendrite](https://hp4av-oiaaa-aaaar-qcaha-cai.icp0.io/?release=e00000c2#/create) |
+| Previous installed module | `682ea727371a7d7cc110e29f89e331620efd545dea2412020f06bb2c6a4d54ec` |
+| New installed module / canonical Dendrite SHA-256 | `e00000c2ce9d0a27f78f619e4225fa3b78049412ffcfc2661a35431542b904cb` |
+| Certified bootstrap SHA-256 | `099836276a1282afd94f5676282ff20cbcbbb0f0451dfaa94166f9b78dd88bc2`; unchanged bytes, `1462077` bytes |
+| Bootstrap source fingerprint | `1c27759adfcf9765a6f7e618608e00712a7616d616ca23290634c803153fe001` |
+| Asset manifest SHA-256 | `9ceaa30b1b64a65a138593d95b3da7ee1aeca0f2014ac97e13a069f903635db4` |
+| Active JavaScript SHA-256 | `0ca6c5e7e7e8cccd6e3d1a4135c2190421ac60fd80dd303d267ea425a0ad30de` |
+| Stylesheet SHA-256 | `7b2188f014be364ac6ea3ffcd7b37365bb352a7df3185e21efbf6e35f5def453` |
+| Operator / tooling | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae` / `codex_local` / `dfx 0.31.0` |
+| Controllers before and after | `amzih-bssz4-twanl-zf6nr-bqsnn-d7rlt-eerbc-oe7vv-uggn5-3naqo-3ae`, `zkkkd-i34qc-367ln-e2u7o-ezznu-dkfqh-gtfvz-cviph-6qa4v-evtfs-wqe` |
+| Cycles immediately before / after | `4_606_548_744_088 Cycles` / `4_537_806_133_620 Cycles` |
+| Observed cycle decrease | 68742610468 |
+| Freezing threshold before / after | `7_776_000 Seconds` / `7_776_000 Seconds` |
+| Upgrade invoked / status verified | `2026-11-20T11:25:40.947956+00:00` / `2026-11-20T11:25:58.750884+00:00` |
+| Certified assets verified | `2026-11-20T11:26:45.093Z`; ten paths |
+| Post-upgrade production preflight | `2026-11-20T11:26:32.655Z`; successful conditional read-only check |
+
+The existing operator principal was confirmed in the current controller list.
+One upgrade was issued, returned exit code zero, and was read back independently:
+
+```sh
+DFX_IDENTITY=codex_local DFX_WARNING=-mainnet_plaintext_identity \
+  dfx canister install hp4av-oiaaa-aaaar-qcaha-cai --network ic --mode upgrade \
+  --wasm /home/codexdev/src/D-QUORUM/dendrite/dist/candidates/1e419015bf63b3343bd45fce63f78554b538d0ad/dendrite.wasm \
+  --argument '()'
+```
+
+Canister ID, controllers, zero compute/memory allocations, freezing threshold,
+reserved-cycle limit, Wasm memory settings, public log visibility, canonical
+origin, `https://id.ai/authorize`, `https://icp-api.io` and
+`{"alternativeOrigins":[]}` remained unchanged. Only ordinary upgrade cycles
+were spent. There was no D-QUORUM deployment/activation, ICP transfer, neuron
+creation/funding, Governance proposal, controller/hotkey change or blackholing.
+
+The hosted artifact ZIP digest, complete Dendrite source manifest (179 files),
+source subtree, canonical configuration, both byte-identical clean exports,
+checksums, bootstrap source/bytes/Candid/policy, embedded asset binding and canonical
+run receipts/log digests were independently verified. Artifact upload omitted
+only the hidden origins sidecar: its exact configured bytes were restored and
+matched the hosted manifest checksum in both exports. No Wasm was reconstructed
+or substituted. The previous verified release remains available under
+`dist/candidates/9863d7b0dbe19756579b4c57192b3101d0dc7115/` and the prior local release
+was retained under `dist/release-before-api-compatibility-20261120/`.
+
+The default local release directory, tracked recipe and guarded deployment hash
+were updated to these exact bytes after deployment verification. These are
+release-binding/documentation changes, not a new application binary or a claim
+of new hosted qualification for the record commit.
+
+All 16 exact-source hosted jobs succeeded, including separate signed-II, full
+signed creation/finalisation, creation protocol with the fixed published test
+executables, canonical reproducibility/creation and complete integrated
+requirement selection. Frontend tests passed 359/359; hosted line/branch/function
+coverage was 95.50% / 85.99% / 91.30%. Rust workspace line coverage was 85.82%.
+All unchanged 85% thresholds passed. Creation recording passed 29 bootstrap tests
+and 119 browser coordination tests; pure creation passed 92 tests; the real
+creation-protocol lane passed 15 cases and five archived-certificate checks.
+Python qualification-runner regressions passed 24/24. Local creation-protocol
+cases also passed and the owned fixture server shut down cleanly.
+
+Superseded run 44712962037 exposed only an unformatted relocated fixture path;
+its exact failed unit-job log was retained and formatting corrected. Run
+44713139929 was superseded by the additional conservative generic-approval
+refusal correction. Neither superseded run qualifies this release. An optional
+local repeat for superseded source 65ae215 hit Docker storage exhaustion; it is
+not qualification evidence. The final release uses the successful source-bound
+hosted canonical exports, not that incomplete local repeat.
+
+Financial replies retain exact certified destination/sender/argument/nonce/request
+identity and actual outcomes across external upgrades. Typed public-API failures,
+fees, amounts, accounts, bounded reservations, deduplication and unresolved-outcome
+protections remain. Implementation-specific generic approval errors stay
+unresolved, including legacy denial code 100001. The original executable binding
+is retained only for the narrowly audited historical Governance no-creation
+refusal proof; an unproven refusal reserves that operation and does not prevent
+unrelated plans. Exact bootstrap checksum, controller/neuron authority and the
+Dendrite Standard are unchanged. The old executable registry is retained only as
+PocketIC test data at `tests/pocketic/fixtures/protocol-releases.json` in the
+consolidated repository, never as production compatibility policy.
+
+Independent post-upgrade certified-state reads confirmed the installed Dendrite
+hash and original controllers. Ten HTTP paths matched canonical bytes with IC
+certificate BLS/delegation/canister/time verification, certified-data witnesses,
+certification v2 and popup-compatible COOP/CSP/nosniff headers. The current and
+historical bootstrap assets remain available. Anonymous Chrome 156 rendered the
+23-rule neuron report, exact new JavaScript and the RecoverableTest creation form
+without page errors or any update attempt. `DENDRITE_SMOKE_NEURON_ID` was unset.
+
+Fresh external module observations are **diagnostic only**, not prerequisites or
+an allowlist. All certificate chains verified against the production root key:
+
+| Dependency | Canister | Observed installed module |
+| --- | --- | --- |
+| CMC | `rkp4c-7iaaa-aaaaa-aaaca-cai` | `8e759916db8e5ec420efc2f54573d13f37f44640ec553d536ad64756c43fe006` |
+| Governance | `rrkah-fqaaa-aaaaa-aaaaq-cai` | `7f85124ee08c3f59c0050009268807c7aea2b80ee296c23338b05458888f19df` |
+| ICP Ledger | `ryjl3-tyaaa-aaaaa-aaaba-cai` | `51f4be010f23064137defacd627ffbec024c5133210c68ca3b80ab8f257101d6` |
+| Cycles Ledger | `um5iw-rqaaa-aaaaq-qaaba-cai` | `70f8bd40d022374622b34266d2c182d2a5b711d965f3bef9e505467a84c40bce` |
+
+The CMC differs from the November 13 fixture/reviewed identity. The deployed
+planner no longer treats this as incompatibility. Actual production Governance
+manager/economics reads, Ledger and Cycles Ledger fees, and the CMC quote decoded
+successfully. One-manager RecoverableTest preflight succeeded for public manager
+`428687636340283207` and observed authority
+`mucdz-5afc2-k53bs-7cxj4-nb35w-4ofwx-ju435-o6zg7-vtqas-ulmvx-mqe`. This is conditional evidence: no signer
+or II session as that authority was obtained, and it does not prove the user's
+authority or a future financial outcome.
+
+At `2026-11-20T11:26:32.655Z`, the conversion rate was `15642`
+XDR permyriad/ICP, ICP fee `10000` e8s and Cycles Ledger fee `100000000` cycles.
+The fresh minimum for a two-trillion-cycle allocation was **1.27900067 ICP for
+provisioning**, separately from stake. The default 1 ICP budget was not silently
+increased and is insufficient for that quote. Obtain a fresh quote and choose an
+adequate provisioning budget before funding.
+
+Manual acceptance remains: hard-reload the canonical origin, sign in as an actual
+controller/hotkey of the selected public known manager, choose the one-manager
+RecoverableTest profile and Review creation plan. Mainnet II/popup/sign-out UX and
+any voluntarily funded creation/stake/recovery are for the user to test. No
+mainnet financial success is claimed. RecoverableTest remains non-compliant,
+controller-recoverable and ineligible for irreversible finalisation.
+
+Raw status, command, artifact, certificate, browser and API evidence is retained
+locally under ignored `dist/api-compatibility-20261120/`; these are local retention
+paths, not persistent artifact hyperlinks. Hosted canonical artifact
+`14623469793` is retained until `2027-02-18T10:11:08Z` under the recorded run.
+Earlier production releases, qualification and failure records remain unchanged.
+
 ## Experimental reviewed-mainnet compatibility upgrade — 2026-11-13
 
 **DEPLOYED — exact canonical application, certified assets and read-only creation
