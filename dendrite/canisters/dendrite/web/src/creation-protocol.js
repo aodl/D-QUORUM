@@ -141,18 +141,24 @@ async function witnessedUpdate(actor, methodName, args, includeSystemState, bind
   }
   const witness = { request, request_id: bytesHex(requestId), certificate: bytesHex(certificate) };
   const verified=await verifyCreationWitness(witness, { agent, canisterId, owner: result.requestDetails.sender, methodName, includeSystemState, historical: false });
-  return {system:verified.system,value: IDL.decode(signature.retTypes, result.reply)[0], witness };
+  return {system:verified.system,value: verified.value, witness };
 }
 // Reconcile an original, already saved ingress identity. This signs only a
 // fresh read_state request; it never resubmits the original value-moving call.
 export async function readCreationRequestWitness(actor,binding){
   const agent=Actor.agentOf(actor),canisterId=Actor.canisterIdOf(actor),r=binding?.request;
   validateCreationRequestBinding(binding,{owner:await agent.getPrincipal(),destination:canisterId,methodName:r?.method_name,argument:hexBytes(r?.arg??"")});
-  const id=hexBytes(binding.request_id,32),certificate=(await agent.readState(canisterId,{paths:[requestPath(id,"status"),requestPath(id,"reply"),systemPath(canisterId,"module_hash"),systemPath(canisterId,"controllers"),[utf8.encode("time")]]})).certificate;
-  const witness={...binding,certificate:bytesHex(certificate)},verified=await verifyCreationWitness(witness,{agent,canisterId,owner:r.sender,methodName:r.method_name,includeSystemState:true,historical:false});
+  const id=hexBytes(binding.request_id,32),includeSystemState=r.method_name==="manage_neuron";
+  const paths=[requestPath(id,"status"),requestPath(id,"reply"),[utf8.encode("time")]];
+  // Financial replies depend on their exact certified request/outcome, not the
+  // executable installed at the time of a later read. Governance refusal proofs
+  // additionally retain their narrowly audited implementation binding.
+  if(includeSystemState)paths.push(systemPath(canisterId,"module_hash"),systemPath(canisterId,"controllers"));
+  const certificate=(await agent.readState(canisterId,{paths})).certificate;
+  const witness={...binding,certificate:bytesHex(certificate)},verified=await verifyCreationWitness(witness,{agent,canisterId,owner:r.sender,methodName:r.method_name,includeSystemState,historical:false});
   return {value:verified.value,witness,system:verified.system};
 }
-export const creationFinancialWithWitness = (actor,method,args,binding) => witnessedUpdate(actor,method,[args],true,binding);
+export const creationFinancialWithWitness = (actor,method,args,binding) => witnessedUpdate(actor,method,[args],false,binding);
 export const creationProposalWithWitness = (governance, request, binding) => witnessedUpdate(governance, "manage_neuron", [request], true,binding);
 export const createCanisterWithWitness = (cycles, args) => witnessedUpdate(cycles, "create_canister", [args], false);
 export const bootstrapStatusWithWitness = (bootstrap, revision) => witnessedUpdate(bootstrap, "status", [revision], true);
@@ -196,7 +202,7 @@ export async function verifyCreationWitness(witness, { agent, canisterId, owner,
   const factory = ["icrc1_transfer","icrc2_approve"].includes(methodName) ? ledgerFactory : methodName === "status" ? bootstrapFactory : methodName === "manage_neuron" ? nnsFactory : cyclesFactory;
   const signature = factory({ IDL })._fields.find(([name]) => name === methodName)[1];
   const args = IDL.decode(signature.argTypes, request.arg), value = IDL.decode(signature.retTypes, found("reply"))[0];
-  return { args, value, system: includeSystemState ? normalizeCertifiedCanisterState(certificate, target) : undefined };
+  return { args, value, system: includeSystemState && (methodName!=="manage_neuron"||value.command?.[0]?.Error) ? normalizeCertifiedCanisterState(certificate, target) : undefined };
 }
 
 export async function createProvisioningActors(session, options = {}) {

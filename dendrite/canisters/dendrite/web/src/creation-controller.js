@@ -1,4 +1,4 @@
-import {supportsProtocolModule} from "./creation-protocol-compatibility.js";
+import {provesHistoricalGovernanceRefusal} from "./creation-protocol-compatibility.js";
 import {dispatchSpender,dispatchReservation,validateDispatchReservation,financialAttemptKinds,financialRefusal,reservationRefusal} from "./creation-financial-attempt.js";
 import {createCreationTeamVote} from "./creation-team-vote.js";
 import {creationArtifact} from "./creation-compatibility.js";
@@ -56,11 +56,9 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
   async function run(operation){ensureActive();if(busy)throw Error("Another creation operation is in progress.");busy=true;const generation=epoch;notify();
     const check=()=>{if(epoch!==generation||!active)throw Error("Operation interrupted by sign-out or route change. Preserve its original recovery intent.");identity();};
     try{return await operation(check);}finally{busy=false;notify();}}
-  async function preflight(forPlan=plan){const session=identity();const result=await creationPreflight(forPlan,{actor:await getNnsActor(),readSystem,onProtocolReport:report=>{observed.protocol=report;notify();},targetId:receipt?.neuron_id?BigInt(receipt.neuron_id):undefined});session.validate();return result;}
+  async function preflight(forPlan=plan){const session=identity();const result=await creationPreflight(forPlan,{actor:await getNnsActor(),targetId:receipt?.neuron_id?BigInt(receipt.neuron_id):undefined});session.validate();return result;}
   function registrationEligible(n,economics){const dissolve=n.dissolve_state?.[0],remaining=dissolve?.DissolveDelaySeconds??(dissolve?.WhenDissolvedTimestampSeconds===undefined?undefined:dissolve.WhenDissolvedTimestampSeconds-nanos()/1_000_000_000n);
-    return typeof remaining==="bigint"&&remaining>=creationVotingMinimum(economics,observed.protocol?.rows.find(row=>row.canister===NNS_GOVERNANCE_CANISTER_ID)?.moduleHash)&&n.deciding_voting_power?.[0]>0n;}
-  async function recoveryProtocol(){for(const id of [NNS_GOVERNANCE_CANISTER_ID,ICP_LEDGER_CANISTER_ID]){const system=await readSystem(id);if(!supportsProtocolModule(id,bytesHex(system.moduleHash??[]),plan.network))throw Error("Recovery protocol executable differs from the reviewed Governance/Ledger pins. No recovery mutation was dispatched.");}}
-  async function provisioningRecoveryProtocol(){for(const id of [ICP_LEDGER_CANISTER_ID,CMC_CANISTER_ID,CYCLES_LEDGER_CANISTER_ID]){const system=await readSystem(id);if(!supportsProtocolModule(id,bytesHex(system.moduleHash??[]),plan.network))throw Error("Provisioning recovery protocol changed. Preserve the original identity; no notification or creation request was repeated.");}}
+    return typeof remaining==="bigint"&&remaining>=creationVotingMinimum(economics)&&n.deciding_voting_power?.[0]>0n;}
   async function quote(){const {ledger,cmc,cycles}=actorFor("FundProvisioning");
     if(receipt&&confirmed("ConvertCycles")){const converted=confirmed("ConvertCycles");return {cyclesOnly:true,fee:null,cyclesFee:await cycles.icrc1_fee(),rate:converted.reviewed_conversion_rate===null?null:{timestamp_seconds:BigInt(converted.reviewed_quote_timestamp),xdr_permyriad_per_icp:BigInt(converted.reviewed_conversion_rate)},observedAt:BigInt(Math.floor(Date.now()/1000))};}
     const fee=await ledger.icrc1_fee(),cyclesFee=await cycles.icrc1_fee(),rate=await cmc.get_icp_xdr_conversion_rate();
@@ -113,8 +111,8 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(!original?.request_binding||!original?.reservation_binding||!original?.reply_witness||!original.dispatch_reservation.reply_witness)throw Error("An existing on-chain dispatch reservation has no authoritative no-execution proof. Import and reconcile its original receipt; no fresh attempt is authorised.");
       for(const [w,arg,method] of [[original.dispatch_reservation.reply_witness,original.dispatch_reservation.argument,"icrc2_approve"],[original.reply_witness,original.argument,kind==="CreateCanister"?"create_canister":"icrc1_transfer"]]){
         if(w.request.arg!==arg||w.request_id!==(method==="icrc2_approve"?original.reservation_binding.request_id:original.request_binding.request_id))throw Error("Refusal evidence differs from its original financial attempt.");
-        const v=await verifyCreationWitness(w,{agent,canisterId:destination,owner:plan.owner,methodName:method,includeSystemState:true});
-        if(!supportsProtocolModule(destination,bytesHex(v.system?.moduleHash??[]),plan.network,{historical:true})||(method==="icrc2_approve"?v.value.Ok===undefined:!financialRefusal(v.value,kind)))throw Error("Financial evidence does not prove the first reserved dispatch was conclusively refused.");
+        const v=await verifyCreationWitness(w,{agent,canisterId:destination,owner:plan.owner,methodName:method,includeSystemState:false});
+        if(method==="icrc2_approve"?v.value.Ok===undefined:!financialRefusal(v.value,kind))throw Error("Financial evidence does not prove the first reserved dispatch was conclusively refused.");
       }
       spentFees+=validateDispatchReservation(original.dispatch_reservation,original,plan).fee[0];
     }
@@ -125,13 +123,11 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     if(!intent?.dispatch_reservation)throw Error("This financial attempt has no exact durable reservation.");
     const approval=validateDispatchReservation(intent.dispatch_reservation,intent,plan),reserved=await financialWithWitness(ledger,"icrc2_approve",approval,intent.reservation_binding);
     intent.dispatch_reservation.reply_witness=reserved.witness;
-    if(!supportsProtocolModule(intent.destination,bytesHex(reserved.system?.moduleHash??[]),plan.network))throw Error("Certified reservation reply is not from the pinned executable; retain the original outcome.");
     if(reserved.value.Ok===undefined){const refused=reservationRefusal(reserved.value,kind,approval),code=Object.keys(reserved.value.Err??{})[0]??"malformed";const e=Error(`Dispatch reservation was not newly granted (${refused??code}). Duplicate, lost or competing reservations never authorise another financial request; retain the original identity.`);if(refused)e.knownRejected=true;throw e;}
     intent.dispatch_reservation.block_id=String(reserved.value.Ok);check();
     const proof=await financialWithWitness(ledger,method,args,intent.request_binding);
     intent.reply_witness=proof.witness;
-    if(!supportsProtocolModule(intent.destination,bytesHex(proof.system?.moduleHash??[]),plan.network))throw Error("Certified financial reply is not from the pinned executable; original outcome remains unresolved.");
-    const refusal=financialRefusal(proof.value,kind);if(refusal){const e=Error(`Pinned Ledger conclusively refused the first reserved ${kind} request: ${refusal}. Review repaired conditions and a new bounded attempt.`);e.knownRejected=true;throw e;}
+    const refusal=financialRefusal(proof.value,kind);if(refusal){const e=Error(`Ledger conclusively refused the first reserved ${kind} request: ${refusal}. Review repaired conditions and a new bounded attempt.`);e.knownRejected=true;throw e;}
     return proof;
   }
   async function paymentIntent(...parameters){const generation=epoch,head=await actorFor("FundProvisioning").ledger.query_blocks({start:0n,length:0n});
@@ -250,8 +246,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     async dispatch({saved=false,confirmed:approved=false}={}){return run(async check=>{identity();const request=prepared;if(!request||request.intent.state!=="Prepared"||!saved||!approved||savedDigest!==receiptContentDigest(receipt))throw Error("Save this exact recovery intent and explicitly confirm its request before signing.");
       guard(request.intent.id,{returnIcp:request.intent.kind==="ReturnIcp",recovery:["ReturnIcp","DisburseStake"].includes(request.intent.kind)});if(recoveryOnly)await state();
       validateCreationReceipt(JSON.parse(exportCreationReceipt(receipt)),bindings);
-      if(request.intent.kind==="ReturnIcp"){const ledgerState=await readSystem(ICP_LEDGER_CANISTER_ID);if(!supportsProtocolModule(ICP_LEDGER_CANISTER_ID,bytesHex(ledgerState.moduleHash??[]),plan.network))throw Error("ICP Ledger executable is outside the reviewed return protocol.");}
-      else if(request.intent.kind!=="DisburseStake")await preflight();check();if(request.intent.kind==="DisburseStake"){await recoveryProtocol();await state();await target();}if(request.intent.kind==="Uninstall")await readiness({quiescent:true,intentId:request.intent.id});if(request.intent.kind==="ClearControllers")await readiness({codeRemoved:true,intentId:request.intent.id});
+      if(!["ReturnIcp","DisburseStake"].includes(request.intent.kind))await preflight();check();if(request.intent.kind==="DisburseStake"){await state();await target();}if(request.intent.kind==="Uninstall")await readiness({quiescent:true,intentId:request.intent.id});if(request.intent.kind==="ClearControllers")await readiness({codeRemoved:true,intentId:request.intent.id});
       if(["Registration","Rehearsal"].includes(request.intent.kind)){const actor=await getNnsActor(),economics=await actor.get_network_economics_parameters(),fee=request.intent.kind==="Registration"?economics.reject_cost_e8s:economics.neuron_management_fee_per_proposal_e8s;
         if(fee!==request.nnsReview.reviewedFeeE8s)throw Error("Proposal fee changed; no submission occurred. Cancel the unsent request and review again.");
         const m=(await actor.list_neurons(listRequest(request.nnsReview.proposerManagerNeuronId))).full_neurons?.[0];
@@ -275,13 +270,13 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       const args={from_subaccount:[fundingSubaccount(plan.owner,plan.creation_id)],to:plan.return_account,fee:{e8s:fee},amount:{e8s:balance-fee},memo:plan.nonce,created_at_time:[{timestamp_nanos:nanos()}]};
       return paymentIntent("ReturnIcp",ICP_LEDGER_CANISTER_ID,args,creationArgumentTypes.legacyTransfer,async()=>{const result=await ledger.transfer(args),block=result.Ok??result.Err?.TxDuplicate?.duplicate_of;if(block===undefined)throw Error("Workflow ICP return is unconfirmed; preserve the original identity.");
         if(!matchesReturn(await readLedgerBlock(block),args))throw Error("Return block does not match its exact source/destination/amount/fee/identity.");return {block_id:String(block)};},`Return only ${balance-fee} e8s unused ICP from P's workflow account to fixed ${bytesHex(plan.return_account)}; fee ${fee} e8s. This returns no converted/spent cycles or locked stake.`);});},
-    async prepareStakeDisbursement(){return run(async check=>{guard(undefined,{recovery:true});await recoveryProtocol();if(!recoveryOnly)await verifyCreationProvenance();const s=await state(),n=await target(),economics=await(await getNnsActor()).get_network_economics_parameters();
+    async prepareStakeDisbursement(){return run(async check=>{guard(undefined,{recovery:true});if(!recoveryOnly)await verifyCreationProvenance();const s=await state(),n=await target(),economics=await(await getNnsActor()).get_network_economics_parameters();
       const dissolved=n.dissolve_state[0]?.DissolveDelaySeconds===0n||(typeof n.dissolve_state[0]?.WhenDissolvedTimestampSeconds==="bigint"&&n.dissolve_state[0].WhenDissolvedTimestampSeconds<=nanos()/1_000_000_000n);
       if(!dissolved||s.pending.length||variant(s.phase)!=="Recovering")throw Error("Stake is still locked or an original recovery effect remains unresolved.");const amount=n.cached_neuron_stake_e8s-n.neuron_fees_e8s-economics.transaction_fee_e8s;if(amount<=0n)throw Error("No returnable stake remains above actual Governance fees.");check();
       observed.disbursementReview={amount,fee:economics.transaction_fee_e8s};const args={revision:plan.revision,step:{Disburse:{expected_amount_e8s:amount,expected_fee_e8s:economics.transaction_fee_e8s}}};return makeIntent("DisburseStake",receipt.canister_id,args,creationArgumentTypes.bootstrapAdvance,async()=>{const result=unwrap(await actorFor("CallBootstrap").bootstrap.advance(args));
         const block=result.disbursement_block[0];if(variant(result.phase)!=="Recovered"||block===undefined)throw Error("Disbursement is unresolved; never resend it.");const b=await readLedgerBlock(block),op=b.transaction.operation[0]?.Transfer;
         if(!op||!same(op.from,legacyAccount(governance,stakingSubaccount(ownCanister(),plan.nonce)))||!same(op.to,plan.return_account)||op.amount.e8s!==amount||op.fee.e8s!==economics.transaction_fee_e8s)throw Error("Return amount/fee differs from the exact review; retain the original ledger block and investigate.");observed.state=result;checkpointCreation(receipt,"Recovery",{block:String(block),amount:String(amount)});return {block_id:String(block)};},`Disburse only dissolved neuron T=${receipt.neuron_id}, Governance staking account ${bytesHex(legacyAccount(governance,stakingSubaccount(ownCanister(),plan.nonce)))} to fixed ${bytesHex(plan.return_account)}. Reviewed return ${amount} e8s, Governance fee ${economics.transaction_fee_e8s} e8s. This returns no provisioning costs.`);});},
-    async advance(step,{confirmed:approved=false}={}){return run(async check=>{guard(undefined,{recovery:variant(step)==="StartDissolving"});if(recoveryOnly)await state();if(variant(step)==="Disburse")throw Error("Prepare, export and confirm the exact disbursement recovery intent first.");if(["CommitLock","StartDissolving"].includes(variant(step))&&!approved)throw Error("This lock/recovery action needs separate explicit consent.");await verifyC({installed:true});if(["StartDissolving","ReconcileDisbursement"].includes(variant(step)))await recoveryProtocol();else{await preflight();}check();
+    async advance(step,{confirmed:approved=false}={}){return run(async check=>{guard(undefined,{recovery:variant(step)==="StartDissolving"});if(recoveryOnly)await state();if(variant(step)==="Disburse")throw Error("Prepare, export and confirm the exact disbursement recovery intent first.");if(["CommitLock","StartDissolving"].includes(variant(step))&&!approved)throw Error("This lock/recovery action needs separate explicit consent.");await verifyC({installed:true});if(!["StartDissolving","ReconcileDisbursement"].includes(variant(step)))await preflight();check();
       const s=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step}));check();bindState(s);
       if(s.neuron_id.length&&s.public_visibility_confirmed)await target();checkpointCreation(receipt,variant(step)==="Claim"?"Claimed":variant(step)==="Seal"?"Sealed":variant(step)==="Disburse"?"Recovery":"Configured",{sequence:String(s.sequence),phase:variant(s.phase)});return s;});},
     async prepareNnsProposal(kind,proposerId){return run(async check=>{guard();if(!["Registration","Rehearsal"].includes(kind))throw Error("Unsupported creation proposal.");await preflight();const s=await state(),t=await target(),actor=await getNnsActor(),manager=BigInt(proposerId);
@@ -308,7 +303,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
         const proof=await creationProposalWithWitness(actor,request,intent.request_binding),response=proof.value,command=response.command?.[0];intent.reply_witness=proof.witness;check();
         if(command?.Error){
           const code=command.Error.error_type;
-          if(auditedProposalRefusal(code)){
+          if(auditedProposalRefusal(code)&&provesHistoricalGovernanceRefusal(bytesHex(proof.system?.moduleHash??[]))){
             const w=proof.witness.request;
             const result=unwrap(await bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(operationId),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
             check();if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; retain original reservation.");
@@ -347,10 +342,10 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(intent.state==="Rejected")intent.state="Unknown";settleCreationIntent(receipt,intent.id,"Confirmed",{proposal_id:String(id)});observed.proposal=p;});},
     async readOriginalProposalReply(){return run(async check=>{fullWorkflow();identity();const intent=receipt.intents.find(i=>["Registration","Rehearsal"].includes(i.kind)&&["Unknown","Prepared"].includes(i.state));
       if(!intent?.request_binding)throw Error("The original ingress binding is unavailable; preserve the reservation and inspect exact proposal history.");await state();
-      const proof=await readCreationRequestWitness(await getNnsActor(),intent.request_binding);if(!supportsProtocolModule(NNS_GOVERNANCE_CANISTER_ID,bytesHex(proof.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Original reply has an unreviewed Governance module.");check();intent.reply_witness=proof.witness;
+      const proof=await readCreationRequestWitness(await getNnsActor(),intent.request_binding);check();intent.reply_witness=proof.witness;
       const command=proof.value.command?.[0],id=command?.MakeProposal?.proposal_id?.[0]?.id;
       if(id){unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposal:id}}));check();settleCreationIntent(receipt,intent.id,"Confirmed",{proposal_id:String(id)});receipt.bootstrap_witness=(await bootstrapStatusWithWitness(actorFor("CallBootstrap").bootstrap,plan.revision)).witness;}
-      else if(command?.Error&&auditedProposalRefusal(command.Error.error_type)){const w=proof.witness.request,result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
+      else if(command?.Error&&auditedProposalRefusal(command.Error.error_type)&&provesHistoricalGovernanceRefusal(bytesHex(proof.system?.moduleHash??[]))){const w=proof.witness.request,result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.witness.certificate)}}}));
         if(!originalRefusalAudit(result,intent,command.Error.error_type))throw Error("Original refusal audit was not replicated.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");}
       else throw Error("Original outcome is not an audited successful creation or no-creation refusal; retain its identity.");
     });},
@@ -361,7 +356,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(proof.request.arg!==intent.argument||proof.request_id!==intent.request_binding?.request_id)throw Error("Refusal proof differs from the original request.");
       const agent=await HttpAgent.create({host:bindings.host,shouldFetchRootKey:bindings.local,verifyQuerySignatures:true,retryTimes:0});
       const verified=await verifyCreationWitness(proof,{agent,canisterId:NNS_GOVERNANCE_CANISTER_ID,owner:plan.owner,methodName:"manage_neuron",includeSystemState:true}),code=verified.value.command?.[0]?.Error?.error_type;
-      if(!Number.isInteger(code)||code<3||code>8||!supportsProtocolModule(NNS_GOVERNANCE_CANISTER_ID,bytesHex(verified.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Original response is not a pinned, audited no-creation refusal.");check();const w=proof.request;
+      if(!Number.isInteger(code)||code<3||code>8||!provesHistoricalGovernanceRefusal(bytesHex(verified.system?.moduleHash??[])))throw Error("Original response is not a pinned, audited no-creation refusal.");check();const w=proof.request;
       const result=unwrap(await actorFor("CallBootstrap").bootstrap.advance({revision:plan.revision,step:{ResolveProposalRefusal:{intent_id:hexBytes(intent.id),argument:hexBytes(w.arg),ingress_expiry:BigInt(w.ingress_expiry),nonce:w.nonce===null?[]:[hexBytes(w.nonce)],certificate:hexBytes(proof.certificate)}}}));
       if(!originalRefusalAudit(result,intent,code))throw Error("Replicated refusal audit is unavailable; original reservation remains unresolved.");check();observed.state=result;settleCreationIntent(receipt,intent.id,"Rejected");});},
     async cancelUnsentProposalReservation({confirmed:approved=false}={}){return run(async check=>{fullWorkflow();identity();if(!approved)throw Error("Explicitly review cancellation of the undispatched reservation.");const s=await state(),r=s.external_proposal?.[0];
@@ -383,10 +378,10 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
     async readOriginalFinancialReply(){return run(async check=>{identity();const intent=receipt.intents.find(i=>financialAttemptKinds.has(i.kind)&&["Unknown","Prepared"].includes(i.state));
       if(!intent?.request_binding||!intent.reservation_binding)throw Error("Original ingress bindings are unavailable; preserve legacy timestamps and reconcile their exact permanent Ledger/Cycles Ledger references.");
       const actors=actorFor("FundProvisioning"),ledger=intent.kind==="CreateCanister"?actors.cycles:actors.ledger;
-      const reserved=await readCreationRequestWitness(ledger,intent.reservation_binding);if(!supportsProtocolModule(intent.destination,bytesHex(reserved.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Original reservation reply has an unreviewed module.");check();intent.dispatch_reservation.reply_witness=reserved.witness;
+      const reserved=await readCreationRequestWitness(ledger,intent.reservation_binding);check();intent.dispatch_reservation.reply_witness=reserved.witness;
       if(reserved.value.Ok===undefined){if(!reservationRefusal(reserved.value,intent.kind,validateDispatchReservation(intent.dispatch_reservation,intent,plan)))throw Error("Original reservation outcome is ambiguous; no fresh dispatch is authorised.");settleCreationIntent(receipt,intent.id,"Rejected");return;}
       intent.dispatch_reservation.block_id=String(reserved.value.Ok);
-      const proof=await readCreationRequestWitness(ledger,intent.request_binding);if(!supportsProtocolModule(intent.destination,bytesHex(proof.system?.moduleHash??[]),plan.network,{historical:true}))throw Error("Original financial reply has an unreviewed module.");check();intent.reply_witness=proof.witness;
+      const proof=await readCreationRequestWitness(ledger,intent.request_binding);check();intent.reply_witness=proof.witness;
       if(financialRefusal(proof.value,intent.kind)){settleCreationIntent(receipt,intent.id,"Rejected");return;}
       if(intent.kind==="CreateCanister"){
         const result=proof.value,c=result.Ok?.canister_id??result.Err?.Duplicate?.canister_id?.[0],block=result.Ok?.block_id??result.Err?.Duplicate?.duplicate_of;
@@ -408,7 +403,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       if(matched!==undefined)settleCreationIntent(receipt,intent.id,"Confirmed",{block_id:String(matched)});else intent.references.history_cursor=String(end);
       observed.recoveryScan={from:String(start),through:String(end),currentHead:String(head.chain_length),match:matched===undefined?null:String(matched)};return observed.recoveryScan;});},
     async reconcileConversion(){return run(async check=>{fullWorkflow();identity();const intent=receipt.intents.find(i=>["Unknown","Prepared"].includes(i.state));if(intent?.kind!=="ConvertCycles")throw Error("No original CMC notification awaits reconciliation.");
-      await provisioningRecoveryProtocol();check();
+      check();
       const args=IDL.decode([creationArgumentTypes.mint],hexBytes(intent.argument))[0],payment=confirmed("PayConversion");
       if(!payment||args.block_index!==BigInt(payment.references.block_id)||!same(args.to_subaccount[0]??[],fundingSubaccount(plan.owner,plan.creation_id))||!same(args.deposit_memo[0]??[],plan.creation_id))throw Error("Original conversion intent/account binding mismatch.");
       await verifyPayment(args.block_index,IDL.decode([creationArgumentTypes.transfer],hexBytes(payment.argument))[0]);check();const r=await actorFor("FundProvisioning").cmc.notify_mint_cycles(args);
@@ -416,7 +411,7 @@ export function createCreationController({bindings,getSession,getNnsActor,getSer
       else if(r.Err?.Refunded?.block_index.length){await verifyCmcRefund(r.Err.Refunded.block_index[0],IDL.decode([creationArgumentTypes.transfer],hexBytes(payment.argument))[0]);check();settleCreationIntent(receipt,intent.id,"Rejected",{refund_block:String(r.Err.Refunded.block_index[0])});}
       else throw Error("Original CMC outcome remains unresolved or its notification history expired. Do not replace its ICP payment.");});},
     async reconcileCreation(burnBlock){return run(async check=>{fullWorkflow();identity();const intent=receipt.intents.find(i=>["Unknown","Prepared"].includes(i.state));if(intent?.kind!=="CreateCanister")throw Error("No original canister creation awaits reconciliation.");
-      await provisioningRecoveryProtocol();check();
+      check();
       const args=IDL.decode([creationArgumentTypes.create],hexBytes(intent.argument))[0],settings=args.creation_args[0]?.settings[0];
       if(args.amount!==plan.provision_cycles||!same(args.from_subaccount[0]??[],fundingSubaccount(plan.owner,plan.creation_id))||settings?.controllers?.[0]?.map(p=>p.toText()).join(",")!==plan.owner.toText()||settings.compute_allocation[0]!==0n||settings.memory_allocation[0]!==0n||settings.freezing_threshold[0]!==2_592_000n)throw Error("Original provisioning intent differs from the reviewed plan.");
       const cycles=actorFor("FundProvisioning").cycles;await verifyOriginalCreationBurn(cycles,burnBlock,args,plan.owner);check();const proof=await createCanisterWithWitness(cycles,args),r=proof.value,c=r.Err?.Duplicate?.canister_id?.[0];

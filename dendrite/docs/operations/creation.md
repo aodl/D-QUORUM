@@ -319,3 +319,23 @@ or service recovery controller remains.
 See [architecture](../architecture.md), [bootstrap](../../canisters/bootstrap/README.md)
 and the consolidated source-bound qualification report for exact protocol pins,
 supported evidence and any failed/unrun release gates.
+
+## External protocol upgrades
+
+Creation uses the public Candid APIs at the fixed CMC, NNS Governance, ICP Ledger
+and Cycles Ledger principals. Their installed Wasm hashes are not a compatibility
+allowlist and are not prerequisites for reviewing a plan, spending, configuration
+or recovery. Unexpected API replies, unavailable evidence, changed fees and
+unresolved original outcomes still block the affected action. An unknown outcome
+never authorises a replacement payment or duplicate canister creation.
+
+Financial recovery verifies the original certified request and reply, preserving
+its destination, sender, argument, nonce and request ID across system upgrades.
+Only the special historical Governance *non-execution refusal proof* retains its
+original audited executable binding; an unproven refusal leaves that proposal
+reserved. It does not block unrelated creations. The deterministic published
+executables in `../../../tests/pocketic/fixtures/protocol-releases.json` are test
+fixtures, not a registry of permitted production versions.
+
+Dendrite's own temporary bootstrap remains checksum-bound to its reviewed release,
+with exact controller, plan, staking-account and neuron bindings unchanged.

@@ -1,3 +1,4 @@
+import CREATION_PROTOCOL_PINS from "../../../../src/declarations/bootstrap/protocol-pins.json" with {type:"json"};
 // Recording certificates exercise the production voting adapter. They do not
 // establish II identity, BLS authenticity or actual Governance permissions.
 import {recordingCertificate} from './support/recording-certificate.js';
@@ -8,7 +9,7 @@ import {IDL} from '@icp-sdk/core/candid';
 import {HttpAgent,Certificate,Cbor,LookupPathStatus} from '@icp-sdk/core/agent';
 import {createCreationController} from '../src/creation-controller.js';
 import {createCreationTeamVote} from '../src/creation-team-vote.js';
-import {createCreationPlan,creationPlanDigest,CREATION_PROTOCOL_PINS} from '../src/creation-plan.js';
+import {createCreationPlan,creationPlanDigest} from '../src/creation-plan.js';
 import {newCreationReceipt,addCreationIntent,settleCreationIntent,exportCreationReceipt} from '../src/creation-receipt.js';
 import {creationArgumentTypes,creationRequestBinding,creationRegistrationMetadata} from '../src/creation-protocol.js';
 import {bytesHex,hexBytes,fundingSubaccount,stakingSubaccount,sha256Hex} from '../src/creation-accounts.js';
@@ -41,8 +42,8 @@ test('another creator-independent principal can review and sign only its own exa
 });
 test('changed module, controllers, following, selected manager authority or proposal status prevents signing',async t=>{
  for(const [label,change,expected] of [
-  ['module',f=>f.module=new Uint8Array(32),/Fresh approved module/],
-  ['controllers',f=>f.controllers=[participant],/Fresh approved module/],
+  ['module',f=>f.module=new Uint8Array(32),/Fresh approved bootstrap module/],
+  ['controllers',f=>f.controllers=[participant],/Fresh approved bootstrap module/],
   ['following',f=>f.following=f.following.map(([topic,row])=>[topic,topic===1?{followees:[{id:99n}]}:row]),/Fresh target following/],
   ['manager authority',f=>f.managerOwner=other,/does not control/],
   ['proposal status',f=>f.status=2,/Open proposal/],

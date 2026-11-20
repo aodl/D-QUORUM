@@ -1,4 +1,5 @@
-import {REVIEWED_MAINNET_PROTOCOL} from "../src/creation-protocol-compatibility.js";
+import CREATION_PROTOCOL_PINS from "../../../../src/declarations/bootstrap/protocol-pins.json" with {type:"json"};
+import REVIEWED_MAINNET_PROTOCOL from "../../../../../tests/pocketic/fixtures/protocol-releases.json" with {type:"json"};
 import {recordingCertificate} from "./support/recording-certificate.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +8,7 @@ import {Principal} from "@icp-sdk/core/principal";
 import {IDL} from "@icp-sdk/core/candid";
 import {Actor,HttpAgent,Certificate,Cbor,LookupPathStatus,requestIdOf} from "@icp-sdk/core/agent";
 import {createCreationController} from "../src/creation-controller.js";
-import {CREATION_PROTOCOL_PINS,parseCreationPlan,planJson} from "../src/creation-plan.js";
+import {parseCreationPlan,planJson} from "../src/creation-plan.js";
 import {hexBytes,legacyAccount,sha256Hex,bytesHex,stakingSubaccount} from "../src/creation-accounts.js";
 import {fundingSubaccount} from "../src/creation-accounts.js";
 import {creationArgumentTypes,witnessRequestContent,creationRequestBinding} from "../src/creation-protocol.js";
@@ -282,8 +283,10 @@ test('a certified first-dispatch BadFee refusal survives receipt reload and perm
  await resumed.controller.connect('FundProvisioning');await resumed.controller.prepareProvisioning();assert.equal(resumed.controller.plan.nonce,nonce);assert.equal(resumed.controller.plan.icp_fee_e8s,10000n);assert.equal(resumed.controller.prepared.args.fee[0],20000n);assert.equal(resumed.controller.prepared.args.amount,99950000n);assert.equal(resumed.controller.prepared.intent.reviewed_prior_dispatch_fees,'10000');
  resumed.controller.export();await resumed.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);assert.equal(f.state.balance,400000000n);assert.equal(resumed.controller.receipt.intents[0].argument,original);assert.equal(resumed.controller.receipt.intents[0].state,'Rejected');assert.equal(resumed.controller.receipt.intents[1].state,'Confirmed');
 });
-test('a certified-looking reply from an unreviewed financial module cannot grant a payment or a fresh attempt',async()=>{
- const f=fixture();await prepare(f);f.state.wrongFinancialModule=true;f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/not from the pinned executable/);assert.equal(f.state.transfers.length,0);assert.equal(f.controller.receipt.intents[0].state,'Unknown');await assert.rejects(()=>f.controller.prepareProvisioning(),/unresolved/);
+test('changed external financial executable does not gate a certified successful payment',async()=>{
+ const f=fixture();await prepare(f);f.state.wrongFinancialModule=true;f.controller.export();
+ await f.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);assert.equal(f.controller.receipt.intents[0].state,'Confirmed');
+ await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/Save/);assert.equal(f.state.transfers.length,1);
 });
 
 test('already converted cycles permit a first create after 48 hours without demanding another ICP conversion quote',async t=>{
@@ -360,7 +363,7 @@ async function recordedProposalFixture(t,outcome,production=false,refusalCode=14
  t.mock.method(HttpAgent,'from',async()=>agent);t.mock.method(HttpAgent,'create',async()=>agent);
  t.mock.method(Actor,'agentOf',()=>agent);t.mock.method(Actor,'canisterIdOf',actor=>actor===f.gov?govId:f.c);t.mock.method(Actor,'interfaceOf',actor=>actor===f.gov?nnsFactory({IDL}):bootstrapFactory({IDL}));
  t.mock.method(Certificate,'create',async options=>{const tag=Cbor.decode(options.certificate).signature[0];return {lookup_path(path){const field=new TextDecoder().decode(path.at(-1));let value;
-  if(field==='reply')value=tag===1?createReply:tag===2?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]);else if(field==='status')value=new TextEncoder().encode('replied');else if(field==='module_hash')value=tag===2?hexBytes(CREATION_PROTOCOL_PINS.modules[govId.toText()]):p.bootstrap_sha256;else if(field==='controllers')value=Cbor.encode([owner.toUint8Array()]);else{let n=BigInt(Date.now())*1000000n,a=[];do{const b=Number(n&127n);n>>=7n;a.push(b|(n?128:0));}while(n);value=Uint8Array.from(a);}return {status:LookupPathStatus.Found,value};}};});
+  if(field==='reply')value=tag===1?createReply:tag===2?govReply:IDL.encode(statusSignature.retTypes,[{Ok:s}]);else if(field==='status')value=new TextEncoder().encode('replied');else if(field==='module_hash')value=tag===2?hexBytes(f.state.govWitnessModule??CREATION_PROTOCOL_PINS.modules[govId.toText()]):p.bootstrap_sha256;else if(field==='controllers')value=Cbor.encode([owner.toUint8Array()]);else{let n=BigInt(Date.now())*1000000n,a=[];do{const b=Number(n&127n);n>>=7n;a.push(b|(n?128:0));}while(n);value=Uint8Array.from(a);}return {status:LookupPathStatus.Found,value};}};});
  f.actors.bootstrap.advance=async({step})=>{
   (f.state.bootstrapSteps??=[]).push(Object.keys(step)[0]);
   if(step.ReserveProposal&&outcome==='reserve-refused')return {Err:'recorded bootstrap reservation refused'};
@@ -394,7 +397,7 @@ test('replicated refusal audit settles only the original full ingress, including
 });
 test('a lost successful proposal resolution reads only its original accepted request and binds the same proposal',async t=>{
  const f=await recordedProposalFixture(t,'resolve-lost');await f.controller.prepareNnsProposal('Rehearsal',11n);f.controller.export();await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/resolution reply lost/);
- const intent=f.controller.receipt.intents.at(-1),id=intent.request_binding.request_id;assert.equal(intent.state,'Unknown');f.state.repairResolution=true;
+ const intent=f.controller.receipt.intents.at(-1),id=intent.request_binding.request_id;assert.equal(intent.state,'Unknown');f.state.repairResolution=true;f.state.govWitnessModule='ef'.repeat(32);
  await f.controller.readOriginalProposalReply();assert.equal(intent.state,'Confirmed');assert.equal(intent.references.proposal_id,'9');assert.equal(intent.request_binding.request_id,id);assert.equal(f.calls(),1);
 });
 
@@ -499,28 +502,35 @@ test('funded creation receipt recovers its original payment across reviewed Ledg
  // Model the saved historical certificate's independently verified old executable,
  // never a new dispatch under that version. These are recording proofs only.
  f.state.certificateModules.set(intent.dispatch_reservation.reply_witness.certificate,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
- for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
+ for(const id of Object.keys(f.state.modules))f.state.modules[id]='ef'.repeat(32);
  const resumed=fixture(f.state);await resumed.controller.import(json);await resumed.controller.reconcileLedger(7n);
  assert.equal(f.state.transfers.length,1);assert.equal(resumed.controller.receipt.intents[0].id,original.id);assert.equal(resumed.controller.receipt.intents[0].argument,original.argument);assert.equal(resumed.controller.receipt.intents[0].state,'Confirmed');
 });
-test('financial refusal retains its original certified executable when a reviewed current version changes',async t=>{
+test('financial refusal keeps its original certified evidence across unknown external module changes',async t=>{
  const f=fixture(undefined,true);await prepare(f);f.controller.export();f.state.paymentRefusal={BadFee:{expected_fee:20000n}};
  await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/conclusively refused/);
  const original=f.controller.receipt.intents[0],witness=structuredClone(original.reply_witness),cert=original.reply_witness.certificate;
  // Historical-proof fixture: both saved replies retain their own old executable.
  for(const saved of f.state.certificateModules.keys())f.state.certificateModules.set(saved,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);
  const oldHash=f.state.certificateModules.get(cert);assert.equal(oldHash,CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai']);assert.notEqual(oldHash,REVIEWED_MAINNET_PROTOCOL.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'].wasm_sha256);
- for(const [id,entry]of Object.entries(REVIEWED_MAINNET_PROTOCOL.modules))f.state.modules[id]=entry.wasm_sha256;
+ for(const id of Object.keys(f.state.modules))f.state.modules[id]='ef'.repeat(32);
  const resumed=fixture(f.state);await resumed.controller.import(f.controller.export());recordingFinancialCertificates(t,f.state);await resumed.controller.connect('FundProvisioning');
- f.state.certificateModules.set(cert,'00'.repeat(32));await assert.rejects(()=>resumed.controller.prepareProvisioning(),/conclusively refused/);assert.equal(f.state.transfers.length,0);
- f.state.certificateModules.set(cert,oldHash);f.state.witnessModule=undefined;f.state.paymentRefusal=undefined;await resumed.controller.prepareProvisioning();
+ f.state.witnessModule=undefined;f.state.paymentRefusal=undefined;await resumed.controller.prepareProvisioning();
  assert.deepEqual(resumed.controller.receipt.intents[0].reply_witness,witness);assert.equal(resumed.controller.prepared.intent.reviewed_prior_dispatch_fees,'10000');
  resumed.controller.export();await resumed.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);
 });
 
-test('a historically reviewed local executable cannot authorise a fresh mainnet financial dispatch',async()=>{
- const f=fixture(undefined,true);await prepare(f);f.state.witnessModule=CREATION_PROTOCOL_PINS.modules['ryjl3-tyaaa-aaaaa-aaaba-cai'];f.controller.export();
- await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/not from the pinned executable/);
- assert.equal(f.state.transfers.length,0);assert.equal(f.controller.receipt.intents[0].state,'Unknown');
- await assert.rejects(()=>f.controller.prepareProvisioning(),/unresolved/);
+test('unregistered external executable accepts the same certified API outcome on mainnet bindings',async()=>{
+ const f=fixture(undefined,true);await prepare(f);f.state.witnessModule='ef'.repeat(32);f.controller.export();
+ await f.controller.dispatch({saved:true,confirmed:true});assert.equal(f.state.transfers.length,1);assert.equal(f.controller.receipt.intents[0].state,'Confirmed');
+});
+
+test('Governance upgrade permits success but an unaudited refusal reserves only that proposal',async t=>{
+ for(const outcome of ['created','refused'])await t.test(outcome,async t=>{
+  const f=await recordedProposalFixture(t,outcome);f.state.govWitnessModule='ef'.repeat(32);
+  await f.controller.prepareNnsProposal('Rehearsal',11n);const intent=f.controller.prepared.intent;f.controller.export();
+  if(outcome==='created'){await f.controller.dispatch({saved:true,confirmed:true});assert.equal(intent.state,'Confirmed');}
+  else {await assert.rejects(()=>f.controller.dispatch({saved:true,confirmed:true}),/unaudited/);assert.equal(intent.state,'Unknown');await assert.rejects(()=>f.controller.readOriginalProposalReply(),/retain its identity/);assert.equal(intent.state,'Unknown');assert.ok(!f.state.bootstrapSteps.includes('ResolveProposalRefusal'));}
+  assert.equal(f.calls(),1);
+ });
 });

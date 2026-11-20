@@ -6,7 +6,7 @@ import {IDL} from '@icp-sdk/core/candid';
 import {Principal} from '@icp-sdk/core/principal';
 import {Ed25519KeyIdentity,DelegationChain,DelegationIdentity} from '@icp-sdk/core/identity';
 import {deriveProvisioningSession} from '../src/auth.js';
-import {createProvisioningActors,createCanisterWithWitness,bootstrapStatusWithWitness,verifyCreationWitness,readCreationLedgerBlock,readCreationStakeBalance,readCreationControllerIcpBalance,creationRegistrationMetadata,verifyCreationRegistrationMetadata} from '../src/creation-protocol.js';
+import {creationFinancialWithWitness,creationArgumentTypes,createProvisioningActors,createCanisterWithWitness,bootstrapStatusWithWitness,verifyCreationWitness,readCreationLedgerBlock,readCreationStakeBalance,readCreationControllerIcpBalance,creationRegistrationMetadata,verifyCreationRegistrationMetadata} from '../src/creation-protocol.js';
 import {readCertificateTimeNs} from "../src/certified-canister-state.js";
 import {bytesHex,hexBytes} from '../src/creation-accounts.js';
 import {idlFactory as bootstrapFactory} from '../../../../src/declarations/bootstrap/bootstrap.did.js';
@@ -81,4 +81,17 @@ test('ledger recovery accepts only one exact block or the ledger-endorsed bounde
  const range={start:5n,length:5n,callback:[c,'get_blocks']};history={blocks:[],archived_blocks:[range]};archiveResult={Ok:{blocks:[block]}};assert.equal(await readCreationLedgerBlock(7n,options),block);assert.equal(archiveCalls,1);
  for(const bad of [{blocks:[block,block],archived_blocks:[]},{blocks:[],archived_blocks:[range,range]},{blocks:[],archived_blocks:[]},{blocks:[],archived_blocks:[{...range,start:8n}]},{blocks:[],archived_blocks:[{...range,callback:[c,'arbitrary_method']}]}]){history=bad;await assert.rejects(()=>readCreationLedgerBlock(7n,options),/bounded|unavailable/);}
  history={blocks:[],archived_blocks:[range]};archiveResult={Ok:{blocks:[]}};await assert.rejects(()=>readCreationLedgerBlock(7n,options),/archive block/);assert.equal(await readCreationStakeBalance(c,1n,options),2n);assert.equal(balanceRequests.at(-1).owner.toText(),'rrkah-fqaaa-aaaaa-aaaaq-cai');assert.equal(balanceRequests.at(-1).subaccount[0].length,32);assert.equal(await readCreationControllerIcpBalance(c,options),2n);assert.equal(balanceRequests.at(-1).owner.toText(),c.toText());assert.equal(balanceRequests.at(-1).subaccount.length,0);assert.ok(requested.length>0);assert.equal(bytesHex(Uint8Array.of(1)),'01');
+});
+
+test('financial API outcomes require the exact certified reply, without external module paths',async t=>{
+ const target=Principal.fromText('ryjl3-tyaaa-aaaaa-aaaba-cai'),type=IDL.Variant({Ok:IDL.Nat,Err:IDL.Variant({TooOld:IDL.Null})});
+ let certifiedReply=IDL.encode([type],[{Ok:17n}]),status='replied';
+ const agent={rootKey:new Uint8Array(96),update:async(_target,options)=>({requestDetails:{request_type:'call',canister_id:target,sender:root.getPrincipal(),method_name:'icrc1_transfer',arg:options.arg,ingress_expiry:BigInt(Date.now()+300000)*1000000n},reply:IDL.encode([type],[{Ok:999n}]),rawCertificate:recordingCertificate()}),readState:async()=>{throw Error('External module evidence must not be required');}};
+ const actor=Actor.createActor(()=>IDL.Service({icrc1_transfer:IDL.Func([creationArgumentTypes.transfer],[type],[])}),{agent,canisterId:target});
+ t.mock.method(Certificate,'create',async()=>({lookup_path:path=>{const field=new TextDecoder().decode(path.at(-1));assert.ok(['status','reply'].includes(field));return {status:LookupPathStatus.Found,value:field==='reply'?certifiedReply:new TextEncoder().encode(status)};}}));
+ const args={from_subaccount:[],to:{owner:c,subaccount:[]},amount:1n,fee:[10000n],memo:[],created_at_time:[1n]};
+ const proof=await creationFinancialWithWitness(actor,'icrc1_transfer',args);assert.equal(proof.value.Ok,17n);assert.equal(proof.system,undefined);
+ certifiedReply=Uint8Array.of(0);await assert.rejects(()=>creationFinancialWithWitness(actor,'icrc1_transfer',args));
+ certifiedReply=IDL.encode([IDL.Text],['incompatible API']);await assert.rejects(()=>creationFinancialWithWitness(actor,'icrc1_transfer',args));
+ certifiedReply=IDL.encode([type],[{Ok:17n}]);status='processing';await assert.rejects(()=>creationFinancialWithWitness(actor,'icrc1_transfer',args),/certified successful reply/);
 });

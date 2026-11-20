@@ -189,7 +189,8 @@ pub fn verify(
     })
 }
 
-// Source audit: protocol-mainnet.json / production-record.md, 2026-11-13.
+// Historical refusal source audit: production-record.md, 2026-11-13.
+// This binds only a non-execution proof, never permission for a new operation.
 // Governance 98c898f8 and local 83f29e08 have identical make_proposal,
 // manage_neuron and ErrorType definitions. All audited errors precede fee charge
 // and insertion; post-insertion execution errors still return Ok(proposal_id).

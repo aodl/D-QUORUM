@@ -1,4 +1,5 @@
 {
+  "purpose": "Historical published executable fixtures for deterministic PocketIC tests; never a production compatibility allowlist.",
   "version": 1,
   "reviewed_on": "2026-11-13",
   "review_record": "dendrite/docs/operations/production-record.md",

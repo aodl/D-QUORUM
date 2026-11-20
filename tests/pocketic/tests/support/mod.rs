@@ -42,7 +42,7 @@ pub fn artifact_pin(name: &str) -> serde_json::Value {
         }
         let reviewed: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(
-                root().join("dendrite/src/declarations/bootstrap/protocol-mainnet.json"),
+                root().join("tests/pocketic/fixtures/protocol-releases.json"),
             )
             .unwrap(),
         )

@@ -1,10 +1,11 @@
+import CREATION_PROTOCOL_PINS from "../../../../src/declarations/bootstrap/protocol-pins.json" with {type:"json"};
 import test from "node:test";
 import digestVectors from "./fixtures/creation-plan-digest.json" with {type:"json"};
 import assert from "node:assert/strict";
 import {Principal} from "@icp-sdk/core/principal";
 import {IDL} from "@icp-sdk/core/candid";
 import {Ed25519KeyIdentity} from "@icp-sdk/core/identity";
-import {createCreationPlan,verifySealedControllerChanges,bootstrapReadinessMarker,creationVotingMinimum,createCreationRevision,validateCreationRevision,parseCreationPlan,planJson,creationPlanDigest,creationPreflight,CREATION_PROTOCOL_PINS} from "../src/creation-plan.js";
+import {createCreationPlan,verifySealedControllerChanges,bootstrapReadinessMarker,creationVotingMinimum,createCreationRevision,validateCreationRevision,parseCreationPlan,planJson,creationPlanDigest,creationPreflight} from "../src/creation-plan.js";
 import {newCreationReceipt,exportCreationReceipt,importCreationReceipt,addCreationIntent,settleCreationIntent,checkpointCreation,receiptContentDigest,MAX_CREATION_RECEIPT_BYTES,applyCreationRevision} from "../src/creation-receipt.js";
 import {legacyAccount,validateLegacyAccount,bytesHex,hexBytes,stakingSubaccount,principalSubaccount,fundingSubaccount} from "../src/creation-accounts.js";
 import {creationArgumentTypes,decodeBootstrapPlan,encodeBootstrapPlan,witnessRequestContent,verifyCreationWitness,verifyOriginalCreationBurn} from "../src/creation-protocol.js";
@@ -70,10 +71,9 @@ test("witness verification rejects substituted caller target method and reply be
   assert.equal(witnessRequestContent(request).sender.toText(),P.toText());
   await assert.rejects(()=>verifyCreationWitness({request,request_id:"00".repeat(32),certificate:"00"},{agent:{},canisterId:C,owner:P,methodName:"status",includeSystemState:true}),/binding/);
 });
-test("preflight pauses on unavailable economics unknown executable or missing known metadata",async()=>{
+test("preflight pauses on unavailable economics and insufficient stake",async()=>{
   const p=plan(),economics={voting_power_economics:[],neuron_minimum_stake_e8s:100000000n,reject_cost_e8s:10000n,transaction_fee_e8s:10000n,neuron_management_fee_per_proposal_e8s:10000n};
   await assert.rejects(()=>creationPreflight(p,{actor:{get_network_economics_parameters:async()=>({})}}),/unavailable/);
-  await assert.rejects(()=>creationPreflight(p,{actor:{get_network_economics_parameters:async()=>economics},readSystem:async()=>({moduleHash:new Uint8Array(32)})}),/Unreviewed/);
   await assert.rejects(()=>creationPreflight({...p,stake_e8s:1n},{actor:{get_network_economics_parameters:async()=>economics}}),/minimum/);
 });
 test("replicated scalar known metadata and actual creator role are required before spending",async()=>{
@@ -122,11 +122,11 @@ test("Rust and browser hash semantic plans identically despite different Candid 
  }
 });
 
-test("current voting minimum is resolved only against the qualified executable and cannot change the Standard lock",async()=>{
+test("current voting minimum follows validated public economics and cannot change the Standard lock",async()=>{
  const module=CREATION_PROTOCOL_PINS.modules['rrkah-fqaaa-aaaaa-aaaaq-cai'];
  assert.equal(creationVotingMinimum({voting_power_economics:[]},module),15778800n);
  assert.equal(creationVotingMinimum({voting_power_economics:[{neuron_minimum_dissolve_delay_to_vote_seconds:[]}]},module),1209600n);
- assert.throws(()=>creationVotingMinimum({voting_power_economics:[]},'unqualified'),/qualified/);
+ assert.equal(creationVotingMinimum({voting_power_economics:[]}),15778800n);
  assert.throws(()=>creationVotingMinimum({},module),/unavailable/);
  const production=createCreationPlan({...basic,profile:'ProductionCandidate',managers:['11','12','13','14','15'],committedTopics:[4],delegates:{4:['11','12','13']},defaultNeuronId:'18422777432977120264'},P,bindings,{sha256:'ab'.repeat(32)});
  const economics={voting_power_economics:[{neuron_minimum_dissolve_delay_to_vote_seconds:[63115201n]}],neuron_minimum_stake_e8s:1n,reject_cost_e8s:1n,transaction_fee_e8s:1n,neuron_management_fee_per_proposal_e8s:1n};
@@ -201,5 +201,5 @@ test("preflight rejects malformed bounded responses and future or substituted sc
  for(const bad of [null,{full_neurons:{}},{full_neurons:[],total_pages_available:[]},{full_neurons:[{}],total_pages_available:[1n]}]){response=bad;await assert.rejects(()=>creationPreflight(p,{actor,readSystem,now}));}
  response={full_neurons:[{id:[{id:11n}],controller:[P],hot_keys:[],visibility:[2],followees:[]}],total_pages_available:[1n]};
  for(const fields of [{id:[{id:12n}]},{retrieved_at_timestamp_seconds:now+301n},{retrieved_at_timestamp_seconds:0},{visibility:[]},{known_neuron_data:[]}]){scalar={id:[{id:11n}],visibility:[2],retrieved_at_timestamp_seconds:now,known_neuron_data:[{name:'Manager'}],...fields};await assert.rejects(()=>creationPreflight(p,{actor,readSystem,now}));}
- await assert.rejects(()=>creationPreflight(p,{actor,readSystem:async()=>{throw Error('recorded certificate refusal');},now}),/Required certified protocol state/);
+
 });

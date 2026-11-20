@@ -156,7 +156,7 @@ def creation_protocol():
 def creation_mainnet_protocol():
     # Read-only mainnet provenance is recorded separately. Monetary execution here
     # is exclusively in fresh PocketIC worlds using the exact reviewed releases.
-    entries=json.loads((ROOT/'dendrite/src/declarations/bootstrap/protocol-mainnet.json').read_text())['modules']
+    entries=json.loads((ROOT/'tests/pocketic/fixtures/protocol-releases.json').read_text())['modules']
     cache=ROOT/'.cache/protocol-mainnet';cache.mkdir(exist_ok=True)
     for entry in entries.values():
         target=cache/(entry['artifact']+'.wasm.gz')

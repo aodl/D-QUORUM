@@ -4,17 +4,22 @@ import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {HttpAgent,AnonymousIdentity} from '@icp-sdk/core/agent';
 import {IDL} from '@icp-sdk/core/candid';
-import {createCertifiedCanisterStateReader} from '../../canisters/dendrite/web/src/certified-canister-state.js';
-import {inspectCreationProtocols} from '../../canisters/dendrite/web/src/creation-protocol-compatibility.js';
 import {creationPreflight,createCreationPlan} from '../../canisters/dendrite/web/src/creation-plan.js';
 import {idlFactory} from '../../src/declarations/nns-governance/nns-governance.did.js';
 const host='https://icp-api.io',gov='rrkah-fqaaa-aaaaa-aaaaq-cai',canisterId='hp4av-oiaaa-aaaar-qcaha-cai';
 const agent=await HttpAgent.create({host,identity:new AnonymousIdentity(),shouldFetchRootKey:false,verifyQuerySignatures:true,retryTimes:0});
-const state=createCertifiedCanisterStateReader({host,fetchRootKey:false});
-const protocol=await inspectCreationProtocols(state.read,'Ic');
-const result={observed_at:new Date().toISOString(),host,certification:'Production IC root key; BLS signature, delegation, canister and timestamp verification enabled',protocol,update_calls:0};
-async function query(method,args){const signature=idlFactory({IDL})._fields.find(([name])=>name===method)[1];const response=await agent.query(gov,{methodName:method,arg:IDL.encode(signature.argTypes,args)});if(response.status!=='replied')throw Error(response.reject_message??response.status);return IDL.decode(signature.retTypes,response.reply.arg)[0];}
+const result={observed_at:new Date().toISOString(),host,certification:'Production IC root key; BLS signature, delegation, canister and timestamp verification enabled',update_calls:0};
+async function readQuery(id,method,args,argTypes,retTypes){const response=await agent.query(id,{methodName:method,arg:IDL.encode(argTypes,args)});if(response.status!=="replied")throw Error(response.reject_message??response.status);return IDL.decode(retTypes,response.reply.arg)[0];}
+async function query(method,args){const signature=idlFactory({IDL})._fields.find(([name])=>name===method)[1];return readQuery(gov,method,args,signature.argTypes,signature.retTypes);}
 try{
+ const [icpFee,cyclesFee,quote]=await Promise.all([
+  readQuery('ryjl3-tyaaa-aaaaa-aaaba-cai','icrc1_fee',[],[],[IDL.Nat]),
+  readQuery('um5iw-rqaaa-aaaaq-qaaba-cai','icrc1_fee',[],[],[IDL.Nat]),
+  readQuery('rkp4c-7iaaa-aaaaa-aaaca-cai','get_icp_xdr_conversion_rate',[],[],[IDL.Record({data:IDL.Record({timestamp_seconds:IDL.Nat64,xdr_permyriad_per_icp:IDL.Nat64}),hash_tree:IDL.Vec(IDL.Nat8),certificate:IDL.Vec(IDL.Nat8)})])
+ ]);
+ const now=BigInt(Math.floor(Date.now()/1000)),rate=quote.data.xdr_permyriad_per_icp;
+ if(rate<=0n||quote.data.timestamp_seconds<now-300n||quote.data.timestamp_seconds>now+300n)throw Error('Current conversion quote is unavailable or stale.');
+ result.provisioning_quote={icp_fee_e8s:String(icpFee),cycles_fee:String(cyclesFee),rate:String(rate),timestamp_seconds:String(quote.data.timestamp_seconds),allocation_cycles:'2000000000000',minimum_provisioning_e8s:String((2000000000000n+3n*cyclesFee+rate-1n)/rate+2n*icpFee),stake_is_separate:true,scope:'Read-only public API probes, not proof of a future write outcome.'};
  const manager=BigInt(process.argv[2]??'2947465672511369');
  const actor=Object.fromEntries(['get_network_economics_parameters','list_neurons','get_neuron_info'].map(method=>[method,(...args)=>query(method,args)]));
  const response=await actor.list_neurons({neuron_ids:[manager],include_neurons_readable_by_caller:false,include_empty_neurons_readable_by_caller:[false],include_public_neurons_in_full_neurons:[true],page_number:[0n],page_size:[15n],neuron_subaccounts:[]});
@@ -29,8 +34,8 @@ try{
  const plan=createCreationPlan({profile:'RecoverableTest',managers:[String(manager)],stakeIcp:'2',provisionIcp:'1',provisionCycles:'2000000000000',ledgerFeeE8s:economics.transaction_fee_e8s},owner,{local:false,host,canisterId,origin:`https://${canisterId}.icp0.io`},manifest);
  // The verified release hash is only a planner binding; no bootstrap,
  // delegation, II login or monetary request is created or used.
- const checked=await creationPreflight(plan,{actor,readSystem:state.read});
+ const checked=await creationPreflight(plan,{actor});
  result.preflight={ok:true,bootstrap_sha256:manifest.sha256,manager:String(manager),observed_authority:owner.toText(),role:checked.managers[0].role,voting_minimum_seconds:String(checked.votingMinimumSeconds),scope:'Actual anonymous production reads; conditional on signing in as the observed manager authority. Does not prove an II session or qualify writes.'};
 }catch(error){result.preflight={ok:false,error:error.message};}
 console.log(JSON.stringify(result,null,2));
-if(!protocol.ok||!result.preflight.ok)process.exitCode=1;
+if(!result.preflight.ok)process.exitCode=1;
