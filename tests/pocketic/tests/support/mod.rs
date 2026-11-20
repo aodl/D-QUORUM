@@ -41,10 +41,8 @@ pub fn artifact_pin(name: &str) -> serde_json::Value {
             .unwrap();
         }
         let reviewed: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(
-                root().join("tests/pocketic/fixtures/protocol-releases.json"),
-            )
-            .unwrap(),
+            &fs::read_to_string(root().join("tests/pocketic/fixtures/protocol-releases.json"))
+                .unwrap(),
         )
         .unwrap();
         if let Some(entry) = reviewed["modules"]
